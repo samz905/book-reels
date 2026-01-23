@@ -1,0 +1,168 @@
+@import "tailwindcss";
+
+/* =================================================================
+   CSS Variables - Design Tokens from Figma
+   ================================================================= */
+
+:root {
+  /* Base Colors */
+  --white: #ffffff;
+  --dark: #212121;
+  --ash-1: #adadad;
+  --ash-2: #cdcdcd;
+  --purple: #b8b6fc;
+  --blue: #539ed3;
+  --green-1: #256b5f;
+  --green-2: #044c5a;
+  --green-3: #1ed760;
+  --orange: #ff8c00;
+  --coffee: #fbf5ef;
+  --black-bg: #1c1c1c;
+  --card-bg-1: #272727;
+  --card-bg-2: #212020;
+  --card-bg-3: #303030;
+  --card-bg-4: #363535;
+  --logo: #b3b3b3;
+
+  /* Effects */
+  --purple-glow: rgba(181, 179, 255, 0.9);
+  --card-gradient-end: rgba(40, 45, 76, 0.69);
+
+  /* Semantic Colors (Dark Theme) */
+  --background: var(--black-bg);
+  --foreground: var(--white);
+  --primary: var(--green-3);
+  --secondary: var(--ash-1);
+  --accent: var(--purple);
+  --muted: var(--ash-1);
+  --muted-foreground: var(--ash-2);
+  --card: var(--card-bg-1);
+  --card-foreground: var(--white);
+  --border: var(--card-bg-3);
+  --input: var(--card-bg-2);
+  --ring: var(--purple);
+  --destructive: #ff4444;
+  --success: var(--green-3);
+  --warning: var(--orange);
+  --info: var(--blue);
+}
+
+/* =================================================================
+   Tailwind CSS 4 Theme Configuration
+   ================================================================= */
+
+@theme {
+  /* Font Family */
+  --font-sans: var(--font-mulish), ui-sans-serif, system-ui, sans-serif;
+
+  /* Base Colors */
+  --color-white: var(--white);
+  --color-dark: var(--dark);
+  --color-ash-1: var(--ash-1);
+  --color-ash-2: var(--ash-2);
+  --color-purple: var(--purple);
+  --color-blue: var(--blue);
+  --color-green-1: var(--green-1);
+  --color-green-2: var(--green-2);
+  --color-green-3: var(--green-3);
+  --color-orange: var(--orange);
+  --color-coffee: var(--coffee);
+  --color-black-bg: var(--black-bg);
+  --color-card-bg-1: var(--card-bg-1);
+  --color-card-bg-2: var(--card-bg-2);
+  --color-card-bg-3: var(--card-bg-3);
+  --color-card-bg-4: var(--card-bg-4);
+  --color-logo: var(--logo);
+
+  /* Semantic Colors */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-secondary: var(--secondary);
+  --color-accent: var(--accent);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+
+  /* Border Radius */
+  --radius-card: 12px;
+  --radius-avatar: 9999px;
+  --radius-button: 8px;
+  --radius-input: 8px;
+
+  /* Custom Spacing */
+  --spacing-section: 24px;
+  --spacing-grid: 16px;
+  --spacing-card-gap: 8px;
+  --spacing-card-gap-md: 12px;
+}
+
+/* =================================================================
+   Base Styles
+   ================================================================= */
+
+body {
+  background-color: #000000;
+  color: var(--foreground);
+}
+
+/* =================================================================
+   Utility Classes
+   ================================================================= */
+
+@layer utilities {
+  .glow-purple {
+    box-shadow: 0 0 95px var(--purple-glow);
+  }
+
+  .gradient-card-overlay {
+    background: linear-gradient(to bottom, transparent 44%, var(--card-gradient-end) 85%);
+  }
+
+  .text-gradient {
+    background: linear-gradient(90deg, var(--purple) 0%, var(--blue) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .text-hero-gradient {
+    background: linear-gradient(135deg, #FFFFFF 0%, #FFFFFF 50%, #9C99FF 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .bg-gradient-page {
+    background: linear-gradient(180deg, #000000 0%, #000000 10%, #7370FF 100%);
+  }
+
+  .bg-gradient-overlay {
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, #000000 100%);
+  }
+
+  .bg-button-gradient {
+    background: linear-gradient(135deg, #9C99FF 0%, #7370FF 60%);
+  }
+
+  .bg-purple-glow {
+    background: rgba(181, 179, 255, 0.9);
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
