@@ -3,19 +3,28 @@
 import { useState, useMemo } from "react";
 import Header from "./components/Header";
 import Footer from "./components/Footer";
+import StoryTypeTabs from "./components/StoryTypeTabs";
 import CategoryTabs from "./components/CategoryTabs";
 import StoryGrid from "./components/StoryGrid";
-import { mockStories, type Category } from "./data/mockStories";
+import { mockStories, type Category, type StoryType } from "./data/mockStories";
 
 export default function Home() {
   const [activeCategory, setActiveCategory] = useState<Category>("ALL");
+  const [activeStoryType, setActiveStoryType] = useState<StoryType>("ALL");
 
   const filteredStories = useMemo(() => {
-    if (activeCategory === "ALL") {
-      return mockStories;
+    let stories = mockStories;
+
+    if (activeStoryType !== "ALL") {
+      stories = stories.filter((story) => story.storyType === activeStoryType);
     }
-    return mockStories.filter((story) => story.category === activeCategory);
-  }, [activeCategory]);
+
+    if (activeCategory !== "ALL") {
+      stories = stories.filter((story) => story.category === activeCategory);
+    }
+
+    return stories;
+  }, [activeCategory, activeStoryType]);
 
   return (
     <div className="min-h-screen bg-gradient-page relative overflow-hidden">
@@ -57,6 +66,14 @@ export default function Home() {
           >
             Start Watching
           </button>
+        </section>
+
+        {/* Story Type Tabs */}
+        <section className="max-w-[1440px] mx-auto mb-5">
+          <StoryTypeTabs
+            activeType={activeStoryType}
+            onTypeChange={setActiveStoryType}
+          />
         </section>
 
         {/* Category Tabs */}

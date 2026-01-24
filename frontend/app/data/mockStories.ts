@@ -17,6 +17,10 @@ export const CATEGORIES = [
 
 export type Category = (typeof CATEGORIES)[number];
 
+export const STORY_TYPES = ["ALL", "VIDEO", "AUDIO"] as const;
+
+export type StoryType = (typeof STORY_TYPES)[number];
+
 export interface Story {
   id: string;
   title: string;
@@ -25,7 +29,7 @@ export interface Story {
   creatorName: string;
   creatorAvatar: string;
   category: Category;
-  hasVideo?: boolean;
+  storyType?: "VIDEO" | "AUDIO";
   viewCount?: string;
   episodeCount?: number;
 }
@@ -40,7 +44,7 @@ export const mockStories: Story[] = [
     creatorName: "Sarah Mitchell",
     creatorAvatar: "https://picsum.photos/seed/avatar1/100/100",
     category: "FANTASY",
-    hasVideo: true,
+    storyType: "VIDEO",
   },
   {
     id: "2",
@@ -51,6 +55,7 @@ export const mockStories: Story[] = [
     creatorName: "James Cooper",
     creatorAvatar: "https://picsum.photos/seed/avatar2/100/100",
     category: "DRAMA",
+    storyType: "AUDIO",
   },
   {
     id: "3",
@@ -61,6 +66,7 @@ export const mockStories: Story[] = [
     creatorName: "Mike Chen",
     creatorAvatar: "https://picsum.photos/seed/avatar3/100/100",
     category: "OTHER",
+    storyType: "AUDIO",
   },
   {
     id: "4",
@@ -71,6 +77,7 @@ export const mockStories: Story[] = [
     creatorName: "Becca Kabelis",
     creatorAvatar: "https://picsum.photos/seed/avatar4/100/100",
     category: "FANTASY",
+    storyType: "VIDEO",
   },
   {
     id: "5",
@@ -81,6 +88,7 @@ export const mockStories: Story[] = [
     creatorName: "David Wright",
     creatorAvatar: "https://picsum.photos/seed/avatar5/100/100",
     category: "FANTASY",
+    storyType: "VIDEO",
     episodeCount: 2,
   },
   {
@@ -92,6 +100,7 @@ export const mockStories: Story[] = [
     creatorName: "Emma Davis",
     creatorAvatar: "https://picsum.photos/seed/avatar6/100/100",
     category: "SLICE OF LIFE",
+    storyType: "VIDEO",
   },
   {
     id: "7",
@@ -102,6 +111,7 @@ export const mockStories: Story[] = [
     creatorName: "Lisa Park",
     creatorAvatar: "https://picsum.photos/seed/avatar7/100/100",
     category: "COMEDY",
+    storyType: "VIDEO",
   },
   {
     id: "8",
@@ -112,6 +122,7 @@ export const mockStories: Story[] = [
     creatorName: "Rachel Kim",
     creatorAvatar: "https://picsum.photos/seed/avatar8/100/100",
     category: "ROMANCE",
+    storyType: "VIDEO",
   },
   {
     id: "9",
@@ -122,6 +133,7 @@ export const mockStories: Story[] = [
     creatorName: "Amanda Foster",
     creatorAvatar: "https://picsum.photos/seed/avatar9/100/100",
     category: "ROMANCE",
+    storyType: "VIDEO",
   },
   {
     id: "10",
@@ -132,6 +144,7 @@ export const mockStories: Story[] = [
     creatorName: "Chris Morgan",
     creatorAvatar: "https://picsum.photos/seed/avatar10/100/100",
     category: "SCI-FI",
+    storyType: "VIDEO",
   },
   {
     id: "11",
@@ -142,6 +155,7 @@ export const mockStories: Story[] = [
     creatorName: "Anne K. Whelan",
     creatorAvatar: "https://picsum.photos/seed/avatar11/100/100",
     category: "ACTION",
+    storyType: "VIDEO",
   },
   {
     id: "12",
@@ -152,6 +166,7 @@ export const mockStories: Story[] = [
     creatorName: "Tyler Brooks",
     creatorAvatar: "https://picsum.photos/seed/avatar12/100/100",
     category: "OTHER",
+    storyType: "AUDIO",
   },
   {
     id: "13",
@@ -162,6 +177,7 @@ export const mockStories: Story[] = [
     creatorName: "Marcus Johnson",
     creatorAvatar: "https://picsum.photos/seed/avatar13/100/100",
     category: "OTHER",
+    storyType: "AUDIO",
   },
   {
     id: "14",
@@ -172,6 +188,7 @@ export const mockStories: Story[] = [
     creatorName: "Sophie Williams",
     creatorAvatar: "https://picsum.photos/seed/avatar14/100/100",
     category: "DRAMA",
+    storyType: "AUDIO",
   },
   {
     id: "15",
@@ -182,6 +199,7 @@ export const mockStories: Story[] = [
     creatorName: "Alex Turner",
     creatorAvatar: "https://picsum.photos/seed/avatar15/100/100",
     category: "SLICE OF LIFE",
+    storyType: "AUDIO",
   },
   {
     id: "16",
@@ -192,7 +210,7 @@ export const mockStories: Story[] = [
     creatorName: "Brian Stone",
     creatorAvatar: "https://picsum.photos/seed/avatar16/100/100",
     category: "HISTORICAL",
-    hasVideo: true,
+    storyType: "VIDEO",
   },
   {
     id: "17",
@@ -203,6 +221,7 @@ export const mockStories: Story[] = [
     creatorName: "Luna Chen",
     creatorAvatar: "https://picsum.photos/seed/avatar17/100/100",
     category: "FANTASY",
+    storyType: "VIDEO",
     viewCount: "138M+",
   },
   {
@@ -214,5 +233,6 @@ export const mockStories: Story[] = [
     creatorName: "Luna Steel",
     creatorAvatar: "https://picsum.photos/seed/avatar18/100/100",
     category: "FANTASY",
+    storyType: "VIDEO",
   },
 ];
