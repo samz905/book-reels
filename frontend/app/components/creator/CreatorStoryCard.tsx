@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import Image from "next/image";
 import { Story, formatViewCount } from "@/app/data/mockCreatorData";
 import EpisodeList from "./EpisodeList";
@@ -59,6 +59,44 @@ export default function CreatorStoryCard({
   onUpdateStory,
 }: CreatorStoryCardProps) {
   const [showEpisodes, setShowEpisodes] = useState(false);
+
+  // Horizontal scroll state for ebooks
+  const ebooksScrollRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [startX, setStartX] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+
+  // Handle mouse down - start drag
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!ebooksScrollRef.current) return;
+    setIsDragging(true);
+    setStartX(e.pageX - ebooksScrollRef.current.offsetLeft);
+    setScrollLeft(ebooksScrollRef.current.scrollLeft);
+  }, []);
+
+  // Handle mouse move - drag scroll
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isDragging || !ebooksScrollRef.current) return;
+      e.preventDefault();
+      const x = e.pageX - ebooksScrollRef.current.offsetLeft;
+      const walk = (x - startX) * 1.5;
+      ebooksScrollRef.current.scrollLeft = scrollLeft - walk;
+    },
+    [isDragging, startX, scrollLeft]
+  );
+
+  // Handle mouse up/leave - stop drag
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  // Handle wheel - vertical to horizontal scroll
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    if (!ebooksScrollRef.current) return;
+    e.preventDefault();
+    ebooksScrollRef.current.scrollLeft += e.deltaY;
+  }, []);
 
   // Calculate free episode count (first 4 are free per design)
   const freeCount = 4;
@@ -209,54 +247,65 @@ export default function CreatorStoryCard({
           <p className="text-[#ADADAD] text-sm tracking-tight">Ebooks</p>
         </div>
 
-        {/* Ebooks grid */}
-        <div className="flex gap-6">
-          {mockEbooks.map((ebook, index) => (
-            <div key={ebook.id} className="flex gap-3 flex-1">
-              {/* Ebook content */}
-              <div className="flex gap-3">
-                {/* Cover with edit button */}
-                <div className="relative flex flex-col gap-2">
-                  <div className="w-[100px] h-[160px] rounded overflow-hidden bg-card-bg-2">
-                    <Image
-                      src={ebook.cover}
-                      alt={ebook.title}
-                      width={100}
-                      height={160}
-                      className="w-full h-full object-cover"
-                    />
+        {/* Horizontally scrollable ebooks container */}
+        <div
+          ref={ebooksScrollRef}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          onWheel={handleWheel}
+          className="overflow-x-auto scrollbar-hide cursor-grab active:cursor-grabbing"
+          style={{ scrollBehavior: "smooth" }}
+        >
+          <div className="flex gap-6 min-w-max select-none">
+            {mockEbooks.map((ebook, index) => (
+              <div key={ebook.id} className="flex items-stretch">
+                {/* Ebook card - 354px wide with 322px content area */}
+                <div className="w-[354px] flex gap-3">
+                  {/* Cover with price below */}
+                  <div className="relative flex flex-col gap-2 flex-shrink-0">
+                    <div className="w-[100px] h-[160px] rounded overflow-hidden bg-card-bg-2">
+                      <Image
+                        src={ebook.cover}
+                        alt={ebook.title}
+                        width={100}
+                        height={160}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    {/* Edit button on last ebook - positioned at top-right of cover */}
+                    {index === mockEbooks.length - 1 && (
+                      <button className="absolute -top-2 -right-2 w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors z-10">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="#E8EAED">
+                          <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                        </svg>
+                      </button>
+                    )}
+                    {/* Price below cover */}
+                    <span className="text-[#FF8C00] text-sm font-semibold">
+                      $ {ebook.price.toFixed(2)}
+                    </span>
                   </div>
-                  {/* Edit button on last ebook */}
-                  {index === mockEbooks.length - 1 && (
-                    <button className="absolute top-2 right-2 w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="#E8EAED">
-                        <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
-                      </svg>
-                    </button>
-                  )}
-                  {/* Price */}
-                  <span className="text-[#FF8C00] text-sm font-semibold">
-                    $ {ebook.price.toFixed(2)}
-                  </span>
+
+                  {/* Info - 12px gap from cover, remaining width */}
+                  <div className="flex flex-col gap-1 flex-1 min-w-0">
+                    <h5 className="text-white text-sm font-semibold line-clamp-2">
+                      {ebook.title}
+                    </h5>
+                    <p className="text-[#C5C5C5] text-sm leading-[19px] tracking-tight line-clamp-8">
+                      {ebook.description}
+                    </p>
+                  </div>
                 </div>
 
-                {/* Info */}
-                <div className="flex flex-col gap-1 max-w-[239px]">
-                  <h5 className="text-white text-sm font-semibold line-clamp-2">
-                    {ebook.title}
-                  </h5>
-                  <p className="text-[#C5C5C5] text-sm leading-[19px] tracking-tight line-clamp-8">
-                    {ebook.description}
-                  </p>
-                </div>
+                {/* Vertical divider (except last) - 24px gap includes the divider */}
+                {index < mockEbooks.length - 1 && (
+                  <div className="w-px bg-[#272727] ml-6 self-stretch" />
+                )}
               </div>
-
-              {/* Vertical divider (except last) */}
-              {index < mockEbooks.length - 1 && (
-                <div className="w-px bg-[#272727] self-stretch" />
-              )}
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
     </div>
