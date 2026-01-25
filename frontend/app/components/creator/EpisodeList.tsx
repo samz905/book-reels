@@ -26,8 +26,7 @@ export default function EpisodeList({ episodes, freeCount }: EpisodeListProps) {
             className="flex-shrink-0"
           >
             <circle cx="12" cy="12" r="10" fill="#ADADAD" />
-            <circle cx="11" cy="12" r="4" fill="#000000" />
-            <path d="M10 8.5L15 12L10 15.5V8.5Z" fill="#000000" />
+            <path d="M10 8L16 12L10 16V8Z" fill="#000000" />
           </svg>
 
           {/* Episode info */}

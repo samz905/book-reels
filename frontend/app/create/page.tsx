@@ -82,7 +82,7 @@ export default function CreatePage() {
 
           {/* Create New Story card (only in empty state) */}
           {!isPopulated && (
-            <div className="bg-card-bg-1 rounded-2xl p-6 flex flex-col">
+            <div className="bg-[#0F0E13] rounded-xl p-6 flex flex-col">
               <button
                 className="w-full py-3 rounded-lg font-semibold text-white transition-opacity hover:opacity-90"
                 style={{

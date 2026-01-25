@@ -6,8 +6,8 @@ interface StatsCardProps {
 
 export default function StatsCard({ stats }: StatsCardProps) {
   return (
-    <div className="bg-card-bg-1 rounded-2xl p-6">
-      <h2 className="text-white text-xl font-semibold mb-6">Stats</h2>
+    <div className="bg-[#0F0E13] rounded-xl p-6">
+      <h2 className="text-white text-2xl font-bold mb-6">Stats</h2>
 
       <div className="flex gap-6">
         {/* Sales Snapshot */}
