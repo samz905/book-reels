@@ -265,8 +265,7 @@ export default function CreatorStoryCard({
                 <div className="w-[354px] flex gap-3">
                   {/* Cover with price below */}
                   <div className="flex flex-col gap-2 flex-shrink-0">
-                    {/* Cover image with edit button overlay */}
-                    <div className="relative w-[100px] h-[160px] rounded bg-card-bg-2">
+                    <div className="w-[100px] h-[160px] rounded bg-card-bg-2">
                       <Image
                         src={ebook.cover}
                         alt={ebook.title}
@@ -274,14 +273,6 @@ export default function CreatorStoryCard({
                         height={160}
                         className="w-full h-full object-cover rounded"
                       />
-                      {/* Edit button on last ebook - inside cover at top-right */}
-                      {index === mockEbooks.length - 1 && (
-                        <button className="absolute top-1 right-1 w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="#E8EAED">
-                            <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
-                          </svg>
-                        </button>
-                      )}
                     </div>
                     {/* Price below cover */}
                     <span className="text-[#FF8C00] text-sm font-semibold">
@@ -290,13 +281,21 @@ export default function CreatorStoryCard({
                   </div>
 
                   {/* Info - 12px gap from cover, remaining width */}
-                  <div className="flex flex-col gap-1 flex-1 min-w-0">
+                  <div className="flex flex-col flex-1 min-w-0">
                     <h5 className="text-white text-sm font-semibold line-clamp-2">
                       {ebook.title}
                     </h5>
-                    <p className="text-[#C5C5C5] text-sm leading-[19px] tracking-tight line-clamp-8">
+                    <p className="text-[#C5C5C5] text-sm leading-[19px] tracking-tight line-clamp-7 flex-1">
                       {ebook.description}
                     </p>
+                    {/* Edit button at bottom-right of text area */}
+                    <div className="flex justify-end mt-auto">
+                      <button className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="#E8EAED">
+                          <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
