@@ -143,30 +143,15 @@ export default function CreatorStoryCard({
 
   return (
     <div className="bg-[#0F0E13] rounded-xl p-6">
-      {/* Header row: Stories + navigation arrows + edit button */}
+      {/* Header row: Stories + edit button */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-white text-2xl font-bold">Stories</h2>
-        <div className="flex items-center gap-4">
-          {/* Navigation arrows */}
-          <div className="flex items-center gap-4">
-            <button className="text-[#ADADAD] hover:text-white transition-colors">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
-              </svg>
-            </button>
-            <button className="text-[#ADADAD] hover:text-white transition-colors">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z" />
-              </svg>
-            </button>
-          </div>
-          {/* Edit button */}
-          <button className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="#E8EAED">
-              <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
-            </svg>
-          </button>
-        </div>
+        {/* Edit button */}
+        <button className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="#E8EAED">
+            <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+          </svg>
+        </button>
       </div>
 
       <div className="flex gap-6">
