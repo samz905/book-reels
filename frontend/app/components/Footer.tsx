@@ -2,13 +2,13 @@ import Link from "next/link";
 
 export default function Footer() {
   return (
-    <footer className="flex items-center justify-between px-6 py-6 mt-12">
+    <footer className="relative z-10 flex items-center justify-between px-6 py-6 mt-12">
       <div className="flex items-center gap-4">
         <a
           href="https://facebook.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-secondary hover:text-white transition-colors"
+          className="text-white/70 hover:text-white transition-colors"
           aria-label="Facebook"
         >
           <svg
@@ -25,7 +25,7 @@ export default function Footer() {
           href="https://youtube.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-secondary hover:text-white transition-colors"
+          className="text-white/70 hover:text-white transition-colors"
           aria-label="YouTube"
         >
           <svg
@@ -42,7 +42,7 @@ export default function Footer() {
           href="https://tiktok.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-secondary hover:text-white transition-colors"
+          className="text-white/70 hover:text-white transition-colors"
           aria-label="TikTok"
         >
           <svg
@@ -59,7 +59,7 @@ export default function Footer() {
           href="https://instagram.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-secondary hover:text-white transition-colors"
+          className="text-white/70 hover:text-white transition-colors"
           aria-label="Instagram"
         >
           <svg
@@ -77,25 +77,25 @@ export default function Footer() {
       <nav className="flex items-center gap-6">
         <Link
           href="/about"
-          className="text-secondary text-sm hover:text-white transition-colors"
+          className="text-white/70 text-sm hover:text-white transition-colors"
         >
           About us
         </Link>
         <Link
           href="/support"
-          className="text-secondary text-sm hover:text-white transition-colors"
+          className="text-white/70 text-sm hover:text-white transition-colors"
         >
           Support
         </Link>
         <Link
           href="/terms"
-          className="text-secondary text-sm hover:text-white transition-colors"
+          className="text-white/70 text-sm hover:text-white transition-colors"
         >
           Terms
         </Link>
         <Link
           href="/privacy"
-          className="text-secondary text-sm hover:text-white transition-colors"
+          className="text-white/70 text-sm hover:text-white transition-colors"
         >
           Privacy
         </Link>

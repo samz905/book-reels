@@ -2,7 +2,7 @@ import Link from "next/link";
 
 export default function Header() {
   return (
-    <header className="relative z-20 flex items-center justify-between px-6 py-6 bg-[#010101]">
+    <header className="sticky top-0 z-30 flex items-center justify-between px-6 py-6 bg-[#010101]">
       {/* Home icon with circle background */}
       <Link
         href="/"

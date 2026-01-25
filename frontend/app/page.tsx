@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import Header from "./components/Header";
 import Footer from "./components/Footer";
 import StoryTypeTabs from "./components/StoryTypeTabs";
@@ -11,6 +11,20 @@ import { mockStories, type Category, type StoryType } from "./data/mockStories";
 export default function Home() {
   const [activeCategory, setActiveCategory] = useState<Category>("ALL");
   const [activeStoryType, setActiveStoryType] = useState<StoryType>("ALL");
+  const [isSticky, setIsSticky] = useState(false);
+  const stickyRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (stickyRef.current) {
+        const rect = stickyRef.current.getBoundingClientRect();
+        setIsSticky(rect.top <= 86);
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   const filteredStories = useMemo(() => {
     let stories = mockStories;
@@ -27,7 +41,7 @@ export default function Home() {
   }, [activeCategory, activeStoryType]);
 
   return (
-    <div className="min-h-screen bg-gradient-page relative overflow-hidden">
+    <div className="min-h-screen bg-gradient-page relative overflow-clip">
       {/* Purple glow effects */}
       <div className="absolute w-[227px] h-[420px] left-[25px] top-[-260px] bg-purple-glow blur-[95px]" />
       <div className="absolute w-[227px] h-[420px] left-[740px] top-[1507px] bg-purple-glow blur-[95px]" />
@@ -68,21 +82,29 @@ export default function Home() {
           </button>
         </section>
 
-        {/* Story Type Tabs */}
-        <section className="max-w-[1440px] mx-auto mb-5">
-          <StoryTypeTabs
-            activeType={activeStoryType}
-            onTypeChange={setActiveStoryType}
-          />
-        </section>
+        {/* Sticky Tabs Container */}
+        <div
+          ref={stickyRef}
+          className={`sticky top-[86px] z-20 py-4 -mx-6 px-6 transition-colors duration-200 ${
+            isSticky ? "bg-black/80 backdrop-blur-sm" : ""
+          }`}
+        >
+          {/* Story Type Tabs */}
+          <section className="max-w-[1440px] mx-auto mb-5">
+            <StoryTypeTabs
+              activeType={activeStoryType}
+              onTypeChange={setActiveStoryType}
+            />
+          </section>
 
-        {/* Category Tabs */}
-        <section className="max-w-[1440px] mx-auto mb-8">
-          <CategoryTabs
-            activeCategory={activeCategory}
-            onCategoryChange={setActiveCategory}
-          />
-        </section>
+          {/* Category Tabs */}
+          <section className="max-w-[1440px] mx-auto">
+            <CategoryTabs
+              activeCategory={activeCategory}
+              onCategoryChange={setActiveCategory}
+            />
+          </section>
+        </div>
 
         {/* Story Grid */}
         <section className="max-w-[1392px] mx-auto">
