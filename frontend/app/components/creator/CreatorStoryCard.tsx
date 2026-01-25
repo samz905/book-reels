@@ -65,6 +65,8 @@ export default function CreatorStoryCard({
   const [isDragging, setIsDragging] = useState(false);
   const [startX, setStartX] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true);
 
   // Handle mouse down - start drag
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -106,6 +108,35 @@ export default function CreatorStoryCard({
     el.addEventListener("wheel", handleWheel, { passive: false });
     return () => el.removeEventListener("wheel", handleWheel);
   }, []);
+
+  // Check scroll position for arrow states
+  const checkScrollPosition = useCallback(() => {
+    const el = ebooksScrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 0);
+    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 1);
+  }, []);
+
+  // Update scroll position on scroll
+  useEffect(() => {
+    const el = ebooksScrollRef.current;
+    if (!el) return;
+
+    el.addEventListener("scroll", checkScrollPosition);
+    checkScrollPosition(); // Initial check
+    return () => el.removeEventListener("scroll", checkScrollPosition);
+  }, [checkScrollPosition]);
+
+  // Navigation handlers
+  const scrollLeftHandler = () => {
+    if (!ebooksScrollRef.current) return;
+    ebooksScrollRef.current.scrollBy({ left: -380, behavior: "smooth" });
+  };
+
+  const scrollRightHandler = () => {
+    if (!ebooksScrollRef.current) return;
+    ebooksScrollRef.current.scrollBy({ left: 380, behavior: "smooth" });
+  };
 
   // Calculate free episode count (first 4 are free per design)
   const freeCount = 4;
@@ -249,11 +280,38 @@ export default function CreatorStoryCard({
 
       {/* Dive deeper section */}
       <div>
-        <div className="mb-6">
-          <h4 className="text-white text-xl font-semibold mb-2">
-            Dive deeper into the story
-          </h4>
-          <p className="text-[#ADADAD] text-sm tracking-tight">Ebooks</p>
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h4 className="text-white text-xl font-semibold mb-2">
+              Dive deeper into the story
+            </h4>
+            <p className="text-[#ADADAD] text-sm tracking-tight">Ebooks</p>
+          </div>
+          {/* Navigation arrows */}
+          <div className="flex items-center gap-4">
+            <button
+              onClick={scrollLeftHandler}
+              className={`transition-colors ${
+                canScrollLeft ? "text-white" : "text-[#ADADAD]"
+              }`}
+              disabled={!canScrollLeft}
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+              </svg>
+            </button>
+            <button
+              onClick={scrollRightHandler}
+              className={`transition-colors ${
+                canScrollRight ? "text-white" : "text-[#ADADAD]"
+              }`}
+              disabled={!canScrollRight}
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Horizontally scrollable ebooks container */}
