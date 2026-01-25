@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import Image from "next/image";
 import { CreatorProfile } from "@/app/data/mockCreatorData";
 
 interface ProfileEditModalProps {
@@ -21,6 +20,7 @@ export default function ProfileEditModal({
   const [bio, setBio] = useState(profile.bio);
   const [avatar, setAvatar] = useState(profile.avatar);
   const [mounted, setMounted] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -39,9 +39,26 @@ export default function ProfileEditModal({
   };
 
   const handleUpload = () => {
-    // In a real app, this would open a file picker
-    // For now, we'll just set a placeholder
-    setAvatar("/avatars/creator-avatar.jpg");
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith("image/")) {
+      alert("Please select an image file");
+      return;
+    }
+
+    // Read and convert to data URL
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      setAvatar(dataUrl);
+    };
+    reader.readAsDataURL(file);
   };
 
   const modalContent = (
@@ -68,15 +85,22 @@ export default function ProfileEditModal({
           </button>
         </div>
 
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+
         {/* Avatar section */}
         <div className="flex items-center gap-4 mb-6">
           <div className="w-20 h-20 rounded-full bg-card-bg-2 overflow-hidden flex items-center justify-center">
             {avatar ? (
-              <Image
+              <img
                 src={avatar}
                 alt="Profile"
-                width={80}
-                height={80}
                 className="w-full h-full object-cover"
               />
             ) : (
