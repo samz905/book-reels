@@ -4,70 +4,59 @@ import { Episode } from "@/app/data/mockCreatorData";
 
 interface EpisodeListProps {
   episodes: Episode[];
-  onToggleFree: (episodeId: string) => void;
+  freeCount: number;
 }
 
-export default function EpisodeList({
-  episodes,
-  onToggleFree,
-}: EpisodeListProps) {
+export default function EpisodeList({ episodes, freeCount }: EpisodeListProps) {
   return (
-    <div className="space-y-2 mt-4 border-t border-border pt-4">
+    <div className="flex flex-col gap-3 mt-4 border-t border-[#2C2C43] pt-4">
       {episodes.map((episode) => (
         <div
           key={episode.id}
-          className="flex items-center justify-between py-2 px-3 hover:bg-card-bg-2 rounded-lg transition-colors"
+          className={`flex items-center gap-3 py-2.5 px-3 ${
+            episode.number === 1 ? "border-b-2 border-[#ADADAD] rounded-lg" : ""
+          }`}
         >
-          <div className="flex items-center gap-3">
-            {/* Checkbox */}
-            <button
-              onClick={() => onToggleFree(episode.id)}
-              className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-                episode.isFree
-                  ? "bg-green-500 border-green-500"
-                  : "border-white/30 hover:border-white/50"
-              }`}
-            >
-              {episode.isFree && (
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="white"
-                  strokeWidth="3"
-                >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              )}
-            </button>
+          {/* Play circle icon */}
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            className="flex-shrink-0"
+          >
+            <circle cx="12" cy="12" r="10" fill="#ADADAD" />
+            <circle cx="11" cy="12" r="4" fill="#000000" />
+            <path d="M10 8.5L15 12L10 15.5V8.5Z" fill="#000000" />
+          </svg>
 
-            {/* Episode info */}
-            <span className="text-white text-sm">
-              Episode {episode.number} - {episode.name}
-            </span>
-          </div>
+          {/* Episode info */}
+          <span className="text-white text-xl tracking-tight">
+            Episode {episode.number}:
+          </span>
+          <span className="text-white text-xl tracking-tight">
+            {episode.name}
+          </span>
 
-          {/* Status tag */}
-          {episode.isFree ? (
-            <span className="text-green-500 text-xs font-medium px-2 py-1 rounded bg-green-500/10 border border-green-500/20">
-              Free
+          {/* Status */}
+          {episode.number <= freeCount ? (
+            <span className="text-[#ADADAD] text-xl tracking-tight">
+              (Free)
             </span>
           ) : (
-            <span className="flex items-center gap-1 text-purple text-xs font-medium px-2 py-1 rounded bg-purple/10 border border-purple/20">
+            <div className="flex items-center gap-1">
               <svg
-                width="12"
-                height="12"
+                width="16"
+                height="16"
                 viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
+                fill="#ADADAD"
               >
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6zm9 14H6V10h12v10zm-6-3c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z" />
               </svg>
-              Subscribe to watch
-            </span>
+              <span className="text-[#1ED760] text-xl tracking-tight">
+                Subscribe to watch
+              </span>
+            </div>
           )}
         </div>
       ))}
