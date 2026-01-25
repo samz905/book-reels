@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import Image from "next/image";
 import { CreatorProfile } from "@/app/data/mockCreatorData";
 
@@ -19,6 +20,12 @@ export default function ProfileEditModal({
   const [username, setUsername] = useState(profile.username);
   const [bio, setBio] = useState(profile.bio);
   const [avatar, setAvatar] = useState(profile.avatar);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,7 +44,7 @@ export default function ProfileEditModal({
     setAvatar("/avatars/creator-avatar.jpg");
   };
 
-  return (
+  const modalContent = (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000]">
       <div className="bg-card-bg-1 rounded-2xl p-6 w-full max-w-md mx-4">
         {/* Header */}
@@ -175,4 +182,8 @@ export default function ProfileEditModal({
       </div>
     </div>
   );
+
+  if (!mounted) return null;
+
+  return createPortal(modalContent, document.body);
 }
