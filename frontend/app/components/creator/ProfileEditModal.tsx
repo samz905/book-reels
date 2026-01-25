@@ -38,7 +38,7 @@ export default function ProfileEditModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000]">
       <div className="bg-card-bg-1 rounded-2xl p-6 w-full max-w-md mx-4">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
