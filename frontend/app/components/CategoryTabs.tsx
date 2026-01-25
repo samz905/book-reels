@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { CATEGORIES, type Category } from "../data/mockStories";
 
 interface CategoryTabsProps {
@@ -42,11 +42,20 @@ export default function CategoryTabs({
     setIsDragging(false);
   }, []);
 
-  // Handle wheel - vertical to horizontal scroll
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (!scrollRef.current) return;
-    e.preventDefault();
-    scrollRef.current.scrollLeft += e.deltaY;
+  // Handle wheel - vertical to horizontal scroll with non-passive listener
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+      }
+    };
+
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
   }, []);
 
   return (
@@ -56,7 +65,6 @@ export default function CategoryTabs({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
-      onWheel={handleWheel}
       className="overflow-x-auto scrollbar-hide cursor-grab active:cursor-grabbing"
       style={{ scrollBehavior: "smooth" }}
     >
