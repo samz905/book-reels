@@ -14,6 +14,8 @@ export default function PublicCreatorProfilePage() {
   // Fetch creator data
   const creator = getCreatorByUsername(username);
 
+  // Header height is 86px (sticky top-0 z-30)
+
   // 404 - Creator not found
   if (!creator) {
     return (
@@ -46,8 +48,8 @@ export default function PublicCreatorProfilePage() {
 
       <Header />
 
-      {/* Profile Header */}
-      <div className="px-6 py-6 max-w-7xl mx-auto relative z-10">
+      {/* Sticky Profile Header */}
+      <div className="sticky top-[86px] z-20 px-6 py-6 max-w-7xl mx-auto">
         <PublicProfileHeader
           profile={creator.profile}
           subscriptionPrice={creator.subscription.monthlyPrice}
