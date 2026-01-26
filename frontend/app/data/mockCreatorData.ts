@@ -71,10 +71,10 @@ export const defaultSubscription: Subscription = {
 
 // Mock populated data
 export const mockProfile: CreatorProfile = {
-  name: "Creator name",
-  username: "username",
-  bio: "Hello, my name is James, and I work as a UI/UX designer. I create user-friendly and visually appealing interfaces that improve user experience and help websites and apps convert visitors into real customers, increasing engagement, trust, and overall business revenue.",
-  avatar: "https://picsum.photos/seed/creator/200/200",
+  name: "Luna Steel",
+  username: "luna-steel",
+  bio: "Hello, my name is Luna, and I work as a UI/UX designer. I create user-friendly and visually appealing interfaces that improve user experience and help websites and apps convert visitors into real customers, increasing engagement, trust, and overall business revenue.",
+  avatar: "https://picsum.photos/seed/avatar18/200/200",
   storiesCount: 5,
   episodesCount: 103,
   newEpisodesWeekly: 19,
