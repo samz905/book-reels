@@ -55,10 +55,7 @@ export default function CreatePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-page relative overflow-clip">
-      {/* Purple glow effects */}
-      <div className="absolute w-[227px] h-[420px] left-[25px] top-[-260px] bg-purple-glow blur-[95px]" />
-
+    <div className="min-h-screen bg-black relative overflow-clip">
       <Header />
 
       <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto">

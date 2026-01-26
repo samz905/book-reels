@@ -95,7 +95,13 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
   const freeCount = 4;
 
   return (
-    <div className="bg-[#0F0E13] rounded-xl p-6">
+    <div
+      className="rounded-xl p-6"
+      style={{
+        background:
+          "linear-gradient(180deg, rgba(115, 112, 255, 0) 4.21%, rgba(115, 112, 255, 0.3) 100%), #0F0E13",
+      }}
+    >
       <div className="flex gap-6">
         {/* Cover image - 205x290 per spec */}
         <div className="w-[205px] h-[290px] rounded-xl overflow-hidden border border-[#262626] flex-shrink-0">

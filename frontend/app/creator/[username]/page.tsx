@@ -36,16 +36,7 @@ export default function PublicCreatorProfilePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-page relative overflow-clip">
-      {/* Purple glow effects */}
-      <div
-        className="absolute left-1/2 -translate-x-1/2 top-[100px] w-[1400px] h-[300px] pointer-events-none"
-        style={{
-          background: "rgba(181, 179, 255, 0.4)",
-          filter: "blur(95px)",
-        }}
-      />
-
+    <div className="min-h-screen bg-black relative overflow-clip">
       <Header />
 
       {/* Sticky Profile Header */}
