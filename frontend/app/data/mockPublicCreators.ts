@@ -182,7 +182,49 @@ export const mockPublicCreators: Record<string, PublicCreatorProfile> = {
 
 // Helper function to get creator by username
 export function getCreatorByUsername(username: string): PublicCreatorProfile | null {
-  return mockPublicCreators[username] || null;
+  // First try exact match
+  if (mockPublicCreators[username]) {
+    return mockPublicCreators[username];
+  }
+
+  // Fallback: generate a basic profile from the username
+  // This allows any creator link to work even if not in mockPublicCreators
+  const name = username
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+
+  return {
+    profile: {
+      name,
+      username,
+      bio: "Creator on Book Reels. Follow for amazing stories, engaging episodes, and exclusive content.",
+      avatar: `https://picsum.photos/seed/${username}/200/200`,
+      storiesCount: 3,
+      episodesCount: 45,
+      newEpisodesWeekly: 5,
+    },
+    subscription: {
+      monthlyPrice: 6.99,
+      description: "Unlock all episodes and exclusive content",
+    },
+    stories: [
+      {
+        id: `${username}-story-1`,
+        title: "Story Name",
+        type: "video",
+        episodeCount: 15,
+        viewCount: 850000,
+        description:
+          "An amazing story that will captivate your imagination. Follow along as we explore themes of adventure, mystery, and discovery.",
+        cover: `https://picsum.photos/seed/${username}-cover/300/450`,
+        episodes: createEpisodes(15, `${username}-story-1`),
+        likes: 1500,
+        genre: ["Fantasy", "Adventure"],
+        ebooks: createEbooks(`${username}-story-1`),
+      },
+    ],
+  };
 }
 
 // Re-export formatViewCount for convenience
