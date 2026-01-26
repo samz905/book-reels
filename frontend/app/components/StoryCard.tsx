@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import type { Story } from "../data/mockStories";
 
 interface StoryCardProps {
@@ -70,7 +71,11 @@ export default function StoryCard({ story }: StoryCardProps) {
           </p>
         </div>
 
-        <div className="flex items-center gap-[5px]">
+        <Link
+          href={`/creator/${story.creatorUsername}`}
+          onClick={(e) => e.stopPropagation()}
+          className="flex items-center gap-[5px] hover:opacity-80 transition-opacity"
+        >
           <Image
             src={story.creatorAvatar}
             alt={story.creatorName}
@@ -78,10 +83,10 @@ export default function StoryCard({ story }: StoryCardProps) {
             height={24}
             className="rounded-full"
           />
-          <span className="text-white font-semibold text-sm leading-[18px]">
+          <span className="text-white font-semibold text-sm leading-[18px] hover:text-purple transition-colors">
             {story.creatorName}
           </span>
-        </div>
+        </Link>
       </div>
     </article>
   );

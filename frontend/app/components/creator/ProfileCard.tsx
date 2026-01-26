@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { CreatorProfile } from "@/app/data/mockCreatorData";
 import ProfileEditModal from "./ProfileEditModal";
 
@@ -106,9 +107,12 @@ export default function ProfileCard({
         {/* View Public Profile button - only show when populated */}
         {isPopulated && (
           <div className="mt-4 flex justify-end">
-            <button className="px-4 py-2 border border-purple text-purple text-sm font-medium rounded-lg hover:bg-purple/10 transition-colors">
+            <Link
+              href={`/creator/${profile.username}`}
+              className="px-4 py-2 border border-purple text-purple text-sm font-medium rounded-lg hover:bg-purple/10 transition-colors"
+            >
               View Public Profile
-            </button>
+            </Link>
           </div>
         )}
       </div>
