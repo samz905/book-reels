@@ -1,7 +1,6 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useState, useEffect, useRef } from "react";
 import Header from "../../components/Header";
 import Footer from "../../components/Footer";
 import PublicProfileHeader from "../../components/public/PublicProfileHeader";
@@ -12,26 +11,8 @@ export default function PublicCreatorProfilePage() {
   const params = useParams();
   const username = params.username as string;
 
-  // Sticky header state
-  const [isSticky, setIsSticky] = useState(false);
-  const headerRef = useRef<HTMLDivElement>(null);
-
   // Fetch creator data
   const creator = getCreatorByUsername(username);
-
-  // Handle scroll for sticky effect
-  useEffect(() => {
-    const handleScroll = () => {
-      if (headerRef.current) {
-        const rect = headerRef.current.getBoundingClientRect();
-        // Header becomes sticky when it reaches the top of the viewport (after main header)
-        setIsSticky(rect.top <= 86);
-      }
-    };
-
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
 
   // 404 - Creator not found
   if (!creator) {
@@ -56,32 +37,26 @@ export default function PublicCreatorProfilePage() {
     <div className="min-h-screen bg-gradient-page relative overflow-clip">
       {/* Purple glow effects */}
       <div
-        className="absolute left-1/2 -translate-x-1/2 top-0 w-[800px] h-[600px] pointer-events-none"
+        className="absolute left-1/2 -translate-x-1/2 top-[100px] w-[1400px] h-[300px] pointer-events-none"
         style={{
-          background:
-            "radial-gradient(ellipse at center top, rgba(181, 179, 255, 0.15) 0%, transparent 70%)",
+          background: "rgba(181, 179, 255, 0.4)",
+          filter: "blur(95px)",
         }}
       />
 
       <Header />
 
-      {/* Sticky Profile Header */}
-      <div
-        ref={headerRef}
-        className={`sticky top-[86px] z-20 px-6 max-w-7xl mx-auto transition-all ${
-          isSticky ? "py-2" : "py-6"
-        }`}
-      >
+      {/* Profile Header */}
+      <div className="px-6 py-6 max-w-7xl mx-auto relative z-10">
         <PublicProfileHeader
           profile={creator.profile}
           subscriptionPrice={creator.subscription.monthlyPrice}
           subscriptionDescription={creator.subscription.description}
-          isSticky={isSticky}
         />
       </div>
 
       {/* Stories List */}
-      <main className="px-6 pb-8 max-w-7xl mx-auto">
+      <main className="px-6 pb-8 max-w-7xl mx-auto relative z-10">
         <div className="space-y-6">
           {creator.stories.map((story) => (
             <PublicStoryCard key={story.id} story={story} />
