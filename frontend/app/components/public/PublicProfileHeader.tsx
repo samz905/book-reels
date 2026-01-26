@@ -35,7 +35,13 @@ export default function PublicProfileHeader({
   };
 
   return (
-    <div className="bg-[#0F0E13] rounded-xl p-8 relative">
+    <div
+      className="rounded-xl p-8 relative"
+      style={{
+        background:
+          "linear-gradient(180deg, rgba(115, 112, 255, 0) 4.21%, rgba(115, 112, 255, 0.3) 100%), #0F0E13",
+      }}
+    >
       {/* Main content row */}
       <div className="flex items-start justify-between gap-6">
         {/* Left side: Avatar + Info */}
