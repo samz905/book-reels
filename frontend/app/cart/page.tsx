@@ -64,23 +64,23 @@ export default function CartPage() {
 
       <main className="px-6 py-8 max-w-7xl mx-auto">
         {/* Tabs */}
-        <div className="flex items-center gap-6 mb-6">
+        <div className="flex items-center gap-5 mb-6">
           <button
             onClick={() => setActiveTab("subscriptions")}
-            className={`text-sm font-bold uppercase tracking-wide pb-2 transition-colors ${
+            className={`px-4 py-2 text-base uppercase tracking-[0.25px] transition-colors ${
               activeTab === "subscriptions"
-                ? "text-white border-b-2 border-white"
-                : "text-[#BEC0C9] hover:text-white"
+                ? "text-white font-bold border-b-2 border-white rounded-b-lg"
+                : "text-[#ADADAD] font-medium hover:text-white"
             }`}
           >
             Subscriptions
           </button>
           <button
             onClick={() => setActiveTab("ebooks")}
-            className={`text-sm font-bold uppercase tracking-wide pb-2 transition-colors ${
+            className={`px-3 py-2 text-base uppercase tracking-[0.25px] transition-colors ${
               activeTab === "ebooks"
-                ? "text-white border-b-2 border-white"
-                : "text-[#BEC0C9] hover:text-white"
+                ? "text-white font-bold border-b-2 border-white rounded-b-lg"
+                : "text-[#ADADAD] font-medium hover:text-white"
             }`}
           >
             Ebooks
