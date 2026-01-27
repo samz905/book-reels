@@ -1,0 +1,109 @@
+"use client";
+
+import { useRef } from "react";
+import Image from "next/image";
+import { PurchasedEbook } from "../../data/mockAccountData";
+
+interface EbooksLibraryCardProps {
+  ebooks: PurchasedEbook[];
+  onReadNow?: (ebookId: string) => void;
+}
+
+export default function EbooksLibraryCard({
+  ebooks,
+  onReadNow,
+}: EbooksLibraryCardProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const scroll = (direction: "left" | "right") => {
+    if (scrollRef.current) {
+      const scrollAmount = 378; // Card width + gap
+      scrollRef.current.scrollBy({
+        left: direction === "left" ? -scrollAmount : scrollAmount,
+        behavior: "smooth",
+      });
+    }
+  };
+
+  return (
+    <div className="bg-[#0F0E13] rounded-2xl p-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-white text-2xl font-bold">Ebooks Library</h2>
+
+        {/* Navigation Arrows */}
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => scroll("left")}
+            className="text-[#ADADAD] hover:text-white transition-colors"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M15.41 7.41L14 6L8 12L14 18L15.41 16.59L10.83 12L15.41 7.41Z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+          <button
+            onClick={() => scroll("right")}
+            className="text-[#ADADAD] hover:text-white transition-colors"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M8.59 16.59L10 18L16 12L10 6L8.59 7.41L13.17 12L8.59 16.59Z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Ebooks Scroll Container */}
+      <div
+        ref={scrollRef}
+        className="flex gap-6 overflow-x-auto scrollbar-hide"
+      >
+        {ebooks.map((ebook, index) => (
+          <div key={ebook.id} className="flex gap-6 flex-shrink-0">
+            {/* Ebook Card */}
+            <div className="flex gap-3 w-[322px]">
+              {/* Cover and Read Now */}
+              <div className="flex flex-col gap-2 flex-shrink-0">
+                <div className="w-[100px] h-[160px] rounded-lg overflow-hidden bg-[#272727]">
+                  <Image
+                    src={ebook.coverUrl}
+                    alt={ebook.title}
+                    width={100}
+                    height={160}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <button
+                  onClick={() => onReadNow?.(ebook.id)}
+                  className="text-green-3 text-base font-bold hover:opacity-80 transition-opacity text-left"
+                >
+                  Read Now
+                </button>
+              </div>
+
+              {/* Title and Description */}
+              <div className="flex flex-col gap-1 min-w-0">
+                <h3 className="text-white text-sm font-semibold line-clamp-2 leading-[18px]">
+                  {ebook.title}
+                </h3>
+                <p className="text-[#C5C5C5] text-sm font-normal leading-[19px] tracking-[-0.025em] line-clamp-8">
+                  {ebook.description}
+                </p>
+              </div>
+            </div>
+
+            {/* Divider (except for last item) */}
+            {index < ebooks.length - 1 && (
+              <div className="w-px h-[202px] bg-[#272727] flex-shrink-0" />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

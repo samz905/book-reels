@@ -1,81 +1,153 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
+import PersonalInfoCard from "../components/account/PersonalInfoCard";
+import SubscriptionsCard from "../components/account/SubscriptionsCard";
+import EbooksLibraryCard from "../components/account/EbooksLibraryCard";
+import PaymentPayoutCard from "../components/account/PaymentPayoutCard";
+import DeleteAccountModal from "../components/account/DeleteAccountModal";
+import {
+  mockSubscriptions,
+  mockPurchasedEbooks,
+  mockPaymentMethod,
+  mockPayoutMethod,
+} from "../data/mockAccountData";
 
 export default function AccountPage() {
-  const { user, loading, signOut } = useAuth();
   const router = useRouter();
+  const { user, loading, signOut } = useAuth();
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
-  const handleSignOut = async () => {
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push("/login");
+    }
+  }, [user, loading, router]);
+
+  const handleLogout = async () => {
     await signOut();
     router.push("/");
-    router.refresh();
   };
 
+  const handleDeleteAccount = async () => {
+    // TODO: Implement account deletion
+    console.log("Delete account");
+    setShowDeleteModal(false);
+  };
+
+  // Show loading state while checking auth
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-page flex items-center justify-center">
+      <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="text-white">Loading...</div>
       </div>
     );
   }
 
+  // Don't render if not authenticated (will redirect)
   if (!user) {
-    router.push("/login");
     return null;
   }
 
-  return (
-    <div className="min-h-screen bg-gradient-page relative overflow-clip">
-      <div className="absolute w-[227px] h-[420px] left-[25px] top-[-260px] bg-purple-glow blur-[95px]" />
+  // Get user info from auth
+  const userName =
+    user.user_metadata?.full_name ||
+    user.user_metadata?.name ||
+    user.email?.split("@")[0] ||
+    "User";
+  const userEmail = user.email || "";
 
+  return (
+    <div className="min-h-screen bg-black relative overflow-clip">
       <Header />
 
-      <main className="relative z-10 flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-[400px] bg-card-bg-1 rounded-2xl p-8">
-          <h1 className="text-white text-2xl font-semibold text-center mb-8">
-            Account
-          </h1>
+      <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto space-y-8">
+        {/* Personal Information */}
+        <PersonalInfoCard
+          name={userName}
+          email={userEmail}
+          onNameUpdate={(newName) => {
+            // TODO: Update name in Supabase
+            console.log("Update name:", newName);
+          }}
+          onPasswordUpdate={(newPassword) => {
+            // TODO: Update password in Supabase
+            console.log("Update password");
+          }}
+        />
 
-          <div className="flex flex-col items-center mb-8">
-            <div className="w-20 h-20 rounded-full bg-purple flex items-center justify-center mb-4">
-              {user.user_metadata?.avatar_url ? (
-                <img
-                  src={user.user_metadata.avatar_url}
-                  alt="Avatar"
-                  className="w-full h-full rounded-full object-cover"
-                />
-              ) : (
-                <svg
-                  width="40"
-                  height="40"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  className="text-white"
-                >
-                  <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
-                </svg>
-              )}
-            </div>
-            <p className="text-white font-medium">
-              {user.user_metadata?.full_name || user.email}
-            </p>
-            <p className="text-white/50 text-sm">{user.email}</p>
+        {/* Subscriptions */}
+        <SubscriptionsCard
+          subscriptions={mockSubscriptions}
+          onUnsubscribe={(id) => {
+            // TODO: Handle unsubscribe
+            console.log("Unsubscribe:", id);
+          }}
+          onSubscribe={(id) => {
+            // TODO: Handle subscribe
+            console.log("Subscribe:", id);
+          }}
+        />
+
+        {/* Ebooks Library */}
+        <EbooksLibraryCard
+          ebooks={mockPurchasedEbooks}
+          onReadNow={(id) => {
+            // TODO: Open ebook reader
+            console.log("Read ebook:", id);
+          }}
+        />
+
+        {/* Payment & Payout Methods */}
+        <PaymentPayoutCard
+          paymentMethod={mockPaymentMethod}
+          payoutMethod={mockPayoutMethod}
+          onPaymentUpdate={(data) => {
+            // TODO: Update payment method
+            console.log("Update payment:", data);
+          }}
+          onPayoutUpdate={(data) => {
+            // TODO: Update payout method
+            console.log("Update payout:", data);
+          }}
+        />
+
+        {/* Delete Account & Log Out */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowDeleteModal(true)}
+              className="text-[#AE1414] text-xl font-bold hover:opacity-80 transition-opacity"
+            >
+              Delete Account
+            </button>
+            <span className="text-[#ADADAD] text-sm font-semibold">
+              This will permanently delete your account, purchases, and
+              activity. This action can&apos;t be undone.
+            </span>
           </div>
-
           <button
-            onClick={handleSignOut}
-            className="w-full py-3 rounded-lg font-semibold text-white border border-red-500 text-red-400 hover:bg-red-500/10 transition-colors"
+            onClick={handleLogout}
+            className="text-green-3 text-base font-bold hover:opacity-80 transition-opacity"
           >
-            Sign Out
+            Log Out
           </button>
         </div>
       </main>
 
       <Footer />
+
+      {/* Delete Account Modal */}
+      <DeleteAccountModal
+        isOpen={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
+        onConfirm={handleDeleteAccount}
+      />
     </div>
   );
 }
