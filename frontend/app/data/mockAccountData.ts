@@ -45,7 +45,7 @@ export const mockSubscriptions: Subscription[] = [
   {
     id: "sub-1",
     creatorName: "Jane Cooper",
-    creatorAvatar: "/covers/cover1.jpg",
+    creatorAvatar: "https://picsum.photos/seed/creator1/100/100",
     creatorUsername: "jane-cooper",
     price: 9.99,
     status: "active",
@@ -54,7 +54,7 @@ export const mockSubscriptions: Subscription[] = [
   {
     id: "sub-2",
     creatorName: "Jane Cooper",
-    creatorAvatar: "/covers/cover2.jpg",
+    creatorAvatar: "https://picsum.photos/seed/creator2/100/100",
     creatorUsername: "jane-cooper-2",
     price: 9.99,
     status: "active",
@@ -63,7 +63,7 @@ export const mockSubscriptions: Subscription[] = [
   {
     id: "sub-3",
     creatorName: "Eleanor Pena",
-    creatorAvatar: "/covers/cover3.jpg",
+    creatorAvatar: "https://picsum.photos/seed/creator3/100/100",
     creatorUsername: "eleanor-pena",
     price: 9.99,
     status: "canceled",
@@ -77,7 +77,7 @@ export const mockPurchasedEbooks: PurchasedEbook[] = [
     title: "The Wolf Prince's Mate (The Royals Of Presley Acres)",
     description:
       "Hello, my name is James, and I work as a UI/UX designer. I create user-friendly and visually appealing interfaces that improve user experience and help websites and apps convert visitors into real customers, increasing engagement, trust, and overall business revenue.",
-    coverUrl: "/covers/cover1.jpg",
+    coverUrl: "https://picsum.photos/seed/ebook1/200/320",
     storyTitle: "Elementally Tangled",
   },
   {
@@ -85,7 +85,7 @@ export const mockPurchasedEbooks: PurchasedEbook[] = [
     title: "The Wolf Prince's Mate (The Royals Of Presley Acres)",
     description:
       "Hello, my name is James, and I work as a UI/UX designer. I create user-friendly and visually appealing interfaces that improve user experience and help websites and apps convert visitors into real customers, increasing engagement, trust, and overall business revenue.",
-    coverUrl: "/covers/cover2.jpg",
+    coverUrl: "https://picsum.photos/seed/ebook2/200/320",
     storyTitle: "Reborn",
   },
   {
@@ -93,7 +93,7 @@ export const mockPurchasedEbooks: PurchasedEbook[] = [
     title: "The Wolf Prince's Mate (The Royals Of Presley Acres)",
     description:
       "Hello, my name is James, and I work as a UI/UX designer. I create user-friendly and visually appealing interfaces that improve user experience and help websites and apps convert visitors into real customers, increasing engagement, trust, and overall business revenue.",
-    coverUrl: "/covers/cover3.jpg",
+    coverUrl: "https://picsum.photos/seed/ebook3/200/320",
     storyTitle: "Eternal Descendants",
   },
   {
@@ -101,7 +101,7 @@ export const mockPurchasedEbooks: PurchasedEbook[] = [
     title: "The Wolf Prince's Mate (The Royals Of Presley Acres)",
     description:
       "Hello, my name is James, and I work as a UI/UX designer. I create user-friendly and visually appealing interfaces that improve user experience and help websites and apps convert visitors into real customers, increasing engagement, trust, and overall business revenue.",
-    coverUrl: "/covers/cover4.jpg",
+    coverUrl: "https://picsum.photos/seed/ebook4/200/320",
     storyTitle: "Dark Moon Rising",
   },
 ];
