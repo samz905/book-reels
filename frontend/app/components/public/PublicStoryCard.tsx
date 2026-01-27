@@ -291,7 +291,7 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
                   <div key={ebook.id} className="flex items-stretch">
                     {/* Ebook card - 354px wide with 322px content area */}
                     <div className="w-[354px] flex gap-3">
-                      {/* Cover with price below */}
+                      {/* Cover with price + buy below */}
                       <div className="flex flex-col gap-2 flex-shrink-0">
                         <div className="w-[100px] h-[160px] rounded bg-card-bg-2">
                           <Image
@@ -302,10 +302,16 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
                             className="w-full h-full object-cover rounded"
                           />
                         </div>
-                        {/* Price below cover */}
-                        <span className="text-[#FF8C00] text-sm font-semibold">
-                          $ {ebook.price.toFixed(2)}
-                        </span>
+                        {/* Price + Buy row below cover */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-purple text-sm font-semibold">
+                            ${ebook.price.toFixed(2)}
+                          </span>
+                          <span className="text-[#ADADAD]">|</span>
+                          <button className="text-purple text-sm font-bold hover:opacity-80 transition-opacity">
+                            Buy
+                          </button>
+                        </div>
                       </div>
 
                       {/* Info - 12px gap from cover, remaining width */}
@@ -313,15 +319,9 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
                         <h5 className="text-white text-sm font-semibold line-clamp-2">
                           {ebook.title}
                         </h5>
-                        <p className="text-[#C5C5C5] text-sm leading-[19px] tracking-tight line-clamp-7 flex-1">
+                        <p className="text-[#C5C5C5] text-sm leading-[19px] tracking-tight line-clamp-8 flex-1">
                           {ebook.description}
                         </p>
-                        {/* Buy button at bottom-right (instead of edit) */}
-                        <div className="flex justify-end mt-auto">
-                          <button className="px-4 py-1.5 bg-[#3E3D40] rounded-lg text-white text-sm font-medium hover:bg-[#4E4D50] transition-colors">
-                            Buy
-                          </button>
-                        </div>
                       </div>
                     </div>
 
