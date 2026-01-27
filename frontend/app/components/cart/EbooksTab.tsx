@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import { CartEbook } from "../../data/mockCartData";
 
@@ -9,18 +10,132 @@ interface EbooksTabProps {
 }
 
 export default function EbooksTab({ ebooks, onRemove }: EbooksTabProps) {
+  // Horizontal scroll state
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [startX, setStartX] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true);
+
+  // Handle mouse down - start drag
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!scrollRef.current) return;
+    setIsDragging(true);
+    setStartX(e.pageX - scrollRef.current.offsetLeft);
+    setScrollLeft(scrollRef.current.scrollLeft);
+  }, []);
+
+  // Handle mouse move - drag scroll
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isDragging || !scrollRef.current) return;
+      e.preventDefault();
+      const x = e.pageX - scrollRef.current.offsetLeft;
+      const walk = (x - startX) * 1.5;
+      scrollRef.current.scrollLeft = scrollLeft - walk;
+    },
+    [isDragging, startX, scrollLeft]
+  );
+
+  // Handle mouse up/leave - stop drag
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  // Handle wheel - vertical to horizontal scroll with non-passive listener
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+      }
+    };
+
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  // Check scroll position for arrow states
+  const checkScrollPosition = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 0);
+    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 1);
+  }, []);
+
+  // Update scroll position on scroll
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    el.addEventListener("scroll", checkScrollPosition);
+    checkScrollPosition(); // Initial check
+    return () => el.removeEventListener("scroll", checkScrollPosition);
+  }, [checkScrollPosition]);
+
+  // Navigation handlers
+  const scrollLeftHandler = () => {
+    if (!scrollRef.current) return;
+    scrollRef.current.scrollBy({ left: -300, behavior: "smooth" });
+  };
+
+  const scrollRightHandler = () => {
+    if (!scrollRef.current) return;
+    scrollRef.current.scrollBy({ left: 300, behavior: "smooth" });
+  };
+
   return (
     <div className="bg-[#0F0E13] rounded-xl p-6">
-      {/* Header */}
-      <h2 className="text-white text-2xl font-bold mb-3">Ebooks</h2>
+      {/* Header with arrows */}
+      <div className="flex items-start justify-between mb-3">
+        <h2 className="text-white text-2xl font-bold">Ebooks</h2>
+        {/* Navigation arrows */}
+        <div className="flex items-center gap-4">
+          <button
+            onClick={scrollLeftHandler}
+            className={`transition-colors ${
+              canScrollLeft ? "text-white" : "text-[#ADADAD]"
+            }`}
+            disabled={!canScrollLeft}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+            </svg>
+          </button>
+          <button
+            onClick={scrollRightHandler}
+            className={`transition-colors ${
+              canScrollRight ? "text-white" : "text-[#ADADAD]"
+            }`}
+            disabled={!canScrollRight}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z" />
+            </svg>
+          </button>
+        </div>
+      </div>
       <p className="text-white text-xl tracking-[-0.025em] mb-8">
         Ebook purchases don&apos;t unlock episodes. Subscriptions unlock
         episodes 5+.
       </p>
 
-      {/* Ebooks row */}
-      <div className="flex gap-[18px] overflow-x-auto scrollbar-hide pb-2">
-        {ebooks.map((ebook) => (
+      {/* Ebooks row with scroll */}
+      <div
+        ref={scrollRef}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        className="overflow-x-auto scrollbar-hide cursor-grab active:cursor-grabbing"
+        style={{ scrollBehavior: "auto" }}
+      >
+        <div className="flex gap-[18px] min-w-max select-none pb-2">
+          {ebooks.map((ebook) => (
           <div key={ebook.id} className="flex items-center gap-[18px] flex-shrink-0">
             {/* Remove button */}
             <button
@@ -57,6 +172,7 @@ export default function EbooksTab({ ebooks, onRemove }: EbooksTabProps) {
             </div>
           </div>
         ))}
+        </div>
       </div>
     </div>
   );
