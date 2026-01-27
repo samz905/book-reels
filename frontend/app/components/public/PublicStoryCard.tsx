@@ -308,7 +308,7 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
                             ${ebook.price.toFixed(2)}
                           </span>
                           <span className="text-[#ADADAD]">|</span>
-                          <button className="text-purple text-sm font-bold hover:opacity-80 transition-opacity">
+                          <button className="text-green-3 text-sm font-bold hover:opacity-80 transition-opacity">
                             Buy
                           </button>
                         </div>
