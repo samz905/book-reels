@@ -1,20 +1,196 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import { useState, useEffect } from "react";
 import Header from "../../components/Header";
 import Footer from "../../components/Footer";
 import PublicProfileHeader from "../../components/public/PublicProfileHeader";
 import PublicStoryCard from "../../components/public/PublicStoryCard";
-import { getCreatorByUsername } from "../../data/mockPublicCreators";
+import { ProfileHeaderSkeleton, PublicStorySkeleton } from "../../components/skeletons";
+import type { CreatorProfile, Episode } from "../../data/mockCreatorData";
+import type { PublicStory, Ebook, PublicCreatorProfile } from "../../data/mockPublicCreators";
+
+// API response types
+interface ApiCreatorSettings {
+  subscription_enabled: boolean;
+  monthly_price: number;
+  min_price: number;
+}
+
+interface ApiEpisode {
+  id: string;
+  number: number;
+  name: string;
+  is_free: boolean;
+  thumbnail_url: string | null;
+  status: string;
+}
+
+interface ApiEbook {
+  id: string;
+  title: string;
+  description: string;
+  cover_url: string | null;
+  price: number;
+}
+
+interface ApiStory {
+  id: string;
+  title: string;
+  description: string;
+  cover_url: string | null;
+  type: "video" | "audio";
+  view_count: number;
+  likes: number;
+  genres: string[];
+  episodes: ApiEpisode[];
+  ebooks: ApiEbook[];
+}
+
+interface ApiCreatorResponse {
+  id: string;
+  username: string;
+  name: string;
+  bio: string;
+  avatar_url: string | null;
+  is_creator: boolean;
+  creator_settings: ApiCreatorSettings[] | ApiCreatorSettings | null;
+  stories?: ApiStory[];
+}
+
+// Transform API data to frontend format
+function transformCreatorData(api: ApiCreatorResponse): PublicCreatorProfile {
+  const settings = Array.isArray(api.creator_settings)
+    ? api.creator_settings[0]
+    : api.creator_settings;
+
+  const stories = api.stories || [];
+  const totalEpisodes = stories.reduce((sum, s) => sum + (s.episodes?.length || 0), 0);
+
+  const profile: CreatorProfile = {
+    name: api.name,
+    username: api.username,
+    bio: api.bio || "",
+    avatar: api.avatar_url,
+    storiesCount: stories.length,
+    episodesCount: totalEpisodes,
+    newEpisodesWeekly: Math.min(stories.length * 2, 10), // Estimate
+  };
+
+  const transformedStories: PublicStory[] = stories.map((story) => ({
+    id: story.id,
+    title: story.title,
+    type: story.type,
+    episodeCount: story.episodes?.length || 0,
+    viewCount: story.view_count,
+    description: story.description || "",
+    cover: story.cover_url || "https://picsum.photos/seed/default/300/450",
+    likes: story.likes,
+    genre: story.genres,
+    episodes: (story.episodes || []).map((ep): Episode => ({
+      id: ep.id,
+      number: ep.number,
+      name: ep.name,
+      isFree: ep.is_free,
+      thumbnail: ep.thumbnail_url || undefined,
+      status: ep.status as "draft" | "published" | undefined,
+    })),
+    ebooks: (story.ebooks || []).map((eb): Ebook => ({
+      id: eb.id,
+      title: eb.title,
+      description: eb.description || "",
+      cover: eb.cover_url || "https://picsum.photos/seed/default/100/160",
+      price: Number(eb.price),
+    })),
+  }));
+
+  return {
+    profile,
+    subscription: {
+      monthlyPrice: settings?.monthly_price || 9.99,
+      description: `Unlock all episodes, ${stories.length} stories, all ebooks`,
+    },
+    stories: transformedStories,
+  };
+}
 
 export default function PublicCreatorProfilePage() {
   const params = useParams();
   const username = params.username as string;
 
-  // Fetch creator data
-  const creator = getCreatorByUsername(username);
+  const [creator, setCreator] = useState<PublicCreatorProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Header height is 86px (sticky top-0 z-30)
+  useEffect(() => {
+    async function fetchCreator() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const response = await fetch(`/api/profiles/username/${username}`);
+
+        if (response.status === 404) {
+          setCreator(null);
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch creator");
+        }
+
+        const data: ApiCreatorResponse = await response.json();
+        setCreator(transformCreatorData(data));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "An error occurred");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    if (username) {
+      fetchCreator();
+    }
+  }, [username]);
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-black relative overflow-clip">
+        <Header />
+        <div className="sticky top-[86px] z-20 px-6 py-6 max-w-7xl mx-auto">
+          <ProfileHeaderSkeleton />
+        </div>
+        <main className="px-6 pb-8 max-w-7xl mx-auto relative z-10">
+          <div className="space-y-6">
+            <PublicStorySkeleton />
+            <PublicStorySkeleton />
+          </div>
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-page relative overflow-clip">
+        <Header />
+        <main className="px-6 py-20 max-w-7xl mx-auto text-center">
+          <h1 className="text-white text-3xl font-bold mb-4">Error</h1>
+          <p className="text-white/70 text-lg mb-4">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-6 py-2 bg-purple rounded-lg text-white hover:bg-purple/80 transition-colors"
+          >
+            Try Again
+          </button>
+        </main>
+        <Footer />
+      </div>
+    );
+  }
 
   // 404 - Creator not found
   if (!creator) {
@@ -51,9 +227,15 @@ export default function PublicCreatorProfilePage() {
       {/* Stories List */}
       <main className="px-6 pb-8 max-w-7xl mx-auto relative z-10">
         <div className="space-y-6">
-          {creator.stories.map((story) => (
-            <PublicStoryCard key={story.id} story={story} />
-          ))}
+          {creator.stories.length > 0 ? (
+            creator.stories.map((story) => (
+              <PublicStoryCard key={story.id} story={story} />
+            ))
+          ) : (
+            <div className="text-center py-12">
+              <p className="text-white/70">No stories published yet.</p>
+            </div>
+          )}
         </div>
       </main>
 
