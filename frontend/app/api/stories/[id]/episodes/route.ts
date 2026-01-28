@@ -14,14 +14,14 @@ import {
 import { EpisodeInsert } from "@/types/database";
 
 interface RouteParams {
-  params: Promise<{ storyId: string }>;
+  params: Promise<{ id: string }>;
 }
 
-// GET /api/stories/[storyId]/episodes - List episodes for a story
+// GET /api/stories/[id]/episodes - List episodes for a story
 export async function GET(request: NextRequest, { params }: RouteParams) {
-  const { storyId } = await params;
+  const { id: storyId } = await params;
 
-  const validationError = validateUUID(storyId, "storyId");
+  const validationError = validateUUID(storyId, "id");
   if (validationError) {
     return errorResponse(validationError);
   }
@@ -52,11 +52,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   return jsonResponse(episodes || []);
 }
 
-// POST /api/stories/[storyId]/episodes - Create episode
+// POST /api/stories/[id]/episodes - Create episode
 export async function POST(request: NextRequest, { params }: RouteParams) {
-  const { storyId } = await params;
+  const { id: storyId } = await params;
 
-  const validationError = validateUUID(storyId, "storyId");
+  const validationError = validateUUID(storyId, "id");
   if (validationError) {
     return errorResponse(validationError);
   }

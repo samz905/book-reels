@@ -14,14 +14,14 @@ import {
 import { EbookInsert } from "@/types/database";
 
 interface RouteParams {
-  params: Promise<{ storyId: string }>;
+  params: Promise<{ id: string }>;
 }
 
-// GET /api/stories/[storyId]/ebooks - List ebooks for a story
+// GET /api/stories/[id]/ebooks - List ebooks for a story
 export async function GET(request: NextRequest, { params }: RouteParams) {
-  const { storyId } = await params;
+  const { id: storyId } = await params;
 
-  const validationError = validateUUID(storyId, "storyId");
+  const validationError = validateUUID(storyId, "id");
   if (validationError) {
     return errorResponse(validationError);
   }
@@ -52,11 +52,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   return jsonResponse(ebooks || []);
 }
 
-// POST /api/stories/[storyId]/ebooks - Create ebook
+// POST /api/stories/[id]/ebooks - Create ebook
 export async function POST(request: NextRequest, { params }: RouteParams) {
-  const { storyId } = await params;
+  const { id: storyId } = await params;
 
-  const validationError = validateUUID(storyId, "storyId");
+  const validationError = validateUUID(storyId, "id");
   if (validationError) {
     return errorResponse(validationError);
   }
