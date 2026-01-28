@@ -16,60 +16,69 @@ import { StoryInsert, StoryType } from "@/types/database";
 
 // GET /api/stories - List stories with filters
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const category = searchParams.get("category");
-  const type = searchParams.get("type") as StoryType | null;
-  const creatorId = searchParams.get("creator_id");
-  const status = searchParams.get("status") || "published";
+  try {
+    // Check environment variables
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      return errorResponse("Supabase configuration missing", 500);
+    }
 
-  const { page, limit, offset } = getPaginationParams(request);
+    const { searchParams } = new URL(request.url);
+    const category = searchParams.get("category");
+    const type = searchParams.get("type") as StoryType | null;
+    const creatorId = searchParams.get("creator_id");
+    const status = searchParams.get("status") || "published";
 
-  // Use simple client for public read operations (no cookies needed)
-  const supabase = createApiClient();
+    const { page, limit, offset } = getPaginationParams(request);
 
-  // Build query
-  let query = supabase
-    .from("stories")
-    .select(
-      `
-      *,
-      creator:profiles!creator_id (
-        id,
-        username,
-        name,
-        avatar_url
+    // Use simple client for public read operations (no cookies needed)
+    const supabase = createApiClient();
+
+    // Build query
+    let query = supabase
+      .from("stories")
+      .select(
+        `
+        *,
+        creator:profiles!creator_id (
+          id,
+          username,
+          name,
+          avatar_url
+        )
+      `,
+        { count: "exact" }
       )
-    `,
-      { count: "exact" }
-    )
-    .eq("status", status);
+      .eq("status", status);
 
-  // Apply filters
-  if (type && (type === "video" || type === "audio")) {
-    query = query.eq("type", type);
+    // Apply filters
+    if (type && (type === "video" || type === "audio")) {
+      query = query.eq("type", type);
+    }
+
+    if (creatorId) {
+      query = query.eq("creator_id", creatorId);
+    }
+
+    if (category && category !== "ALL") {
+      // Search in genres array (case-insensitive)
+      query = query.contains("genres", [category]);
+    }
+
+    // Apply pagination and ordering
+    query = query
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    const { data: stories, error, count } = await query;
+
+    if (error) {
+      return errorResponse(error.message, 500);
+    }
+
+    return jsonResponse(paginatedResponse(stories || [], count || 0, { page, limit, offset }));
+  } catch (err) {
+    return errorResponse(err instanceof Error ? err.message : "Unknown error", 500);
   }
-
-  if (creatorId) {
-    query = query.eq("creator_id", creatorId);
-  }
-
-  if (category && category !== "ALL") {
-    // Search in genres array (case-insensitive)
-    query = query.contains("genres", [category]);
-  }
-
-  // Apply pagination and ordering
-  query = query
-    .order("created_at", { ascending: false })
-    .range(offset, offset + limit - 1);
-
-  const { data: stories, error, count } = await query;
-
-  if (error) {
-    return errorResponse(error.message, 500);
-  }
-
-  return jsonResponse(paginatedResponse(stories || [], count || 0, { page, limit, offset }));
 }
 
 // POST /api/stories - Create story
