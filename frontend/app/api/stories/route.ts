@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { createApiClient } from "@/lib/supabase/api";
 import { createClient } from "@/lib/supabase/server";
 import {
   jsonResponse,
@@ -23,7 +24,8 @@ export async function GET(request: NextRequest) {
 
   const { page, limit, offset } = getPaginationParams(request);
 
-  const supabase = await createClient();
+  // Use simple client for public read operations (no cookies needed)
+  const supabase = createApiClient();
 
   // Build query
   let query = supabase

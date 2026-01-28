@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createApiClient } from "@/lib/supabase/api";
 import { jsonResponse, notFoundResponse, errorResponse } from "@/lib/api/helpers";
 
 interface RouteParams {
@@ -14,7 +14,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     return errorResponse("Username is required");
   }
 
-  const supabase = await createClient();
+  // Use simple client for public read operations
+  const supabase = createApiClient();
 
   // Get profile with creator settings
   const { data: profile, error: profileError } = await supabase

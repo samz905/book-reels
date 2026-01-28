@@ -13,7 +13,11 @@
       "Bash(dir:*)",
       "Bash(npm run build:*)",
       "Bash(git push:*)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(npm run seed:*)",
+      "Bash(npm run verify-api:*)",
+      "Bash(curl:*)",
+      "Bash(findstr:*)"
     ]
   }
 }
