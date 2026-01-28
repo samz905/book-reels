@@ -7,6 +7,7 @@ import ProfileCard from "../components/creator/ProfileCard";
 import StatsCard from "../components/creator/StatsCard";
 import SubscriptionCard from "../components/creator/SubscriptionCard";
 import CreatorStoryCard from "../components/creator/CreatorStoryCard";
+import CreateStoryModal from "../components/creator/CreateStoryModal";
 import {
   CreatorProfile,
   CreatorStats,
@@ -29,6 +30,7 @@ export default function CreatePage() {
   const [subscription, setSubscription] =
     useState<Subscription>(defaultSubscription);
   const [stories, setStories] = useState<Story[]>([]);
+  const [showCreateStoryModal, setShowCreateStoryModal] = useState(false);
 
   // Populate function (temp button)
   const handlePopulate = () => {
@@ -52,6 +54,22 @@ export default function CreatePage() {
     setStories((prev) =>
       prev.map((s) => (s.id === updatedStory.id ? updatedStory : s))
     );
+  };
+
+  const handleCreateStory = (
+    storyData: Omit<Story, "id" | "episodeCount" | "viewCount" | "likes" | "episodes" | "ebooks">
+  ) => {
+    const newStory: Story = {
+      ...storyData,
+      id: `story-${Date.now()}`,
+      episodeCount: 0,
+      viewCount: 0,
+      likes: 0,
+      episodes: [],
+      ebooks: [],
+    };
+    setStories((prev) => [...prev, newStory]);
+    setShowCreateStoryModal(false);
   };
 
   return (
@@ -81,6 +99,7 @@ export default function CreatePage() {
           {!isPopulated && (
             <div className="bg-[#0F0E13] rounded-xl p-6 flex flex-col">
               <button
+                onClick={() => setShowCreateStoryModal(true)}
                 className="w-full py-3 rounded-lg font-semibold text-white transition-opacity hover:opacity-90"
                 style={{
                   background:
@@ -120,6 +139,13 @@ export default function CreatePage() {
       </main>
 
       <Footer />
+
+      {/* Create Story Modal */}
+      <CreateStoryModal
+        isOpen={showCreateStoryModal}
+        onClose={() => setShowCreateStoryModal(false)}
+        onSave={handleCreateStory}
+      />
     </div>
   );
 }

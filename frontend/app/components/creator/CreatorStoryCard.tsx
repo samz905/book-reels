@@ -2,63 +2,23 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
-import { Story, formatViewCount } from "@/app/data/mockCreatorData";
+import { Story, Episode, Ebook, formatViewCount } from "@/app/data/mockCreatorData";
 import EpisodeList from "./EpisodeList";
-
-interface Ebook {
-  id: string;
-  title: string;
-  description: string;
-  cover: string;
-  price: number;
-}
+import CreateEpisodeModal from "./CreateEpisodeModal";
+import AddBookModal from "./AddBookModal";
 
 interface CreatorStoryCardProps {
   story: Story;
   onUpdateStory: (story: Story) => void;
 }
 
-// Mock ebooks for "Dive deeper" section
-const mockEbooks: Ebook[] = [
-  {
-    id: "ebook-1",
-    title: "The Wolf Prince's Mate (The Royals Of Presley Acres)",
-    description:
-      "Hello, my name is James, and I work as a UI/UX designer. I create user-friendly and visually appealing interfaces that improve user experience and help websites and apps convert visitors into real customers, increasing engagement, trust, and overall business revenue.",
-    cover: "https://picsum.photos/seed/ebook1/100/160",
-    price: 4.99,
-  },
-  {
-    id: "ebook-2",
-    title: "The Wolf Prince's Mate (The Royals Of Presley Acres)",
-    description:
-      "Hello, my name is James, and I work as a UI/UX designer. I create user-friendly and visually appealing interfaces that improve user experience and help websites and apps convert visitors into real customers, increasing engagement, trust, and overall business revenue.",
-    cover: "https://picsum.photos/seed/ebook2/100/160",
-    price: 4.99,
-  },
-  {
-    id: "ebook-3",
-    title: "The Wolf Prince's Mate (The Royals Of Presley Acres)",
-    description:
-      "Hello, my name is James, and I work as a UI/UX designer. I create user-friendly and visually appealing interfaces that improve user experience and help websites and apps convert visitors into real customers, increasing engagement, trust, and overall business revenue.",
-    cover: "https://picsum.photos/seed/ebook3/100/160",
-    price: 4.99,
-  },
-  {
-    id: "ebook-4",
-    title: "The Wolf Prince's Mate (The Royals Of Presley Acres)",
-    description:
-      "Hello, my name is James, and I work as a UI/UX designer. I create user-friendly and visually appealing interfaces that improve user experience and help websites and apps convert visitors into real customers, increasing engagement, trust, and overall business revenue.",
-    cover: "https://picsum.photos/seed/ebook4/100/160",
-    price: 4.99,
-  },
-];
-
 export default function CreatorStoryCard({
   story,
   onUpdateStory,
 }: CreatorStoryCardProps) {
   const [showEpisodes, setShowEpisodes] = useState(false);
+  const [showCreateEpisodeModal, setShowCreateEpisodeModal] = useState(false);
+  const [showAddBookModal, setShowAddBookModal] = useState(false);
 
   // Horizontal scroll state for ebooks
   const ebooksScrollRef = useRef<HTMLDivElement>(null);
@@ -141,17 +101,82 @@ export default function CreatorStoryCard({
   // Calculate free episode count (first 4 are free per design)
   const freeCount = 4;
 
+  // Handler for creating episode
+  const handleCreateEpisode = (episodeData: Omit<Episode, "id">) => {
+    const newEpisode: Episode = {
+      ...episodeData,
+      id: `${story.id}-ep-${story.episodes.length + 1}`,
+    };
+    onUpdateStory({
+      ...story,
+      episodes: [...story.episodes, newEpisode],
+      episodeCount: story.episodeCount + 1,
+    });
+    setShowCreateEpisodeModal(false);
+  };
+
+  // Handler for adding book
+  const handleAddBook = (bookData: Omit<Ebook, "id">) => {
+    const newBook: Ebook = {
+      ...bookData,
+      id: `${story.id}-ebook-${(story.ebooks?.length || 0) + 1}`,
+    };
+    onUpdateStory({
+      ...story,
+      ebooks: [...(story.ebooks || []), newBook],
+    });
+    setShowAddBookModal(false);
+  };
+
+  // Handler for publish/unpublish
+  const handleTogglePublish = () => {
+    onUpdateStory({
+      ...story,
+      status: story.status === "draft" ? "published" : "draft",
+    });
+  };
+
+  // Check if can publish (has episodes or ebooks)
+  const canPublish = story.episodes.length > 0 || (story.ebooks?.length || 0) > 0;
+
   return (
     <div className="bg-[#0F0E13] rounded-xl p-6">
-      {/* Header row: Stories + edit button */}
+      {/* Action buttons row */}
+      <div className="flex items-center justify-between mb-4">
+        <button className="text-[#539ED3] text-sm hover:underline">
+          Back to Creator Dashboard
+        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowCreateEpisodeModal(true)}
+            className="px-4 py-2 border border-[#1ED760] text-[#1ED760] rounded-lg text-sm font-medium hover:bg-[#1ED760]/10 transition-colors"
+          >
+            Create New Episode
+          </button>
+          <button
+            onClick={() => setShowAddBookModal(true)}
+            className="px-4 py-2 bg-[#1ED760] text-black rounded-lg text-sm font-medium hover:bg-[#1ED760]/90 transition-colors"
+          >
+            Add New Book
+          </button>
+        </div>
+      </div>
+
+      {/* Header row: Stories + status badge + edit button */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-white text-2xl font-bold">Stories</h2>
-        {/* Edit button */}
-        <button className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="#E8EAED">
-            <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
-          </svg>
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Status badge */}
+          <span className={`text-sm font-semibold ${story.status === "draft" ? "text-[#FF8C00]" : "text-[#1ED760]"}`}>
+            {story.status === "draft" ? "DRAFT" : "PUBLISHED"}
+          </span>
+          {/* Edit button */}
+          <button className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="#E8EAED">
+              <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div className="flex gap-6">
@@ -218,13 +243,20 @@ export default function CreatorStoryCard({
           {/* Genre + Plays row */}
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2.5">
-              <span className="text-[#ADADAD] text-sm font-semibold uppercase tracking-tight">
-                Genre
-              </span>
-              <span className="text-[#ADADAD]">|</span>
-              <span className="text-[#ADADAD] text-sm font-semibold uppercase tracking-tight">
-                Genre
-              </span>
+              {story.genre && story.genre.length > 0 ? (
+                story.genre.map((g, index) => (
+                  <span key={g} className="flex items-center gap-2.5">
+                    <span className="text-[#ADADAD] text-sm font-semibold uppercase tracking-tight">
+                      {g}
+                    </span>
+                    {index < story.genre.length - 1 && <span className="text-[#ADADAD]">|</span>}
+                  </span>
+                ))
+              ) : (
+                <span className="text-[#ADADAD] text-sm font-semibold uppercase tracking-tight">
+                  No genres
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-1">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -257,6 +289,36 @@ export default function CreatorStoryCard({
           {showEpisodes && (
             <EpisodeList episodes={story.episodes} freeCount={freeCount} />
           )}
+
+          {/* Publish/Unpublish section */}
+          <div className="flex items-center justify-end gap-2 mt-4">
+            {story.status === "draft" ? (
+              <>
+                <button
+                  onClick={handleTogglePublish}
+                  disabled={!canPublish}
+                  className="text-[#1ED760] font-semibold hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Publish
+                </button>
+                <span className="text-[#ADADAD] text-sm">
+                  {canPublish ? "" : "Add an episode or book to publish."}
+                </span>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={handleTogglePublish}
+                  className="text-[#FF8C00] font-semibold hover:underline"
+                >
+                  Unpublish
+                </button>
+                <span className="text-[#ADADAD] text-sm">
+                  All episodes and books will be unpublished
+                </span>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -310,7 +372,9 @@ export default function CreatorStoryCard({
           style={{ scrollBehavior: "smooth" }}
         >
           <div className="flex gap-6 min-w-max select-none">
-            {mockEbooks.map((ebook, index) => (
+            {(story.ebooks || []).length === 0 ? (
+              <p className="text-[#ADADAD] text-sm">No ebooks yet. Click &quot;Add New Book&quot; to add one.</p>
+            ) : (story.ebooks || []).map((ebook, index) => (
               <div key={ebook.id} className="flex items-stretch">
                 {/* Ebook card - 354px wide with 322px content area */}
                 <div className="w-[354px] flex gap-3">
@@ -351,7 +415,7 @@ export default function CreatorStoryCard({
                 </div>
 
                 {/* Vertical divider (except last) - 24px gap includes the divider */}
-                {index < mockEbooks.length - 1 && (
+                {index < (story.ebooks || []).length - 1 && (
                   <div className="w-px bg-[#272727] ml-6 self-stretch" />
                 )}
               </div>
@@ -359,6 +423,19 @@ export default function CreatorStoryCard({
           </div>
         </div>
       </div>
+
+      {/* Modals */}
+      <CreateEpisodeModal
+        isOpen={showCreateEpisodeModal}
+        onClose={() => setShowCreateEpisodeModal(false)}
+        onSave={handleCreateEpisode}
+        nextEpisodeNumber={story.episodes.length + 1}
+      />
+      <AddBookModal
+        isOpen={showAddBookModal}
+        onClose={() => setShowAddBookModal(false)}
+        onSave={handleAddBook}
+      />
     </div>
   );
 }

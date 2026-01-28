@@ -30,6 +30,15 @@ export interface Episode {
   name: string;
   isFree: boolean;
   thumbnail?: string;
+  status?: "draft" | "published";
+}
+
+export interface Ebook {
+  id: string;
+  title: string;
+  description: string;
+  cover: string;
+  price: number;
 }
 
 export interface Story {
@@ -42,7 +51,23 @@ export interface Story {
   cover: string;
   episodes: Episode[];
   likes: number;
+  genre: string[];
+  status: "draft" | "published";
+  ebooks: Ebook[];
 }
+
+export const GENRES = [
+  "Fantasy",
+  "Romance",
+  "Action",
+  "Drama",
+  "Thriller",
+  "Mystery",
+  "Horror",
+  "Sci-Fi",
+  "Comedy",
+  "Adventure",
+];
 
 // Empty state defaults
 export const emptyProfile: CreatorProfile = {
@@ -117,6 +142,18 @@ export const mockStories: Story[] = [
     cover: "https://picsum.photos/seed/tangled/300/450",
     episodes: createEpisodes(20, "story-1"),
     likes: 2687,
+    genre: ["Fantasy", "Romance"],
+    status: "published",
+    ebooks: [
+      {
+        id: "ebook-1",
+        title: "The Wolf Prince's Mate (The Royals Of Presley Acres)",
+        description:
+          "Hello, my name is James, and I work as a UI/UX designer. I create user-friendly and visually appealing interfaces.",
+        cover: "https://picsum.photos/seed/ebook1/100/160",
+        price: 4.99,
+      },
+    ],
   },
   {
     id: "story-2",
@@ -129,6 +166,9 @@ export const mockStories: Story[] = [
     cover: "https://picsum.photos/seed/descendants/300/450",
     episodes: createEpisodes(15, "story-2"),
     likes: 1845,
+    genre: ["Drama", "Thriller"],
+    status: "published",
+    ebooks: [],
   },
 ];
 
