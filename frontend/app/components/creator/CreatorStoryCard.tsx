@@ -9,12 +9,16 @@ import AddBookModal from "./AddBookModal";
 
 interface CreatorStoryCardProps {
   story: Story;
-  onUpdateStory: (story: Story) => void;
+  onUpdateStory: (story: Story) => void | Promise<void>;
+  onCreateEpisode?: (episodeData: { number: number; name: string; isFree: boolean }) => Promise<Episode>;
+  onAddEbook?: (ebookData: { title: string; description: string; cover: string; price: number }) => Promise<Ebook>;
 }
 
 export default function CreatorStoryCard({
   story,
   onUpdateStory,
+  onCreateEpisode,
+  onAddEbook,
 }: CreatorStoryCardProps) {
   const [showEpisodes, setShowEpisodes] = useState(false);
   const [showCreateEpisodeModal, setShowCreateEpisodeModal] = useState(false);
@@ -102,30 +106,63 @@ export default function CreatorStoryCard({
   const freeCount = 4;
 
   // Handler for creating episode
-  const handleCreateEpisode = (episodeData: Omit<Episode, "id">) => {
-    const newEpisode: Episode = {
-      ...episodeData,
-      id: `${story.id}-ep-${story.episodes.length + 1}`,
-    };
-    onUpdateStory({
-      ...story,
-      episodes: [...story.episodes, newEpisode],
-      episodeCount: story.episodeCount + 1,
-    });
-    setShowCreateEpisodeModal(false);
+  const handleCreateEpisode = async (episodeData: Omit<Episode, "id">) => {
+    if (onCreateEpisode) {
+      // Use API-based creation
+      try {
+        await onCreateEpisode({
+          number: episodeData.number,
+          name: episodeData.name,
+          isFree: episodeData.isFree,
+        });
+        setShowCreateEpisodeModal(false);
+      } catch (err) {
+        console.error("Error creating episode:", err);
+        alert("Failed to create episode. Please try again.");
+      }
+    } else {
+      // Fallback to local state update
+      const newEpisode: Episode = {
+        ...episodeData,
+        id: `${story.id}-ep-${story.episodes.length + 1}`,
+      };
+      onUpdateStory({
+        ...story,
+        episodes: [...story.episodes, newEpisode],
+        episodeCount: story.episodeCount + 1,
+      });
+      setShowCreateEpisodeModal(false);
+    }
   };
 
   // Handler for adding book
-  const handleAddBook = (bookData: Omit<Ebook, "id">) => {
-    const newBook: Ebook = {
-      ...bookData,
-      id: `${story.id}-ebook-${(story.ebooks?.length || 0) + 1}`,
-    };
-    onUpdateStory({
-      ...story,
-      ebooks: [...(story.ebooks || []), newBook],
-    });
-    setShowAddBookModal(false);
+  const handleAddBook = async (bookData: Omit<Ebook, "id">) => {
+    if (onAddEbook) {
+      // Use API-based creation
+      try {
+        await onAddEbook({
+          title: bookData.title,
+          description: bookData.description,
+          cover: bookData.cover,
+          price: bookData.price,
+        });
+        setShowAddBookModal(false);
+      } catch (err) {
+        console.error("Error adding ebook:", err);
+        alert("Failed to add ebook. Please try again.");
+      }
+    } else {
+      // Fallback to local state update
+      const newBook: Ebook = {
+        ...bookData,
+        id: `${story.id}-ebook-${(story.ebooks?.length || 0) + 1}`,
+      };
+      onUpdateStory({
+        ...story,
+        ebooks: [...(story.ebooks || []), newBook],
+      });
+      setShowAddBookModal(false);
+    }
   };
 
   // Handler for publish/unpublish

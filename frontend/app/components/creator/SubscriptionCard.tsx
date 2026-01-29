@@ -5,7 +5,7 @@ import { Subscription, formatCurrency } from "@/app/data/mockCreatorData";
 
 interface SubscriptionCardProps {
   subscription: Subscription;
-  onUpdate: (subscription: Subscription) => void;
+  onUpdate: (subscription: Subscription) => void | Promise<void>;
 }
 
 export default function SubscriptionCard({
@@ -13,37 +13,62 @@ export default function SubscriptionCard({
   onUpdate,
 }: SubscriptionCardProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [enabled, setEnabled] = useState(subscription.enabled);
   const [price, setPrice] = useState(subscription.monthlyPrice.toString());
+  const [error, setError] = useState<string | null>(null);
 
-  const handleToggle = () => {
+  const handleToggle = async () => {
+    if (isSaving) return;
+
     const newEnabled = !enabled;
     setEnabled(newEnabled);
     if (!newEnabled) {
       // If disabling, save immediately
-      onUpdate({ ...subscription, enabled: false, monthlyPrice: 0 });
-      setPrice("0");
-      setIsEditing(false);
+      setIsSaving(true);
+      setError(null);
+      try {
+        await onUpdate({ ...subscription, enabled: false, monthlyPrice: 0 });
+        setPrice("0");
+        setIsEditing(false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to save");
+        setEnabled(true); // Revert
+      } finally {
+        setIsSaving(false);
+      }
     } else {
       // If enabling, enter edit mode
       setIsEditing(true);
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (isSaving) return;
+
     const numPrice = parseFloat(price) || 0;
-    onUpdate({
-      ...subscription,
-      enabled,
-      monthlyPrice: numPrice,
-    });
-    setIsEditing(false);
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      await onUpdate({
+        ...subscription,
+        enabled,
+        monthlyPrice: numPrice,
+      });
+      setIsEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleCancel = () => {
     setEnabled(subscription.enabled);
     setPrice(subscription.monthlyPrice.toString());
     setIsEditing(false);
+    setError(null);
   };
 
   const handleEditClick = () => {
@@ -59,7 +84,8 @@ export default function SubscriptionCard({
         <h2 className="text-white text-2xl font-bold">Subscription</h2>
         <button
           onClick={handleToggle}
-          className={`relative w-12 h-6 rounded-full transition-colors ${
+          disabled={isSaving}
+          className={`relative w-12 h-6 rounded-full transition-colors disabled:opacity-50 ${
             enabled ? "bg-green-500" : "bg-card-bg-3"
           }`}
         >
@@ -70,6 +96,13 @@ export default function SubscriptionCard({
           />
         </button>
       </div>
+
+      {/* Error message */}
+      {error && (
+        <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm">
+          {error}
+        </div>
+      )}
 
       <div className="flex gap-6">
         {/* Monthly Price */}
@@ -83,7 +116,8 @@ export default function SubscriptionCard({
                 const val = e.target.value.replace(/[^0-9.]/g, "");
                 setPrice(val);
               }}
-              className="w-full bg-card-bg-2 border border-border rounded-lg px-4 py-3 text-white text-lg focus:outline-none focus:ring-2 focus:ring-purple"
+              disabled={isSaving}
+              className="w-full bg-card-bg-2 border border-border rounded-lg px-4 py-3 text-white text-lg focus:outline-none focus:ring-2 focus:ring-purple disabled:opacity-50"
             />
           ) : (
             <p className="text-white text-2xl font-semibold">
@@ -113,18 +147,41 @@ export default function SubscriptionCard({
           <div className="flex gap-3">
             <button
               onClick={handleCancel}
-              className="px-6 py-2 text-white/70 hover:text-white transition-colors"
+              disabled={isSaving}
+              className="px-6 py-2 text-white/70 hover:text-white transition-colors disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               onClick={handleSave}
-              className="px-6 py-2 rounded-lg font-semibold text-white"
+              disabled={isSaving}
+              className="px-6 py-2 rounded-lg font-semibold text-white disabled:opacity-50 flex items-center gap-2"
               style={{
                 background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",
               }}
             >
-              Save
+              {isSaving && (
+                <svg
+                  className="animate-spin h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  />
+                </svg>
+              )}
+              {isSaving ? "Saving..." : "Save"}
             </button>
           </div>
         ) : (

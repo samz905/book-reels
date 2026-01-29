@@ -8,12 +8,16 @@ interface ProfileEditModalProps {
   profile: CreatorProfile;
   onSave: (profile: CreatorProfile) => void;
   onClose: () => void;
+  isSaving?: boolean;
+  error?: string | null;
 }
 
 export default function ProfileEditModal({
   profile,
   onSave,
   onClose,
+  isSaving = false,
+  error = null,
 }: ProfileEditModalProps) {
   const [name, setName] = useState(profile.name);
   const [username, setUsername] = useState(profile.username);
@@ -29,6 +33,8 @@ export default function ProfileEditModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
+
     onSave({
       ...profile,
       name,
@@ -61,6 +67,11 @@ export default function ProfileEditModal({
     reader.readAsDataURL(file);
   };
 
+  // Check if error is about username
+  const isUsernameError =
+    error?.toLowerCase().includes("username") ||
+    error?.toLowerCase().includes("taken");
+
   const modalContent = (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000]">
       <div className="bg-card-bg-1 rounded-2xl p-6 w-full max-w-md mx-4">
@@ -69,7 +80,8 @@ export default function ProfileEditModal({
           <h2 className="text-white text-xl font-semibold">Profile Details</h2>
           <button
             onClick={onClose}
-            className="text-white/50 hover:text-white transition-colors"
+            disabled={isSaving}
+            className="text-white/50 hover:text-white transition-colors disabled:opacity-50"
           >
             <svg
               width="24"
@@ -84,6 +96,13 @@ export default function ProfileEditModal({
             </svg>
           </button>
         </div>
+
+        {/* Error message */}
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm">
+            {error}
+          </div>
+        )}
 
         {/* Hidden file input */}
         <input
@@ -123,7 +142,8 @@ export default function ProfileEditModal({
             <button
               type="button"
               onClick={handleUpload}
-              className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-white hover:bg-card-bg-2 transition-colors"
+              disabled={isSaving}
+              className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-white hover:bg-card-bg-2 transition-colors disabled:opacity-50"
             >
               <svg
                 width="16"
@@ -156,7 +176,8 @@ export default function ProfileEditModal({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full bg-card-bg-2 border border-border rounded-lg px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-purple"
+              disabled={isSaving}
+              className="w-full bg-card-bg-2 border border-border rounded-lg px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-purple disabled:opacity-50"
               placeholder="Your name"
             />
           </div>
@@ -167,9 +188,19 @@ export default function ProfileEditModal({
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full bg-card-bg-2 border border-border rounded-lg px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-purple"
+              disabled={isSaving}
+              className={`w-full bg-card-bg-2 border rounded-lg px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-purple disabled:opacity-50 ${
+                isUsernameError
+                  ? "border-red-500 focus:ring-red-500"
+                  : "border-border"
+              }`}
               placeholder="@username"
             />
+            {isUsernameError && (
+              <p className="text-red-400 text-xs mt-1">
+                This username is already taken. Please choose another.
+              </p>
+            )}
           </div>
 
           <div>
@@ -177,8 +208,9 @@ export default function ProfileEditModal({
             <textarea
               value={bio}
               onChange={(e) => setBio(e.target.value)}
+              disabled={isSaving}
               rows={4}
-              className="w-full bg-card-bg-2 border border-border rounded-lg px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-purple resize-none"
+              className="w-full bg-card-bg-2 border border-border rounded-lg px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-purple resize-none disabled:opacity-50"
               placeholder="Tell us about yourself..."
             />
           </div>
@@ -188,18 +220,41 @@ export default function ProfileEditModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-6 py-2 text-white/70 hover:text-white transition-colors"
+              disabled={isSaving}
+              className="px-6 py-2 text-white/70 hover:text-white transition-colors disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-6 py-2 rounded-lg font-semibold text-white"
+              disabled={isSaving}
+              className="px-6 py-2 rounded-lg font-semibold text-white disabled:opacity-50 flex items-center gap-2"
               style={{
                 background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",
               }}
             >
-              Save
+              {isSaving && (
+                <svg
+                  className="animate-spin h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  />
+                </svg>
+              )}
+              {isSaving ? "Saving..." : "Save"}
             </button>
           </div>
         </form>

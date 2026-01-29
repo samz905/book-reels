@@ -8,20 +8,27 @@ import ProfileEditModal from "./ProfileEditModal";
 
 interface ProfileCardProps {
   profile: CreatorProfile;
-  onUpdate: (profile: CreatorProfile) => void;
-  isPopulated: boolean;
+  onUpdate: (profile: CreatorProfile) => Promise<void> | void;
 }
 
-export default function ProfileCard({
-  profile,
-  onUpdate,
-  isPopulated,
-}: ProfileCardProps) {
+export default function ProfileCard({ profile, onUpdate }: ProfileCardProps) {
   const [showModal, setShowModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  const handleSave = (updatedProfile: CreatorProfile) => {
-    onUpdate(updatedProfile);
-    setShowModal(false);
+  const handleSave = async (updatedProfile: CreatorProfile) => {
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await onUpdate(updatedProfile);
+      setShowModal(false);
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to save profile";
+      setSaveError(errorMessage);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -77,44 +84,44 @@ export default function ProfileCard({
             </div>
 
             <p className="text-white/70 text-sm mt-2 line-clamp-2">
-              {profile.bio}
+              {profile.bio || "Add your bio here"}
             </p>
 
-            {/* Stats row - only show when populated */}
-            {isPopulated && (
-              <div className="flex items-center gap-4 mt-4 text-sm">
-                <span className="text-white">
-                  <span className="font-semibold">{profile.storiesCount}</span>{" "}
-                  <span className="text-white/50">Stories</span>
-                </span>
-                <span className="text-white/30">|</span>
-                <span className="text-white">
-                  <span className="font-semibold">{profile.episodesCount}</span>{" "}
-                  <span className="text-white/50">Episodes</span>
-                </span>
-                <span className="text-white/30">|</span>
-                <span className="text-white">
-                  <span className="font-semibold">
-                    {profile.newEpisodesWeekly}
-                  </span>{" "}
-                  <span className="text-white/50">New Episodes Weekly</span>
-                </span>
-              </div>
-            )}
+            {/* Stats row */}
+            <div className="flex items-center gap-4 mt-4 text-sm">
+              <span className="text-white">
+                <span className="font-semibold">{profile.storiesCount}</span>{" "}
+                <span className="text-white/50">Stories</span>
+              </span>
+              <span className="text-white/30">|</span>
+              <span className="text-white">
+                <span className="font-semibold">{profile.episodesCount}</span>{" "}
+                <span className="text-white/50">Episodes</span>
+              </span>
+              {profile.newEpisodesWeekly > 0 && (
+                <>
+                  <span className="text-white/30">|</span>
+                  <span className="text-white">
+                    <span className="font-semibold">
+                      {profile.newEpisodesWeekly}
+                    </span>{" "}
+                    <span className="text-white/50">New Episodes Weekly</span>
+                  </span>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* View Public Profile button - only show when populated */}
-        {isPopulated && (
-          <div className="mt-4 flex justify-end">
-            <Link
-              href={`/creator/${profile.username}`}
-              className="px-4 py-2 border border-purple text-purple text-sm font-medium rounded-lg hover:bg-purple/10 transition-colors"
-            >
-              View Public Profile
-            </Link>
-          </div>
-        )}
+        {/* View Public Profile button */}
+        <div className="mt-4 flex justify-end">
+          <Link
+            href={`/creator/${profile.username}`}
+            className="px-4 py-2 border border-purple text-purple text-sm font-medium rounded-lg hover:bg-purple/10 transition-colors"
+          >
+            View Public Profile
+          </Link>
+        </div>
       </div>
 
       {/* Edit Modal */}
@@ -123,6 +130,8 @@ export default function ProfileCard({
           profile={profile}
           onSave={handleSave}
           onClose={() => setShowModal(false)}
+          isSaving={isSaving}
+          error={saveError}
         />
       )}
     </>
