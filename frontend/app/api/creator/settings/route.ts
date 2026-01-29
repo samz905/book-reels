@@ -19,15 +19,24 @@ export async function GET(request: NextRequest) {
 
   const supabase = await createClient();
 
-  // Check if user is a creator
+  // Check if user is a creator (return defaults if not - they can become one later)
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_creator")
     .eq("id", user.id)
     .single();
 
+  // If not a creator yet, return default settings
   if (!profile?.is_creator) {
-    return errorResponse("User is not a creator");
+    return jsonResponse({
+      id: null,
+      user_id: user.id,
+      subscription_enabled: false,
+      monthly_price: 0,
+      min_price: 4.99,
+      created_at: null,
+      updated_at: null,
+    });
   }
 
   // Get settings
