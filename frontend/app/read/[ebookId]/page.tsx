@@ -138,10 +138,9 @@ export default function EbookReaderPage() {
   };
 
   const goToChapter = (href: string) => {
-    if (renditionRef.current) {
-      renditionRef.current.display(href);
-      setShowToc(false);
-    }
+    setShowToc(false);
+    // Use location state to navigate - ReactReader will handle it
+    setLocation(href);
   };
 
   // Loading state
