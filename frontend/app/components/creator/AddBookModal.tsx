@@ -9,6 +9,17 @@ interface Story {
   title: string;
 }
 
+interface EditingEbook {
+  id: string;
+  title: string;
+  description?: string;
+  cover?: string;
+  fileUrl?: string;
+  price: number;
+  isbn?: string;
+  storyId: string;
+}
+
 interface AddBookModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -20,8 +31,15 @@ interface AddBookModalProps {
     price: number;
     isbn?: string;
   }) => Promise<void>;
+  onUpdate?: (ebookId: string, data: {
+    title: string;
+    coverUrl?: string;
+    price: number;
+    isbn?: string;
+  }) => Promise<void>;
   stories: Story[];
   preselectedStoryId?: string;
+  editingEbook?: EditingEbook;
   isSaving?: boolean;
 }
 
@@ -29,10 +47,14 @@ export default function AddBookModal({
   isOpen,
   onClose,
   onSave,
+  onUpdate,
   stories,
   preselectedStoryId,
+  editingEbook,
   isSaving = false,
 }: AddBookModalProps) {
+  const isEditMode = !!editingEbook;
+
   const [title, setTitle] = useState("");
   const [selectedStoryId, setSelectedStoryId] = useState<string>(preselectedStoryId || "");
   const [isStoryDropdownOpen, setIsStoryDropdownOpen] = useState(false);
@@ -54,11 +76,19 @@ export default function AddBookModal({
     return () => setMounted(false);
   }, []);
 
+  // Pre-populate form when editing
   useEffect(() => {
-    if (preselectedStoryId) {
+    if (editingEbook) {
+      setTitle(editingEbook.title);
+      setSelectedStoryId(editingEbook.storyId);
+      setCover(editingEbook.cover || null);
+      setPrice(editingEbook.price.toString());
+      setIsbn(editingEbook.isbn || "");
+      setEpubFileName(editingEbook.fileUrl ? "File uploaded" : "");
+    } else if (preselectedStoryId) {
       setSelectedStoryId(preselectedStoryId);
     }
-  }, [preselectedStoryId]);
+  }, [editingEbook, preselectedStoryId]);
 
   useEffect(() => {
     if (isOpen) {
@@ -134,7 +164,8 @@ export default function AddBookModal({
       alert("Book title is required");
       return;
     }
-    if (!epubFile) {
+    // Only require EPUB for new books, not edits
+    if (!isEditMode && !epubFile) {
       alert("Please upload an EPUB file");
       return;
     }
@@ -148,27 +179,41 @@ export default function AddBookModal({
     setUploadError(null);
 
     try {
-      // Upload EPUB file
-      const epubResult = await uploadEpubFile(epubFile, selectedStoryId);
+      if (isEditMode && editingEbook && onUpdate) {
+        // Edit mode - update existing ebook
+        let coverUrl: string | undefined;
+        if (coverFile) {
+          coverUrl = await uploadEbookCover(coverFile, selectedStoryId);
+        }
 
-      // Upload cover if provided
-      let coverUrl: string | undefined;
-      if (coverFile) {
-        coverUrl = await uploadEbookCover(coverFile, selectedStoryId);
+        await onUpdate(editingEbook.id, {
+          title: title.trim(),
+          coverUrl: coverUrl || editingEbook.cover,
+          price: priceNum,
+          isbn: isbn.trim() || undefined,
+        });
+
+        resetForm();
+      } else {
+        // Create mode - new ebook
+        const epubResult = await uploadEpubFile(epubFile!, selectedStoryId);
+
+        let coverUrl: string | undefined;
+        if (coverFile) {
+          coverUrl = await uploadEbookCover(coverFile, selectedStoryId);
+        }
+
+        await onSave({
+          storyId: selectedStoryId,
+          title: title.trim(),
+          fileUrl: epubResult.path,
+          coverUrl,
+          price: priceNum,
+          isbn: isbn.trim() || undefined,
+        });
+
+        resetForm();
       }
-
-      // Call onSave with the uploaded URLs
-      await onSave({
-        storyId: selectedStoryId,
-        title: title.trim(),
-        fileUrl: epubResult.path,
-        coverUrl,
-        price: priceNum,
-        isbn: isbn.trim() || undefined,
-      });
-
-      // Reset form on success
-      resetForm();
     } catch (err) {
       if (err instanceof UploadError) {
         setUploadError(err.message);
@@ -211,7 +256,7 @@ export default function AddBookModal({
       <div className="relative bg-[#0F0E13] border border-[#1A1E2F] rounded-3xl p-6 w-full max-w-[686px] mx-4 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-white text-2xl font-bold">Add New Book</h2>
+          <h2 className="text-white text-2xl font-bold">{isEditMode ? "Edit Book" : "Add New Book"}</h2>
           <button
             onClick={handleClose}
             disabled={isSaving || isUploading}
@@ -347,7 +392,9 @@ export default function AddBookModal({
           <div>
             <div className="flex items-center gap-2 mb-3">
               <label className="text-white text-base">Book Manuscript</label>
-              <span className="text-white/40 text-sm">Format: epub</span>
+              <span className="text-white/40 text-sm">
+                {isEditMode ? "(Optional - replace existing)" : "Format: epub"}
+              </span>
             </div>
             <button
               type="button"
@@ -444,7 +491,7 @@ export default function AddBookModal({
                 />
               </svg>
             )}
-            {isUploading ? "Uploading..." : isSaving ? "Publishing..." : "Publish"}
+            {isUploading ? "Uploading..." : isSaving ? "Saving..." : isEditMode ? "Save" : "Publish"}
           </button>
         </div>
       </div>

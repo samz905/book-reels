@@ -170,9 +170,9 @@ export default function EbooksLibraryCard({
                 </div>
                 <button
                   onClick={() => onReadNow?.(ebook.id)}
-                  className="text-green-3 text-sm font-bold hover:opacity-80 transition-opacity text-left"
+                  className="text-green-3 text-xs font-bold hover:opacity-80 transition-opacity text-left"
                 >
-                  Read
+                  Read Now
                 </button>
               </div>
 

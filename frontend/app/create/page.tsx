@@ -30,6 +30,7 @@ import {
   updateCreatorSettings,
   createEpisode,
   createEbook,
+  updateEbook,
   generateRandomUsername,
   mapDbProfileToFrontend,
   mapDbSettingsToFrontend,
@@ -299,6 +300,43 @@ export default function CreatePage() {
     }
   };
 
+  const handleUpdateEbook = async (
+    storyId: string,
+    ebookId: string,
+    data: {
+      title: string;
+      coverUrl?: string;
+      price: number;
+      isbn?: string;
+    }
+  ) => {
+    try {
+      const updatedEbook = await updateEbook(ebookId, {
+        title: data.title,
+        cover_url: data.coverUrl || null,
+        isbn: data.isbn || null,
+        price: data.price,
+      });
+
+      // Update the story's ebooks
+      setStories((prev) =>
+        prev.map((s) =>
+          s.id === storyId
+            ? {
+                ...s,
+                ebooks: s.ebooks.map((e) =>
+                  e.id === ebookId ? updatedEbook : e
+                ),
+              }
+            : s
+        )
+      );
+    } catch (err) {
+      console.error("Error updating ebook:", err);
+      throw err;
+    }
+  };
+
   // Handler for top-level Add Book modal
   const handleAddBookFromModal = async (ebookData: {
     storyId: string;
@@ -505,6 +543,7 @@ export default function CreatePage() {
                   handleCreateEpisode(story.id, episodeData)
                 }
                 onAddEbook={(ebookData) => handleAddEbook(story.id, ebookData)}
+                onUpdateEbook={(ebookId, data) => handleUpdateEbook(story.id, ebookId, data)}
               />
             ))}
           </div>

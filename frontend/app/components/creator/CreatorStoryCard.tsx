@@ -22,6 +22,12 @@ interface CreatorStoryCardProps {
     price: number;
     isbn?: string;
   }) => Promise<Ebook>;
+  onUpdateEbook?: (ebookId: string, data: {
+    title: string;
+    coverUrl?: string;
+    price: number;
+    isbn?: string;
+  }) => Promise<void>;
 }
 
 export default function CreatorStoryCard({
@@ -30,6 +36,7 @@ export default function CreatorStoryCard({
   onUpdateStory,
   onCreateEpisode,
   onAddEbook,
+  onUpdateEbook,
 }: CreatorStoryCardProps) {
   const router = useRouter();
   const [showEpisodes, setShowEpisodes] = useState(false);
@@ -37,6 +44,7 @@ export default function CreatorStoryCard({
   const [showAddBookModal, setShowAddBookModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [isEditSaving, setIsEditSaving] = useState(false);
+  const [editingEbook, setEditingEbook] = useState<Ebook | null>(null);
 
   // Horizontal scroll state for ebooks
   const ebooksScrollRef = useRef<HTMLDivElement>(null);
@@ -472,16 +480,17 @@ export default function CreatorStoryCard({
                         </div>
                       )}
                     </div>
-                    {/* Price and Read button below cover */}
-                    <div className="flex items-center justify-between w-full">
+                    {/* Price | Read Now - left aligned */}
+                    <div className="flex items-center gap-1 w-full">
                       <span className="text-[#FF8C00] text-xs font-semibold">
                         ${ebook.price.toFixed(2)}
                       </span>
+                      <span className="text-[#ADADAD] text-xs">|</span>
                       <button
                         onClick={() => router.push(`/read/${ebook.id}`)}
                         className="text-[#1ED760] text-xs font-bold hover:opacity-80 transition-opacity"
                       >
-                        Read
+                        Read Now
                       </button>
                     </div>
                   </div>
@@ -498,8 +507,8 @@ export default function CreatorStoryCard({
                     <div className="flex justify-end mt-auto">
                       <button
                         onClick={() => {
-                          // TODO: Implement ebook edit modal
-                          alert("Edit ebook feature coming soon!");
+                          setEditingEbook(ebook);
+                          setShowAddBookModal(true);
                         }}
                         className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors"
                       >
@@ -530,10 +539,24 @@ export default function CreatorStoryCard({
       />
       <AddBookModal
         isOpen={showAddBookModal}
-        onClose={() => setShowAddBookModal(false)}
+        onClose={() => {
+          setShowAddBookModal(false);
+          setEditingEbook(null);
+        }}
         onSave={handleAddBook}
+        onUpdate={onUpdateEbook}
         stories={allStories || [{ id: story.id, title: story.title }]}
         preselectedStoryId={story.id}
+        editingEbook={editingEbook ? {
+          id: editingEbook.id,
+          title: editingEbook.title,
+          description: editingEbook.description,
+          cover: editingEbook.cover,
+          fileUrl: editingEbook.fileUrl,
+          price: editingEbook.price,
+          isbn: editingEbook.isbn,
+          storyId: story.id,
+        } : undefined}
       />
 
       <EditStoryModal

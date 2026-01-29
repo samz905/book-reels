@@ -286,6 +286,26 @@ export async function createEbook(
   return mapDbEbookToFrontend(dbEbook);
 }
 
+export async function updateEbook(
+  ebookId: string,
+  data: {
+    title?: string;
+    description?: string;
+    cover_url?: string | null;
+    isbn?: string | null;
+    price?: number;
+  }
+): Promise<FrontendEbook> {
+  const response = await fetch(`/api/ebooks/${ebookId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
+  });
+  const dbEbook = await handleResponse<DbEbook>(response);
+  return mapDbEbookToFrontend(dbEbook);
+}
+
 export interface EbookReadResponse {
   url: string;
   title: string;
