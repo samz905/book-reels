@@ -20,7 +20,13 @@
       "Bash(findstr:*)",
       "WebFetch(domain:book-reels-olive.vercel.app)",
       "Bash(npx tsx:*)",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "mcp__supabase__get_logs",
+      "mcp__supabase__execute_sql"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
 }

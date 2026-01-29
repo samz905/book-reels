@@ -30,8 +30,10 @@ export async function GET(request: NextRequest) {
 
     const { page, limit, offset } = getPaginationParams(request);
 
-    // Use simple client for public read operations (no cookies needed)
-    const supabase = createApiClient();
+    // Use service client when fetching creator's own stories (includes drafts)
+    // Otherwise use anon client for public stories only
+    const needsServiceClient = creatorId && status === "all";
+    const supabase = needsServiceClient ? createServiceClient() : createApiClient();
 
     // Build query
     let query = supabase
