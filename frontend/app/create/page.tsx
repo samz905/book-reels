@@ -9,6 +9,7 @@ import StatsCard from "../components/creator/StatsCard";
 import SubscriptionCard from "../components/creator/SubscriptionCard";
 import CreatorStoryCard from "../components/creator/CreatorStoryCard";
 import CreateStoryModal from "../components/creator/CreateStoryModal";
+import AddBookModal from "../components/creator/AddBookModal";
 import { useAuth } from "../context/AuthContext";
 import {
   CreatorProfile,
@@ -50,7 +51,9 @@ export default function CreatePage() {
     useState<Subscription>(defaultSubscription);
   const [stories, setStories] = useState<Story[]>([]);
   const [showCreateStoryModal, setShowCreateStoryModal] = useState(false);
+  const [showAddBookModal, setShowAddBookModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isAddingBook, setIsAddingBook] = useState(false);
 
   // Fetch data on mount when user is authenticated
   useEffect(() => {
@@ -296,6 +299,46 @@ export default function CreatePage() {
     }
   };
 
+  // Handler for top-level Add Book modal
+  const handleAddBookFromModal = async (ebookData: {
+    storyId: string;
+    title: string;
+    fileUrl: string;
+    coverUrl?: string;
+    price: number;
+    isbn?: string;
+  }) => {
+    setIsAddingBook(true);
+    try {
+      const newEbook = await createEbook(ebookData.storyId, {
+        title: ebookData.title,
+        file_url: ebookData.fileUrl,
+        cover_url: ebookData.coverUrl || null,
+        isbn: ebookData.isbn || null,
+        price: ebookData.price,
+      });
+
+      // Update the story's ebooks
+      setStories((prev) =>
+        prev.map((s) =>
+          s.id === ebookData.storyId
+            ? {
+                ...s,
+                ebooks: [...s.ebooks, newEbook],
+              }
+            : s
+        )
+      );
+
+      setShowAddBookModal(false);
+    } catch (err) {
+      console.error("Error creating ebook:", err);
+      throw err;
+    } finally {
+      setIsAddingBook(false);
+    }
+  };
+
   // Show loading state
   if (authLoading || isLoading) {
     return (
@@ -426,6 +469,7 @@ export default function CreatePage() {
               Create New Episode
             </button>
             <button
+              onClick={() => setShowAddBookModal(true)}
               disabled={stories.length === 0}
               className="w-full py-2 rounded-lg font-semibold text-sm text-white transition-opacity border border-[#B8B6FC] disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
@@ -487,6 +531,15 @@ export default function CreatePage() {
         onClose={() => setShowCreateStoryModal(false)}
         onSave={handleCreateStory}
         isSaving={isSaving}
+      />
+
+      {/* Add Book Modal */}
+      <AddBookModal
+        isOpen={showAddBookModal}
+        onClose={() => setShowAddBookModal(false)}
+        onSave={handleAddBookFromModal}
+        stories={stories.map(s => ({ id: s.id, title: s.title }))}
+        isSaving={isAddingBook}
       />
     </div>
   );
