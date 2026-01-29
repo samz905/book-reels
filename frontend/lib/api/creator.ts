@@ -197,13 +197,26 @@ export async function createStory(data: {
   genres?: string[];
   status?: "draft" | "published";
 }): Promise<FrontendStory> {
+  console.log("[createStory] Sending request with data:", data);
+
   const response = await fetch("/api/stories", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
-  const dbStory = await handleResponse<DbStory>(response);
+
+  console.log("[createStory] Response status:", response.status);
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    console.error("[createStory] API error:", errorData);
+    throw new Error(errorData.error || `Request failed with status ${response.status}`);
+  }
+
+  const dbStory = await response.json();
+  console.log("[createStory] Story created:", dbStory);
+
   return mapDbStoryToFrontend({ ...dbStory, episodes: [], ebooks: [] });
 }
 

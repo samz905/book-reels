@@ -177,6 +177,10 @@ export default function CreatePage() {
     >
   ) => {
     setIsSaving(true);
+    setError(null);
+
+    console.log("Creating story with data:", storyData);
+
     try {
       const newStory = await createStory({
         title: storyData.title,
@@ -186,6 +190,9 @@ export default function CreatePage() {
         genres: storyData.genre,
         status: storyData.status,
       });
+
+      console.log("Story created successfully:", newStory);
+
       setStories((prev) => [...prev, newStory]);
       setShowCreateStoryModal(false);
 
@@ -198,7 +205,9 @@ export default function CreatePage() {
       }
     } catch (err) {
       console.error("Error creating story:", err);
-      setError(err instanceof Error ? err.message : "Failed to create story");
+      const errorMessage = err instanceof Error ? err.message : "Failed to create story";
+      setError(errorMessage);
+      alert(`Failed to create story: ${errorMessage}`);
     } finally {
       setIsSaving(false);
     }

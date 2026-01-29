@@ -19,10 +19,7 @@ export default function CreateStoryModal({
 }: CreateStoryModalProps) {
   const [cover, setCover] = useState<string | null>(null);
   const [storyName, setStoryName] = useState("");
-  const [storyType, setStoryType] = useState<{ video: boolean; audio: boolean }>({
-    video: false,
-    audio: false,
-  });
+  const [storyType, setStoryType] = useState<"video" | "audio" | null>(null);
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [description, setDescription] = useState("");
   const [isGenreDropdownOpen, setIsGenreDropdownOpen] = useState(false);
@@ -81,8 +78,8 @@ export default function CreateStoryModal({
       alert("Story name is required");
       return;
     }
-    if (!storyType.video && !storyType.audio) {
-      alert("Select at least one story type");
+    if (!storyType) {
+      alert("Select a story type");
       return;
     }
     if (selectedGenres.length === 0) {
@@ -94,11 +91,9 @@ export default function CreateStoryModal({
       return;
     }
 
-    const type = storyType.video ? "video" : "audio";
-
     onSave({
       title: storyName,
-      type,
+      type: storyType,
       description,
       cover: cover || "https://picsum.photos/seed/newstory/300/450",
       genre: selectedGenres,
@@ -113,7 +108,7 @@ export default function CreateStoryModal({
 
     setCover(null);
     setStoryName("");
-    setStoryType({ video: false, audio: false });
+    setStoryType(null);
     setSelectedGenres([]);
     setDescription("");
     onClose();
@@ -200,36 +195,32 @@ export default function CreateStoryModal({
         {/* Story Type */}
         <div className="mb-6">
           <label className="block text-white text-base font-medium mb-3">Story Type</label>
-          <div className="flex items-center gap-3">
-            {/* Video Story checkbox */}
+          <div className="flex items-center gap-6">
+            {/* Video Story radio */}
             <label className="flex items-center gap-3 cursor-pointer">
               <div
-                onClick={() => setStoryType((prev) => ({ ...prev, video: !prev.video }))}
-                className={`w-6 h-6 rounded border flex items-center justify-center cursor-pointer ${
-                  storyType.video ? "bg-[#B8B6FC] border-[#B8B6FC]" : "border-[#ADADAD]"
+                onClick={() => setStoryType("video")}
+                className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${
+                  storyType === "video" ? "border-[#B8B6FC]" : "border-[#ADADAD]"
                 }`}
               >
-                {storyType.video && (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
+                {storyType === "video" && (
+                  <div className="w-3 h-3 rounded-full bg-[#B8B6FC]" />
                 )}
               </div>
               <span className="text-white text-[17px] font-semibold">Video Story</span>
             </label>
 
-            {/* Audio Story checkbox */}
-            <label className="flex items-center gap-3 cursor-pointer ml-3">
+            {/* Audio Story radio */}
+            <label className="flex items-center gap-3 cursor-pointer">
               <div
-                onClick={() => setStoryType((prev) => ({ ...prev, audio: !prev.audio }))}
-                className={`w-6 h-6 rounded border flex items-center justify-center cursor-pointer ${
-                  storyType.audio ? "bg-[#B8B6FC] border-[#B8B6FC]" : "border-[#ADADAD]"
+                onClick={() => setStoryType("audio")}
+                className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${
+                  storyType === "audio" ? "border-[#B8B6FC]" : "border-[#ADADAD]"
                 }`}
               >
-                {storyType.audio && (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
+                {storyType === "audio" && (
+                  <div className="w-3 h-3 rounded-full bg-[#B8B6FC]" />
                 )}
               </div>
               <span className="text-white text-[17px] font-semibold">Audio Story</span>

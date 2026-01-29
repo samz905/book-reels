@@ -18,7 +18,9 @@
       "Bash(npm run verify-api:*)",
       "Bash(curl:*)",
       "Bash(findstr:*)",
-      "WebFetch(domain:book-reels-olive.vercel.app)"
+      "WebFetch(domain:book-reels-olive.vercel.app)",
+      "Bash(npx tsx:*)",
+      "Bash(gh api:*)"
     ]
   }
 }
