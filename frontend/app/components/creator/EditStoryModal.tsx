@@ -291,35 +291,47 @@ export default function EditStoryModal({
         {/* Status */}
         <div className="mb-6">
           <label className="block text-white text-base font-medium mb-3">Status</label>
-          <div className="flex items-center gap-6">
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div
-                onClick={() => setStatus("draft")}
-                className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${
-                  status === "draft" ? "border-[#FF8C00]" : "border-[#ADADAD]"
-                }`}
-              >
-                {status === "draft" && (
-                  <div className="w-3 h-3 rounded-full bg-[#FF8C00]" />
-                )}
-              </div>
-              <span className="text-white text-[17px] font-semibold">Draft</span>
-            </label>
+          {(() => {
+            const hasContent = (story.episodes?.length || 0) > 0 || (story.ebooks?.length || 0) > 0;
+            return (
+              <>
+                <div className="flex items-center gap-6">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <div
+                      onClick={() => setStatus("draft")}
+                      className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${
+                        status === "draft" ? "border-[#FF8C00]" : "border-[#ADADAD]"
+                      }`}
+                    >
+                      {status === "draft" && (
+                        <div className="w-3 h-3 rounded-full bg-[#FF8C00]" />
+                      )}
+                    </div>
+                    <span className="text-white text-[17px] font-semibold">Draft</span>
+                  </label>
 
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div
-                onClick={() => setStatus("published")}
-                className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${
-                  status === "published" ? "border-[#1ED760]" : "border-[#ADADAD]"
-                }`}
-              >
-                {status === "published" && (
-                  <div className="w-3 h-3 rounded-full bg-[#1ED760]" />
+                  <label className={`flex items-center gap-3 ${hasContent ? "cursor-pointer" : "cursor-not-allowed opacity-50"}`}>
+                    <div
+                      onClick={() => hasContent && setStatus("published")}
+                      className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${hasContent ? "cursor-pointer" : "cursor-not-allowed"} ${
+                        status === "published" ? "border-[#1ED760]" : "border-[#ADADAD]"
+                      }`}
+                    >
+                      {status === "published" && (
+                        <div className="w-3 h-3 rounded-full bg-[#1ED760]" />
+                      )}
+                    </div>
+                    <span className="text-white text-[17px] font-semibold">Published</span>
+                  </label>
+                </div>
+                {!hasContent && (
+                  <p className="text-[#FF8C00] text-sm mt-2">
+                    Add at least one episode or ebook to publish this story.
+                  </p>
                 )}
-              </div>
-              <span className="text-white text-[17px] font-semibold">Published</span>
-            </label>
-          </div>
+              </>
+            );
+          })()}
         </div>
 
         {/* Action buttons */}
