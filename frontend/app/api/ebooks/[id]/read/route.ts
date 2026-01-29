@@ -15,7 +15,6 @@ interface RouteParams {
 }
 
 const EBOOKS_BUCKET = "ebooks";
-const SIGNED_URL_EXPIRY = 3600; // 1 hour
 
 // GET /api/ebooks/[id]/read - Get signed URL to read ebook
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -87,20 +86,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     return errorResponse("This ebook does not have a file uploaded yet", 404);
   }
 
-  // Generate signed URL for the EPUB file
-  const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+  // Get public URL for the EPUB file (bucket is public, access is verified above)
+  const { data: publicUrlData } = supabase.storage
     .from(EBOOKS_BUCKET)
-    .createSignedUrl(ebook.file_url, SIGNED_URL_EXPIRY);
-
-  if (signedUrlError || !signedUrlData) {
-    console.error("Failed to create signed URL:", signedUrlError);
-    return errorResponse("Failed to generate read URL", 500);
-  }
+    .getPublicUrl(ebook.file_url);
 
   return jsonResponse({
-    url: signedUrlData.signedUrl,
+    url: publicUrlData.publicUrl,
     title: ebook.title,
     storyTitle: (story as { title: string }).title,
-    expiresIn: SIGNED_URL_EXPIRY,
+    expiresIn: 0,
   });
 }

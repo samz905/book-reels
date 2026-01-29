@@ -481,7 +481,7 @@ export default function CreatorStoryCard({
                       )}
                     </div>
                     {/* Price | Read Now - left aligned */}
-                    <div className="flex items-center gap-1 w-full">
+                    <div className="flex items-center gap-1">
                       <span className="text-[#FF8C00] text-xs font-semibold">
                         ${ebook.price.toFixed(2)}
                       </span>
