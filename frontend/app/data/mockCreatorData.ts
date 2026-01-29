@@ -38,6 +38,8 @@ export interface Ebook {
   title: string;
   description: string;
   cover: string;
+  fileUrl?: string;
+  isbn?: string;
   price: number;
 }
 

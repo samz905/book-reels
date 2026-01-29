@@ -102,6 +102,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     "title",
     "description",
     "cover_url",
+    "file_url",
+    "isbn",
     "price",
   ];
   const updateData: EbookUpdate = {};
@@ -116,8 +118,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   }
 
   // Validate price if provided
-  if (updateData.price !== undefined && (typeof updateData.price !== "number" || updateData.price < 0)) {
-    return errorResponse("Price must be a positive number");
+  if (updateData.price !== undefined && (typeof updateData.price !== "number" || updateData.price < 4.99)) {
+    return errorResponse("Price must be at least $4.99");
   }
 
   const { data: updated, error } = await supabase

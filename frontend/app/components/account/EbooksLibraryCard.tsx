@@ -6,11 +6,13 @@ import { PurchasedEbook } from "../../data/mockAccountData";
 
 interface EbooksLibraryCardProps {
   ebooks: PurchasedEbook[];
+  isLoading?: boolean;
   onReadNow?: (ebookId: string) => void;
 }
 
 export default function EbooksLibraryCard({
   ebooks,
+  isLoading = false,
   onReadNow,
 }: EbooksLibraryCardProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -104,7 +106,37 @@ export default function EbooksLibraryCard({
         </div>
       </div>
 
+      {/* Loading State */}
+      {isLoading && (
+        <div className="flex gap-6">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="flex gap-3 w-[322px] animate-pulse">
+              <div className="flex flex-col gap-2 flex-shrink-0">
+                <div className="w-[100px] h-[160px] rounded-lg bg-[#272727]" />
+                <div className="h-4 w-16 bg-[#272727] rounded" />
+              </div>
+              <div className="flex flex-col gap-2 flex-1">
+                <div className="h-4 bg-[#272727] rounded w-3/4" />
+                <div className="h-3 bg-[#272727] rounded w-full" />
+                <div className="h-3 bg-[#272727] rounded w-full" />
+                <div className="h-3 bg-[#272727] rounded w-2/3" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!isLoading && ebooks.length === 0 && (
+        <div className="text-center py-8">
+          <p className="text-[#ADADAD] text-sm">
+            You haven&apos;t purchased any ebooks yet.
+          </p>
+        </div>
+      )}
+
       {/* Ebooks Scroll Container */}
+      {!isLoading && ebooks.length > 0 && (
       <div
         ref={scrollRef}
         onMouseDown={handleMouseDown}
@@ -154,6 +186,7 @@ export default function EbooksLibraryCard({
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }

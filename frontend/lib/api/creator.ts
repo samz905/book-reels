@@ -51,6 +51,8 @@ export function mapDbEbookToFrontend(dbEbook: DbEbook): FrontendEbook {
     title: dbEbook.title,
     description: dbEbook.description,
     cover: dbEbook.cover_url || "",
+    fileUrl: dbEbook.file_url || undefined,
+    isbn: dbEbook.isbn || undefined,
     price: dbEbook.price,
   };
 }
@@ -269,6 +271,8 @@ export async function createEbook(
     title: string;
     description?: string;
     cover_url?: string | null;
+    file_url?: string | null;
+    isbn?: string | null;
     price: number;
   }
 ): Promise<FrontendEbook> {
@@ -280,6 +284,20 @@ export async function createEbook(
   });
   const dbEbook = await handleResponse<DbEbook>(response);
   return mapDbEbookToFrontend(dbEbook);
+}
+
+export interface EbookReadResponse {
+  url: string;
+  title: string;
+  storyTitle: string;
+  expiresIn: number;
+}
+
+export async function getEbookReadUrl(ebookId: string): Promise<EbookReadResponse> {
+  const response = await fetch(`/api/ebooks/${ebookId}/read`, {
+    credentials: "include",
+  });
+  return handleResponse<EbookReadResponse>(response);
 }
 
 // Creator Settings APIs
@@ -328,4 +346,55 @@ export function generateRandomUsername(): string {
     suffix += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return `creator-${suffix}`;
+}
+
+// Purchased Ebooks API
+export interface PurchasedEbook {
+  id: string;
+  title: string;
+  description: string;
+  coverUrl: string;
+  storyTitle: string;
+}
+
+interface PurchaseResponse {
+  id: string;
+  ebook: {
+    id: string;
+    title: string;
+    description: string;
+    cover_url: string | null;
+    story: { id: string; title: string } | { id: string; title: string }[] | null;
+  } | null;
+}
+
+export async function getPurchasedEbooks(): Promise<PurchasedEbook[]> {
+  const response = await fetch("/api/purchases", {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      return [];
+    }
+    throw new Error("Failed to fetch purchased ebooks");
+  }
+
+  const purchases = await response.json() as PurchaseResponse[];
+
+  return purchases
+    .filter((p) => p.ebook)
+    .map((purchase) => {
+      const ebook = purchase.ebook!;
+      const storyData = ebook.story;
+      const story = Array.isArray(storyData) ? storyData[0] : storyData;
+
+      return {
+        id: ebook.id,
+        title: ebook.title,
+        description: ebook.description || "",
+        coverUrl: ebook.cover_url || "",
+        storyTitle: story?.title || "Unknown Story",
+      };
+    });
 }

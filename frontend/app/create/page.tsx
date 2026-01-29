@@ -259,20 +259,28 @@ export default function CreatePage() {
 
   const handleAddEbook = async (
     storyId: string,
-    ebookData: { title: string; description: string; cover: string; price: number }
+    ebookData: {
+      storyId: string;
+      title: string;
+      fileUrl: string;
+      coverUrl?: string;
+      price: number;
+      isbn?: string;
+    }
   ) => {
     try {
-      const newEbook = await createEbook(storyId, {
+      const newEbook = await createEbook(ebookData.storyId, {
         title: ebookData.title,
-        description: ebookData.description,
-        cover_url: ebookData.cover || null,
+        file_url: ebookData.fileUrl,
+        cover_url: ebookData.coverUrl || null,
+        isbn: ebookData.isbn || null,
         price: ebookData.price,
       });
 
       // Update the story's ebooks
       setStories((prev) =>
         prev.map((s) =>
-          s.id === storyId
+          s.id === ebookData.storyId
             ? {
                 ...s,
                 ebooks: [...s.ebooks, newEbook],
@@ -447,6 +455,7 @@ export default function CreatePage() {
               <CreatorStoryCard
                 key={story.id}
                 story={story}
+                allStories={stories.map(s => ({ id: s.id, title: s.title }))}
                 onUpdateStory={handleStoryUpdate}
                 onCreateEpisode={(episodeData) =>
                   handleCreateEpisode(story.id, episodeData)

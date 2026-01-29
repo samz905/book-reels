@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import Header from "../components/Header";
@@ -12,15 +12,39 @@ import PaymentPayoutCard from "../components/account/PaymentPayoutCard";
 import DeleteAccountModal from "../components/account/DeleteAccountModal";
 import {
   mockSubscriptions,
-  mockPurchasedEbooks,
   mockPaymentMethod,
   mockPayoutMethod,
+  PurchasedEbook,
 } from "../data/mockAccountData";
+import { getPurchasedEbooks } from "@/lib/api/creator";
 
 export default function AccountPage() {
   const router = useRouter();
   const { user, loading, signOut } = useAuth();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [purchasedEbooks, setPurchasedEbooks] = useState<PurchasedEbook[]>([]);
+  const [ebooksLoading, setEbooksLoading] = useState(true);
+
+  // Fetch purchased ebooks when user is authenticated
+  const fetchEbooks = useCallback(async () => {
+    if (!user) return;
+
+    setEbooksLoading(true);
+    try {
+      const ebooks = await getPurchasedEbooks();
+      setPurchasedEbooks(ebooks);
+    } catch (err) {
+      console.error("Error fetching purchased ebooks:", err);
+    } finally {
+      setEbooksLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      fetchEbooks();
+    }
+  }, [user, fetchEbooks]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -96,10 +120,10 @@ export default function AccountPage() {
 
         {/* Ebooks Library */}
         <EbooksLibraryCard
-          ebooks={mockPurchasedEbooks}
+          ebooks={purchasedEbooks}
+          isLoading={ebooksLoading}
           onReadNow={(id) => {
-            // TODO: Open ebook reader
-            console.log("Read ebook:", id);
+            router.push(`/read/${id}`);
           }}
         />
 

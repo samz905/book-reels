@@ -10,13 +10,22 @@ import EditStoryModal from "./EditStoryModal";
 
 interface CreatorStoryCardProps {
   story: Story;
+  allStories?: Array<{ id: string; title: string }>;
   onUpdateStory: (story: Story) => void | Promise<void>;
   onCreateEpisode?: (episodeData: { number: number; name: string; isFree: boolean }) => Promise<Episode>;
-  onAddEbook?: (ebookData: { title: string; description: string; cover: string; price: number }) => Promise<Ebook>;
+  onAddEbook?: (ebookData: {
+    storyId: string;
+    title: string;
+    fileUrl: string;
+    coverUrl?: string;
+    price: number;
+    isbn?: string;
+  }) => Promise<Ebook>;
 }
 
 export default function CreatorStoryCard({
   story,
+  allStories,
   onUpdateStory,
   onCreateEpisode,
   onAddEbook,
@@ -139,26 +148,33 @@ export default function CreatorStoryCard({
   };
 
   // Handler for adding book
-  const handleAddBook = async (bookData: Omit<Ebook, "id">) => {
+  const handleAddBook = async (bookData: {
+    storyId: string;
+    title: string;
+    fileUrl: string;
+    coverUrl?: string;
+    price: number;
+    isbn?: string;
+  }) => {
     if (onAddEbook) {
       // Use API-based creation
       try {
-        await onAddEbook({
-          title: bookData.title,
-          description: bookData.description,
-          cover: bookData.cover,
-          price: bookData.price,
-        });
+        await onAddEbook(bookData);
         setShowAddBookModal(false);
       } catch (err) {
         console.error("Error adding ebook:", err);
         alert("Failed to add ebook. Please try again.");
       }
     } else {
-      // Fallback to local state update
+      // Fallback to local state update (limited without API)
       const newBook: Ebook = {
-        ...bookData,
         id: `${story.id}-ebook-${(story.ebooks?.length || 0) + 1}`,
+        title: bookData.title,
+        description: "",
+        cover: bookData.coverUrl || "",
+        fileUrl: bookData.fileUrl,
+        isbn: bookData.isbn,
+        price: bookData.price,
       };
       onUpdateStory({
         ...story,
@@ -492,6 +508,8 @@ export default function CreatorStoryCard({
         isOpen={showAddBookModal}
         onClose={() => setShowAddBookModal(false)}
         onSave={handleAddBook}
+        stories={allStories || [{ id: story.id, title: story.title }]}
+        preselectedStoryId={story.id}
       />
 
       <EditStoryModal

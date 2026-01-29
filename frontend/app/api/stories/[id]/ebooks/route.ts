@@ -95,8 +95,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     return errorResponse(requiredError);
   }
 
-  if (typeof body.price !== "number" || body.price < 0) {
-    return errorResponse("Price must be a positive number");
+  if (typeof body.price !== "number" || body.price < 4.99) {
+    return errorResponse("Price must be at least $4.99");
   }
 
   // Create ebook
@@ -105,6 +105,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     title: body.title,
     description: body.description || "",
     cover_url: body.cover_url || null,
+    file_url: body.file_url || null,
+    isbn: body.isbn || null,
     price: body.price,
   };
 

@@ -148,6 +148,8 @@ export interface Database {
           title: string;
           description: string;
           cover_url: string | null;
+          file_url: string | null;
+          isbn: string | null;
           price: number;
           created_at: string;
           updated_at: string;
@@ -158,6 +160,8 @@ export interface Database {
           title: string;
           description?: string;
           cover_url?: string | null;
+          file_url?: string | null;
+          isbn?: string | null;
           price: number;
           created_at?: string;
           updated_at?: string;
@@ -166,6 +170,8 @@ export interface Database {
           title?: string;
           description?: string;
           cover_url?: string | null;
+          file_url?: string | null;
+          isbn?: string | null;
           price?: number;
           updated_at?: string;
         };
