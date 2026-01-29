@@ -359,7 +359,7 @@ export default function CreatorStoryCard({
                   Publish
                 </button>
                 <span className="text-[#ADADAD] text-sm">
-                  {canPublish ? "" : "Add an episode or book to publish."}
+                  {canPublish ? "" : "Add an episode or ebook to publish."}
                 </span>
               </>
             ) : (

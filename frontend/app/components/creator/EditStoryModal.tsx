@@ -326,7 +326,7 @@ export default function EditStoryModal({
                 </div>
                 {!hasContent && (
                   <p className="text-[#FF8C00] text-sm mt-2">
-                    Add at least one episode or ebook to publish this story.
+                    Add an episode or ebook to publish.
                   </p>
                 )}
               </>
