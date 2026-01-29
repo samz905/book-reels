@@ -490,7 +490,7 @@ export default function CreatorStoryCard({
                         onClick={() => router.push(`/read/${ebook.id}`)}
                         className="text-[#1ED760] text-xs font-bold hover:opacity-80 transition-opacity"
                       >
-                        Read Now
+                        Read
                       </button>
                     </div>
                   </div>

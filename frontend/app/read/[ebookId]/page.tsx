@@ -24,7 +24,7 @@ export default function EbookReaderPage() {
 
   const [ebookUrl, setEbookUrl] = useState<string | null>(null);
   const [bookTitle, setBookTitle] = useState<string>("");
-  const [currentChapter, setCurrentChapter] = useState<string>("Loading...");
+  const [currentChapter, setCurrentChapter] = useState<string>("");
   const [location, setLocation] = useState<string | number>(0);
   const [totalPages, setTotalPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -144,18 +144,6 @@ export default function EbookReaderPage() {
     }
   };
 
-  const prevPage = () => {
-    if (renditionRef.current) {
-      renditionRef.current.prev();
-    }
-  };
-
-  const nextPage = () => {
-    if (renditionRef.current) {
-      renditionRef.current.next();
-    }
-  };
-
   // Loading state
   if (authLoading || isLoading) {
     return (
@@ -268,7 +256,7 @@ export default function EbookReaderPage() {
             onClick={() => setShowToc(true)}
             className="text-gray-600 hover:text-gray-900 font-medium"
           >
-            {currentChapter}
+            {currentChapter || bookTitle}
           </button>
 
           {/* Right: Font size controls */}
@@ -311,28 +299,6 @@ export default function EbookReaderPage() {
 
       {/* Reader content */}
       <div className="flex-1 relative">
-        {/* Navigation arrows - desktop only */}
-        {!isMobile && (
-          <>
-            <button
-              onClick={prevPage}
-              className="absolute left-4 top-1/2 -translate-y-1/2 z-10 text-gray-400 hover:text-gray-600 p-2"
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
-              </svg>
-            </button>
-            <button
-              onClick={nextPage}
-              className="absolute right-4 top-1/2 -translate-y-1/2 z-10 text-gray-400 hover:text-gray-600 p-2"
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z" />
-              </svg>
-            </button>
-          </>
-        )}
-
         {/* EPUB Reader */}
         {ebookUrl && (
           <div className="h-[calc(100vh-160px)] max-w-5xl mx-auto px-12">
