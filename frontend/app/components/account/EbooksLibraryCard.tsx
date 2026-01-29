@@ -152,19 +152,27 @@ export default function EbooksLibraryCard({
               {/* Cover and Read Now */}
               <div className="flex flex-col gap-2 flex-shrink-0">
                 <div className="w-[100px] h-[160px] rounded-lg overflow-hidden bg-[#272727]">
-                  <Image
-                    src={ebook.coverUrl}
-                    alt={ebook.title}
-                    width={100}
-                    height={160}
-                    className="w-full h-full object-cover"
-                  />
+                  {ebook.coverUrl ? (
+                    <Image
+                      src={ebook.coverUrl}
+                      alt={ebook.title}
+                      width={100}
+                      height={160}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-[#ADADAD]">
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/>
+                      </svg>
+                    </div>
+                  )}
                 </div>
                 <button
                   onClick={() => onReadNow?.(ebook.id)}
-                  className="text-green-3 text-base font-bold hover:opacity-80 transition-opacity text-left"
+                  className="text-green-3 text-sm font-bold hover:opacity-80 transition-opacity text-left"
                 >
-                  Read Now
+                  Read
                 </button>
               </div>
 

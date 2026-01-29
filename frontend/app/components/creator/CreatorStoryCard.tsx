@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Story, Episode, Ebook, formatViewCount } from "@/app/data/mockCreatorData";
 import EpisodeList from "./EpisodeList";
@@ -30,6 +31,7 @@ export default function CreatorStoryCard({
   onCreateEpisode,
   onAddEbook,
 }: CreatorStoryCardProps) {
+  const router = useRouter();
   const [showEpisodes, setShowEpisodes] = useState(false);
   const [showCreateEpisodeModal, setShowCreateEpisodeModal] = useState(false);
   const [showAddBookModal, setShowAddBookModal] = useState(false);
@@ -451,21 +453,37 @@ export default function CreatorStoryCard({
               <div key={ebook.id} className="flex items-stretch">
                 {/* Ebook card - 354px wide with 322px content area */}
                 <div className="w-[354px] flex gap-3">
-                  {/* Cover with price below */}
-                  <div className="flex flex-col gap-2 flex-shrink-0">
-                    <div className="w-[100px] h-[160px] rounded bg-card-bg-2">
-                      <Image
-                        src={ebook.cover}
-                        alt={ebook.title}
-                        width={100}
-                        height={160}
-                        className="w-full h-full object-cover rounded"
-                      />
+                  {/* Cover with price and read button below */}
+                  <div className="flex flex-col gap-2 flex-shrink-0 w-[100px]">
+                    <div className="w-[100px] h-[160px] rounded bg-card-bg-2 overflow-hidden">
+                      {ebook.cover ? (
+                        <Image
+                          src={ebook.cover}
+                          alt={ebook.title}
+                          width={100}
+                          height={160}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-[#ADADAD]">
+                          <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/>
+                          </svg>
+                        </div>
+                      )}
                     </div>
-                    {/* Price below cover */}
-                    <span className="text-[#FF8C00] text-sm font-semibold">
-                      $ {ebook.price.toFixed(2)}
-                    </span>
+                    {/* Price and Read button below cover */}
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-[#FF8C00] text-xs font-semibold">
+                        ${ebook.price.toFixed(2)}
+                      </span>
+                      <button
+                        onClick={() => router.push(`/read/${ebook.id}`)}
+                        className="text-[#1ED760] text-xs font-bold hover:opacity-80 transition-opacity"
+                      >
+                        Read
+                      </button>
+                    </div>
                   </div>
 
                   {/* Info - 12px gap from cover, remaining width */}
@@ -478,7 +496,13 @@ export default function CreatorStoryCard({
                     </p>
                     {/* Edit button at bottom-right of text area */}
                     <div className="flex justify-end mt-auto">
-                      <button className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors">
+                      <button
+                        onClick={() => {
+                          // TODO: Implement ebook edit modal
+                          alert("Edit ebook feature coming soon!");
+                        }}
+                        className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors"
+                      >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="#E8EAED">
                           <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
                         </svg>
