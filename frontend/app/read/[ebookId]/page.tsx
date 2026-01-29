@@ -182,49 +182,6 @@ export default function EbookReaderPage() {
     );
   }
 
-  // Table of Contents view
-  if (showToc) {
-    return (
-      <div className="min-h-screen bg-[#F5F5F0]">
-        {/* Header for TOC */}
-        <header className="bg-white border-b border-gray-200 px-4 py-3">
-          <div className="max-w-4xl mx-auto flex items-center gap-4">
-            <button
-              onClick={() => setShowToc(false)}
-              className="text-gray-600 hover:text-gray-900"
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
-              </svg>
-            </button>
-            <span className="text-gray-900 font-medium">{bookTitle}</span>
-          </div>
-        </header>
-
-        {/* TOC Content */}
-        <main className="max-w-4xl mx-auto p-6">
-          <h1 className="text-2xl font-bold text-gray-900 mb-6">
-            Table of Contents
-          </h1>
-          <nav>
-            <ul className="space-y-3">
-              {toc.map((item, index) => (
-                <li key={index}>
-                  <button
-                    onClick={() => goToChapter(item.href)}
-                    className="text-gray-900 hover:text-blue-600 text-lg text-left w-full py-2"
-                  >
-                    {item.label}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </nav>
-        </main>
-      </div>
-    );
-  }
-
   // Reader view
   return (
     <div className="min-h-screen bg-[#F5F5F0] flex flex-col">
@@ -236,20 +193,15 @@ export default function EbookReaderPage() {
       {/* Reader header */}
       <header className="bg-white border-b border-gray-200 px-4 py-3">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
-          {/* Left: Back + Book name (desktop) or just chapter (mobile) */}
-          <div className="flex items-center gap-4">
-            <button
-              onClick={goBack}
-              className="text-gray-600 hover:text-gray-900"
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
-              </svg>
-            </button>
-            {!isMobile && (
-              <span className="text-gray-900 font-medium">{bookTitle}</span>
-            )}
-          </div>
+          {/* Left: Back button */}
+          <button
+            onClick={goBack}
+            className="text-gray-600 hover:text-gray-900"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+            </svg>
+          </button>
 
           {/* Center: Chapter name */}
           <button
@@ -322,6 +274,47 @@ export default function EbookReaderPage() {
           Page {currentPage} out of {totalPages || "..."}
         </span>
       </footer>
+
+      {/* Table of Contents Overlay */}
+      {showToc && (
+        <div className="fixed inset-0 z-50 bg-[#F5F5F0]">
+          {/* Header for TOC */}
+          <header className="bg-white border-b border-gray-200 px-4 py-3">
+            <div className="max-w-4xl mx-auto flex items-center gap-4">
+              <button
+                onClick={() => setShowToc(false)}
+                className="text-gray-600 hover:text-gray-900"
+              >
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+                </svg>
+              </button>
+              <span className="text-gray-900 font-medium">{bookTitle}</span>
+            </div>
+          </header>
+
+          {/* TOC Content */}
+          <main className="max-w-4xl mx-auto p-6 overflow-y-auto h-[calc(100vh-60px)]">
+            <h1 className="text-2xl font-bold text-gray-900 mb-6">
+              Table of Contents
+            </h1>
+            <nav>
+              <ul className="space-y-3">
+                {toc.map((item, index) => (
+                  <li key={index}>
+                    <button
+                      onClick={() => goToChapter(item.href)}
+                      className="text-gray-900 hover:text-blue-600 text-lg text-left w-full py-2"
+                    >
+                      {item.label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          </main>
+        </div>
+      )}
     </div>
   );
 }
