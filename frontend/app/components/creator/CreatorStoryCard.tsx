@@ -6,6 +6,7 @@ import { Story, Episode, Ebook, formatViewCount } from "@/app/data/mockCreatorDa
 import EpisodeList from "./EpisodeList";
 import CreateEpisodeModal from "./CreateEpisodeModal";
 import AddBookModal from "./AddBookModal";
+import EditStoryModal from "./EditStoryModal";
 
 interface CreatorStoryCardProps {
   story: Story;
@@ -23,6 +24,8 @@ export default function CreatorStoryCard({
   const [showEpisodes, setShowEpisodes] = useState(false);
   const [showCreateEpisodeModal, setShowCreateEpisodeModal] = useState(false);
   const [showAddBookModal, setShowAddBookModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [isEditSaving, setIsEditSaving] = useState(false);
 
   // Horizontal scroll state for ebooks
   const ebooksScrollRef = useRef<HTMLDivElement>(null);
@@ -165,6 +168,20 @@ export default function CreatorStoryCard({
     }
   };
 
+  // Handler for editing story
+  const handleEditStory = async (updatedStory: Story) => {
+    setIsEditSaving(true);
+    try {
+      await onUpdateStory(updatedStory);
+      setShowEditModal(false);
+    } catch (err) {
+      console.error("Error updating story:", err);
+      alert("Failed to update story. Please try again.");
+    } finally {
+      setIsEditSaving(false);
+    }
+  };
+
   // Handler for publish/unpublish
   const handleTogglePublish = () => {
     onUpdateStory({
@@ -208,7 +225,10 @@ export default function CreatorStoryCard({
             {story.status === "draft" ? "DRAFT" : "PUBLISHED"}
           </span>
           {/* Edit button */}
-          <button className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors">
+          <button
+            onClick={() => setShowEditModal(true)}
+            className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors"
+          >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="#E8EAED">
               <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
             </svg>
@@ -472,6 +492,14 @@ export default function CreatorStoryCard({
         isOpen={showAddBookModal}
         onClose={() => setShowAddBookModal(false)}
         onSave={handleAddBook}
+      />
+
+      <EditStoryModal
+        isOpen={showEditModal}
+        story={story}
+        onClose={() => setShowEditModal(false)}
+        onSave={handleEditStory}
+        isSaving={isEditSaving}
       />
     </div>
   );
