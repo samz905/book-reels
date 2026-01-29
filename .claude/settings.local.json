@@ -22,7 +22,8 @@
       "Bash(npx tsx:*)",
       "Bash(gh api:*)",
       "mcp__supabase__get_logs",
-      "mcp__supabase__execute_sql"
+      "mcp__supabase__execute_sql",
+      "Bash(npx tsc:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

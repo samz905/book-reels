@@ -396,19 +396,38 @@ export default function CreatePage() {
           />
 
           {/* Create New Story card */}
-          <div className="bg-[#0F0E13] rounded-xl p-6 flex flex-col">
+          <div className="bg-[#0F0E13] rounded-xl p-6 flex flex-col gap-5">
             <button
               onClick={() => setShowCreateStoryModal(true)}
-              className="w-full py-3 rounded-lg font-semibold text-white transition-opacity hover:opacity-90"
+              className="w-full py-2 rounded-lg font-semibold text-sm text-white transition-opacity hover:opacity-90 border border-[#B8B6FC]"
               style={{
                 background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",
               }}
             >
               Create New Story
             </button>
-            <p className="text-white/50 text-sm mt-3">
-              Set up a new story and start publishing episodes and books.
-            </p>
+            <button
+              disabled={stories.length === 0}
+              className="w-full py-2 rounded-lg font-semibold text-sm text-white transition-opacity border border-[#B8B6FC] disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{
+                background: stories.length > 0
+                  ? "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)"
+                  : "#333",
+              }}
+            >
+              Create New Episode
+            </button>
+            <button
+              disabled={stories.length === 0}
+              className="w-full py-2 rounded-lg font-semibold text-sm text-white transition-opacity border border-[#B8B6FC] disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{
+                background: stories.length > 0
+                  ? "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)"
+                  : "#333",
+              }}
+            >
+              Add New Book
+            </button>
           </div>
         </div>
 
