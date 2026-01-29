@@ -66,16 +66,20 @@ export default function CreatePage() {
         let profileData = await getProfile(user.id);
 
         if (!profileData) {
-          // Create new profile with random username and user's actual name
+          // Create new profile with random username, user's name and avatar
           const randomUsername = generateRandomUsername();
           const userName = user.user_metadata?.full_name ||
                           user.user_metadata?.name ||
                           user.email?.split("@")[0] ||
                           "New Creator";
+          const userAvatar = user.user_metadata?.avatar_url ||
+                            user.user_metadata?.picture ||
+                            null;
           profileData = await createProfile(user.id, {
             username: randomUsername,
             name: userName,
             bio: "",
+            avatar_url: userAvatar,
           });
         }
 

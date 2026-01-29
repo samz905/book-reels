@@ -121,7 +121,7 @@ export async function getProfile(userId: string): Promise<Profile | null> {
 
 export async function createProfile(
   userId: string,
-  data: { username: string; name: string; bio?: string }
+  data: { username: string; name: string; bio?: string; avatar_url?: string | null }
 ): Promise<Profile> {
   const response = await fetch(`/api/profiles/${userId}`, {
     method: "PUT",
