@@ -110,7 +110,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
 
 // Profile APIs
 export async function getProfile(userId: string): Promise<Profile | null> {
-  const response = await fetch(`/api/profiles/${userId}`);
+  const response = await fetch(`/api/profiles/${userId}`, {
+    credentials: "include",
+  });
   if (response.status === 404) {
     return null;
   }
@@ -124,6 +126,7 @@ export async function createProfile(
   const response = await fetch(`/api/profiles/${userId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(data),
   });
   return handleResponse<Profile>(response);
@@ -141,6 +144,7 @@ export async function updateProfile(
   const response = await fetch(`/api/profiles/${userId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(data),
   });
 
@@ -156,7 +160,8 @@ export async function getMyStories(
   creatorId: string
 ): Promise<FrontendStory[]> {
   const response = await fetch(
-    `/api/stories?creator_id=${creatorId}&status=all`
+    `/api/stories?creator_id=${creatorId}&status=all`,
+    { credentials: "include" }
   );
   const result = await handleResponse<{ data: StoryFull[] }>(response);
 
@@ -164,8 +169,8 @@ export async function getMyStories(
   const storiesWithDetails = await Promise.all(
     result.data.map(async (story) => {
       const [episodesRes, ebooksRes] = await Promise.all([
-        fetch(`/api/stories/${story.id}/episodes`),
-        fetch(`/api/stories/${story.id}/ebooks`),
+        fetch(`/api/stories/${story.id}/episodes`, { credentials: "include" }),
+        fetch(`/api/stories/${story.id}/ebooks`, { credentials: "include" }),
       ]);
 
       const episodes = episodesRes.ok
@@ -195,6 +200,7 @@ export async function createStory(data: {
   const response = await fetch("/api/stories", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(data),
   });
   const dbStory = await handleResponse<DbStory>(response);
@@ -215,6 +221,7 @@ export async function updateStory(
   const response = await fetch(`/api/stories/${storyId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(data),
   });
   return handleResponse<DbStory>(response);
@@ -235,6 +242,7 @@ export async function createEpisode(
   const response = await fetch(`/api/stories/${storyId}/episodes`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(data),
   });
   const dbEpisode = await handleResponse<DbEpisode>(response);
@@ -254,6 +262,7 @@ export async function createEbook(
   const response = await fetch(`/api/stories/${storyId}/ebooks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(data),
   });
   const dbEbook = await handleResponse<DbEbook>(response);
@@ -262,7 +271,9 @@ export async function createEbook(
 
 // Creator Settings APIs
 export async function getCreatorSettings(): Promise<CreatorSettings | null> {
-  const response = await fetch("/api/creator/settings");
+  const response = await fetch("/api/creator/settings", {
+    credentials: "include",
+  });
   if (response.status === 404) {
     return null;
   }
@@ -277,6 +288,7 @@ export async function updateCreatorSettings(data: {
   const response = await fetch("/api/creator/settings", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(data),
   });
   return handleResponse<CreatorSettings>(response);
