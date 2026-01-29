@@ -47,8 +47,12 @@ export async function GET(request: NextRequest) {
         )
       `,
         { count: "exact" }
-      )
-      .eq("status", status);
+      );
+
+    // Only filter by status if not "all"
+    if (status !== "all") {
+      query = query.eq("status", status);
+    }
 
     // Apply filters
     if (type && (type === "video" || type === "audio")) {

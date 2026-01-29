@@ -89,12 +89,43 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
   const supabase = await createClient();
 
-  const { data: profile, error } = await supabase
+  // First check if profile exists
+  const { data: existingProfile } = await supabase
     .from("profiles")
-    .update(updateData)
+    .select("id")
     .eq("id", id)
-    .select()
     .single();
+
+  let profile;
+  let error;
+
+  if (existingProfile) {
+    // Update existing profile
+    const result = await supabase
+      .from("profiles")
+      .update(updateData)
+      .eq("id", id)
+      .select()
+      .single();
+    profile = result.data;
+    error = result.error;
+  } else {
+    // Create new profile (upsert)
+    const result = await supabase
+      .from("profiles")
+      .insert({
+        id,
+        username: updateData.username || `user-${id.slice(0, 8)}`,
+        name: updateData.name || "New User",
+        bio: updateData.bio || "",
+        avatar_url: updateData.avatar_url || null,
+        is_creator: updateData.is_creator || false,
+      })
+      .select()
+      .single();
+    profile = result.data;
+    error = result.error;
+  }
 
   if (error) {
     if (error.code === "23505") {
