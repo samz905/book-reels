@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { createApiClient } from "@/lib/supabase/api";
+import { createApiClient, createServiceClient } from "@/lib/supabase/api";
 import { createClient } from "@/lib/supabase/server";
 import {
   jsonResponse,
@@ -111,9 +111,10 @@ export async function POST(request: NextRequest) {
     return errorResponse(typeError);
   }
 
-  const supabase = await createClient();
+  // Use service client for mutations (bypasses RLS since we've verified auth)
+  const supabase = createServiceClient();
 
-  // Verify user is a creator
+  // Verify user is a creator and auto-upgrade if needed
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_creator")

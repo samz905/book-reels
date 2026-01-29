@@ -7,3 +7,22 @@ export function createApiClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 }
+
+// Service role client for server-side mutations that need to bypass RLS
+// Use this when performing actions on behalf of authenticated users
+export function createServiceClient() {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey) {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set");
+  }
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    serviceKey,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  );
+}
