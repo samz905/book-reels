@@ -25,7 +25,14 @@ export default function EbookReaderPage() {
   const [ebookUrl, setEbookUrl] = useState<string | null>(null);
   const [bookTitle, setBookTitle] = useState<string>("");
   const [currentChapter, setCurrentChapter] = useState<string>("");
-  const [location, setLocation] = useState<string | number>(0);
+  const [location, setLocation] = useState<string | number>(() => {
+    // Try to restore saved position from localStorage
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(`ebook-progress-${ebookId}`);
+      if (saved) return saved;
+    }
+    return 0;
+  });
   const [totalPages, setTotalPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [fontSize, setFontSize] = useState<FontSize>("medium");
@@ -81,6 +88,9 @@ export default function EbookReaderPage() {
   const locationChanged = useCallback((epubcfi: string) => {
     setLocation(epubcfi);
 
+    // Save progress to localStorage
+    localStorage.setItem(`ebook-progress-${ebookId}`, epubcfi);
+
     if (renditionRef.current) {
       const displayed = renditionRef.current.location;
       if (displayed && displayed.start) {
@@ -90,7 +100,7 @@ export default function EbookReaderPage() {
         setTotalPages(total);
       }
     }
-  }, []);
+  }, [ebookId]);
 
   // Handle rendition
   const handleRendition = useCallback((rendition: Rendition) => {
@@ -258,6 +268,7 @@ export default function EbookReaderPage() {
               location={location}
               locationChanged={locationChanged}
               getRendition={handleRendition}
+              showToc={false}
               epubOptions={{
                 flow: "paginated",
                 spread: isMobile ? "none" : "always",
