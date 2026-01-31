@@ -192,7 +192,7 @@ export default function Home() {
         </div>
 
         {/* Story Grid */}
-        <section className="max-w-[1392px] mx-auto">
+        <section className="max-w-[1392px] mx-auto min-h-[50vh]">
           {loading ? (
             <StoryGridSkeleton count={12} />
           ) : error ? (
