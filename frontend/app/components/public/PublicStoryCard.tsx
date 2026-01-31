@@ -304,7 +304,7 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
                         </div>
                         {/* Price + Buy row below cover */}
                         <div className="flex items-center gap-1.5">
-                          <span className="text-purple text-sm font-semibold">
+                          <span className="text-[#FF8C00] text-sm font-semibold">
                             ${ebook.price.toFixed(2)}
                           </span>
                           <span className="text-[#ADADAD]">|</span>
