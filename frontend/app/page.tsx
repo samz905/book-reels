@@ -169,7 +169,7 @@ export default function Home() {
         <div
           ref={stickyRef}
           className={`sticky top-[86px] z-20 py-4 -mx-6 px-6 transition-colors duration-200 ${
-            isSticky ? "bg-black/80 backdrop-blur-sm" : ""
+            isSticky ? "bg-[#010101]" : ""
           }`}
         >
           {/* Story Type Tabs */}
