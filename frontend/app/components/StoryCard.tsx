@@ -48,13 +48,7 @@ export default function StoryCard({ story }: StoryCardProps) {
           </div>
         </div>
 
-        {story.viewCount && (
-          <span className="absolute top-2 right-2 bg-orange text-white text-xs font-semibold px-2 py-1 rounded">
-            {story.viewCount}
-          </span>
-        )}
-
-        {story.episodeCount && !story.viewCount && (
+        {story.episodeCount && (
           <span className="absolute top-2 right-2 bg-accent text-dark text-xs font-semibold px-2 py-1 rounded">
             {story.episodeCount}
           </span>
