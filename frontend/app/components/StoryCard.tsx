@@ -74,7 +74,7 @@ export default function StoryCard({ story }: StoryCardProps) {
                 />
               </svg>
             ) : (
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <svg width="16" height="20" viewBox="0 0 15 20" fill="none">
                 <path
                   fillRule="evenodd"
                   clipRule="evenodd"
