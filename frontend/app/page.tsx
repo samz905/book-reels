@@ -131,8 +131,6 @@ export default function Home() {
       <div className="absolute w-[227px] h-[420px] left-[25px] top-[-260px] bg-purple-glow blur-[95px]" />
       <div className="absolute w-[227px] h-[420px] left-[740px] top-[1507px] bg-purple-glow blur-[95px]" />
 
-      {/* Gradient overlay */}
-      <div className="absolute w-full h-[1167px] left-0 top-[854px] bg-gradient-overlay pointer-events-none" />
 
       <Header />
 
@@ -192,7 +190,7 @@ export default function Home() {
         </div>
 
         {/* Story Grid */}
-        <section className="max-w-[1392px] mx-auto min-h-[50vh]">
+        <section className="max-w-[1392px] mx-auto">
           {loading ? (
             <StoryGridSkeleton count={12} />
           ) : error ? (
