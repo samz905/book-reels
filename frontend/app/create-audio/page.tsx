@@ -485,7 +485,7 @@ export default function CreateAudioPage() {
                       <input
                         type="text"
                         placeholder="Name your voice"
-                        className="w-[180px] h-10 px-4 bg-[#262626] rounded-lg text-white text-base placeholder-[#ADADAD] focus:outline-none flex-shrink-0"
+                        className="w-[220px] h-10 px-4 bg-[#262626] rounded-lg text-white text-base placeholder-[#ADADAD] focus:outline-none flex-shrink-0"
                         style={{ fontFamily: "Mulish" }}
                       />
                     </div>
