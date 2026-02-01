@@ -282,33 +282,49 @@ export default function CreateAudioPage() {
                         key={num}
                         onClick={() => script && setSelectedScriptIndex(idx)}
                         disabled={!script}
-                        className="w-full h-[565px] bg-[#16151D] rounded-xl p-4 text-left"
+                        className={`w-full h-[565px] bg-[#16151D] rounded-xl p-4 text-left flex flex-col ${!script ? 'justify-center items-center' : ''}`}
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="text-white text-xl font-bold" style={{ fontFamily: "Mulish" }}>
-                            Script Option {num}
-                          </span>
-                          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isSelected ? "" : ""}`}>
-                            {isSelected ? (
-                              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                                <circle cx="16" cy="16" r="13.5" fill="#1ED760" stroke="#1ED760"/>
-                                <path d="M10 16L14 20L22 12" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                              </svg>
-                            ) : (
+                        {script ? (
+                          <>
+                            <div className="flex items-center justify-between w-full">
+                              <span className="text-white text-xl font-bold" style={{ fontFamily: "Mulish" }}>
+                                Script Option {num}
+                              </span>
+                              <div className="w-8 h-8 rounded-full flex items-center justify-center">
+                                {isSelected ? (
+                                  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                                    <circle cx="16" cy="16" r="13.5" fill="#1ED760" stroke="#1ED760"/>
+                                    <path d="M10 16L14 20L22 12" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                  </svg>
+                                ) : (
+                                  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                                    <circle cx="16" cy="16" r="13.5" stroke="#ADADAD" strokeWidth="2"/>
+                                  </svg>
+                                )}
+                              </div>
+                            </div>
+                            <div className="w-full h-px bg-[#2C2C43] my-4" />
+                            <p className="text-[#ADADAD] text-base" style={{ fontFamily: "Mulish" }}>
+                              Duration: {script.duration}
+                            </p>
+                            <p className="text-white/80 text-sm mt-4 leading-relaxed line-clamp-[18]" style={{ fontFamily: "Mulish" }}>
+                              {script.content}
+                            </p>
+                          </>
+                        ) : (
+                          <div className="flex flex-col items-center gap-4">
+                            <div className="flex items-center gap-3">
+                              <span className="text-white text-xl font-bold" style={{ fontFamily: "Mulish" }}>
+                                Script Option {num}
+                              </span>
                               <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
                                 <circle cx="16" cy="16" r="13.5" stroke="#ADADAD" strokeWidth="2"/>
                               </svg>
-                            )}
+                            </div>
+                            <p className="text-[#ADADAD] text-base" style={{ fontFamily: "Mulish" }}>
+                              Duration:
+                            </p>
                           </div>
-                        </div>
-                        <div className="w-full h-px bg-[#2C2C43] my-4" />
-                        <p className="text-[#ADADAD] text-base" style={{ fontFamily: "Mulish" }}>
-                          Duration: {script?.duration || ""}
-                        </p>
-                        {script && (
-                          <p className="text-white/80 text-sm mt-4 leading-relaxed line-clamp-[18]" style={{ fontFamily: "Mulish" }}>
-                            {script.content}
-                          </p>
                         )}
                       </button>
                     );
