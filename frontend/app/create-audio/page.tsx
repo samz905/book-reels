@@ -35,6 +35,7 @@ export default function CreateAudioPage() {
   const [showRecordingModal, setShowRecordingModal] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isGeneratingNarration, setIsGeneratingNarration] = useState(false);
+  const [useSavedVoice, setUseSavedVoice] = useState(true);
 
   // Upload flow state
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -411,11 +412,19 @@ export default function CreateAudioPage() {
                       <div className="h-[279px] bg-[#16151D] rounded-xl flex flex-col items-center justify-center relative">
                         <div className="flex flex-col items-center gap-7">
                           <span className="text-white text-4xl font-bold text-center" style={{ fontFamily: "Mulish" }}>Sarah</span>
-                          <label className="flex items-center gap-3">
-                            <div className="w-6 h-6 bg-white rounded flex items-center justify-center">
-                              <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
-                                <path d="M1 5L5 9L13 1" stroke="#16151D" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                              </svg>
+                          <label className="flex items-center gap-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={useSavedVoice}
+                              onChange={(e) => setUseSavedVoice(e.target.checked)}
+                              className="sr-only"
+                            />
+                            <div className={`w-6 h-6 rounded flex items-center justify-center transition-colors ${useSavedVoice ? 'bg-white' : 'bg-transparent border-2 border-[#ADADAD]'}`}>
+                              {useSavedVoice && (
+                                <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
+                                  <path d="M1 5L5 9L13 1" stroke="#16151D" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                              )}
                             </div>
                             <span className="text-white text-[17px] font-semibold" style={{ fontFamily: "Mulish" }}>Use this voice</span>
                           </label>
