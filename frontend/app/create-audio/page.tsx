@@ -282,7 +282,7 @@ export default function CreateAudioPage() {
                         key={num}
                         onClick={() => script && setSelectedScriptIndex(idx)}
                         disabled={!script}
-                        className="w-full h-[565px] bg-[#16151D] rounded-xl p-4 text-left"
+                        className="w-full h-[565px] bg-[#16151D] rounded-xl p-4 text-left flex flex-col justify-start"
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-white text-xl font-bold" style={{ fontFamily: "Mulish", letterSpacing: "-0.007em" }}>
