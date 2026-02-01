@@ -23,7 +23,16 @@
       "Bash(gh api:*)",
       "mcp__supabase__get_logs",
       "mcp__supabase__execute_sql",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "mcp__supabase__list_tables",
+      "mcp__supabase__list_extensions",
+      "mcp__supabase__search_docs",
+      "mcp__supabase__list_migrations",
+      "mcp__supabase__apply_migration",
+      "mcp__supabase__get_project_url",
+      "Bash(ls:*)",
+      "Bash(git diff:*)",
+      "WebFetch(domain:github.com)"
     ]
   },
   "enableAllProjectMcpServers": true,

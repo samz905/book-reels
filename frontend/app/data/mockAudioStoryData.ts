@@ -4,8 +4,7 @@ export interface Narrator {
   id: string;
   name: string;
   avatar: string;
-  initials: string;
-  description?: string;
+  voiceType: string; // Warm, Deep, Soft, etc.
 }
 
 export interface Script {
@@ -15,30 +14,32 @@ export interface Script {
   wordCount: number;
 }
 
-export type EpisodeLength = '1 min' | '3 min' | '5 min';
+export type EpisodeLength = '1 min' | '2 min' | '3 min';
 
-export const EPISODE_LENGTHS: EpisodeLength[] = ['1 min', '3 min', '5 min'];
+export const EPISODE_LENGTHS: EpisodeLength[] = ['1 min', '2 min', '3 min'];
 
-// Mock narrators (~20) with coral/red backgrounds
+// Mock narrators (20) - 2 rows of 10
 export const mockNarrators: Narrator[] = [
-  { id: 'narrator-1', name: 'Addison', initials: 'AD', avatar: '' },
-  { id: 'narrator-2', name: 'Madison', initials: 'MA', avatar: '' },
-  { id: 'narrator-3', name: 'Kahliyah', initials: 'KA', avatar: '' },
-  { id: 'narrator-4', name: 'Razan', initials: 'RA', avatar: '' },
-  { id: 'narrator-5', name: 'Josh', initials: 'JO', avatar: '' },
-  { id: 'narrator-6', name: 'Jake', initials: 'JA', avatar: '' },
-  { id: 'narrator-7', name: 'Sarah', initials: 'SA', avatar: '', description: 'Warm and engaging voice' },
-  { id: 'narrator-8', name: 'Samiya', initials: 'SM', avatar: '' },
-  { id: 'narrator-9', name: 'Salma', initials: 'SL', avatar: '' },
-  { id: 'narrator-10', name: 'Matthew', initials: 'MT', avatar: '' },
-  { id: 'narrator-11', name: 'Jennifer', initials: 'JE', avatar: '' },
-  { id: 'narrator-12', name: 'Sofia', initials: 'SO', avatar: '' },
-  { id: 'narrator-13', name: 'Daniel', initials: 'DA', avatar: '' },
-  { id: 'narrator-14', name: 'Emma', initials: 'EM', avatar: '' },
-  { id: 'narrator-15', name: 'Marcus', initials: 'MR', avatar: '' },
-  { id: 'narrator-16', name: 'Bella', initials: 'BE', avatar: '' },
-  { id: 'narrator-17', name: 'Zara', initials: 'ZA', avatar: '' },
-  { id: 'narrator-18', name: 'Noah', initials: 'NO', avatar: '' },
+  { id: 'narrator-1', name: 'Kathryn', voiceType: 'Warm', avatar: '' },
+  { id: 'narrator-2', name: 'Kathryn', voiceType: 'Warm', avatar: '' },
+  { id: 'narrator-3', name: 'Kathryn', voiceType: 'Warm', avatar: '' },
+  { id: 'narrator-4', name: 'Kathryn', voiceType: 'Warm', avatar: '' },
+  { id: 'narrator-5', name: 'Kathryn', voiceType: 'Warm', avatar: '' },
+  { id: 'narrator-6', name: 'Jacob', voiceType: 'Deep', avatar: '' },
+  { id: 'narrator-7', name: 'Jacob', voiceType: 'Deep', avatar: '' },
+  { id: 'narrator-8', name: 'Jacob', voiceType: 'Deep', avatar: '' },
+  { id: 'narrator-9', name: 'Jacob', voiceType: 'Deep', avatar: '' },
+  { id: 'narrator-10', name: 'Jane', voiceType: 'Soft', avatar: '' },
+  { id: 'narrator-11', name: 'Kathryn', voiceType: 'Warm', avatar: '' },
+  { id: 'narrator-12', name: 'Kathryn', voiceType: 'Warm', avatar: '' },
+  { id: 'narrator-13', name: 'Kathryn', voiceType: 'Warm', avatar: '' },
+  { id: 'narrator-14', name: 'Kathryn', voiceType: 'Warm', avatar: '' },
+  { id: 'narrator-15', name: 'Kathryn', voiceType: 'Warm', avatar: '' },
+  { id: 'narrator-16', name: 'Jacob', voiceType: 'Deep', avatar: '' },
+  { id: 'narrator-17', name: 'Jacob', voiceType: 'Deep', avatar: '' },
+  { id: 'narrator-18', name: 'Jacob', voiceType: 'Deep', avatar: '' },
+  { id: 'narrator-19', name: 'Jacob', voiceType: 'Deep', avatar: '' },
+  { id: 'narrator-20', name: 'Jane', voiceType: 'Soft', avatar: '' },
 ];
 
 // Sample script content for generated scripts
@@ -62,11 +63,10 @@ His fingers trembled as he broke the seal. Inside was a single page, and as he r
 
 // Generate mock scripts (simulates AI output)
 export const generateMockScripts = (prompt: string, length: EpisodeLength): Script[] => {
-  // Simulate different content based on length
   const wordCounts = {
     '1 min': 150,
+    '2 min': 300,
     '3 min': 450,
-    '5 min': 750,
   };
 
   return [
@@ -111,6 +111,6 @@ export interface AudioCredits {
 }
 
 export const mockCredits: AudioCredits = {
-  available: 67,
-  label: 'AI Audio Credits',
+  available: 400,
+  label: 'Audio Credits',
 };
