@@ -470,20 +470,23 @@ export default function CreateAudioPage() {
                         </div>
 
                         {/* Checkbox */}
-                        <label className="flex items-center gap-3">
-                          <div className="w-6 h-6 bg-white rounded flex items-center justify-center">
+                        <label className="flex items-center gap-3 whitespace-nowrap">
+                          <div className="w-6 h-6 bg-white rounded flex items-center justify-center flex-shrink-0">
                             <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
                               <path d="M1 5L5 9L13 1" stroke="#16151D" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                             </svg>
                           </div>
-                          <span className="text-white text-[17px] font-semibold" style={{ fontFamily: "Mulish" }}>Use for AI voice cloning</span>
+                          <span className="text-white text-[17px] font-semibold" style={{ fontFamily: "Mulish" }}>Use my voice and save it</span>
                         </label>
                       </div>
 
-                      {/* Price Input */}
-                      <div className="w-[370px] h-14 px-4 bg-[#262626] rounded-2xl flex items-center justify-center">
-                        <span className="text-[#ADADAD] text-sm font-semibold" style={{ fontFamily: "Mulish" }}>Set price per minute</span>
-                      </div>
+                      {/* Name Input */}
+                      <input
+                        type="text"
+                        placeholder="Name your voice"
+                        className="h-10 px-4 bg-[#262626] rounded-lg text-white text-base placeholder-[#ADADAD] focus:outline-none"
+                        style={{ fontFamily: "Mulish", width: 200 }}
+                      />
                     </div>
 
                     {/* Generate Narration Button */}
