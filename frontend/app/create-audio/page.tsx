@@ -330,7 +330,8 @@ export default function CreateAudioPage() {
                   ]}
                   activeTab={narratorTab}
                   onTabChange={(id) => setNarratorTab(id as "ai" | "my-voice")}
-                  className="px-6 mb-6"
+                  variant="pill"
+                  className="mb-6"
                 />
 
                 {narratorTab === "ai" ? (
