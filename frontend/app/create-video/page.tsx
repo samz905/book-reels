@@ -52,22 +52,6 @@ export default function CreateVideoPage() {
               </p>
             </div>
 
-            {/* Decorative gradient line */}
-            <div className="w-48 h-1 rounded-full bg-gradient-to-r from-[#B8B6FC] via-[#7370FF] to-[#B8B6FC] opacity-60" />
-
-            {/* CTA */}
-            <p
-              className="text-[#BEC0C9] text-sm mt-2"
-              style={{ fontFamily: "Mulish" }}
-            >
-              In the meantime, try creating an{" "}
-              <button
-                onClick={() => router.push("/create-audio")}
-                className="text-[#B8B6FC] hover:text-white transition-colors underline underline-offset-2"
-              >
-                Audio Story
-              </button>
-            </p>
           </div>
         </div>
       </main>
