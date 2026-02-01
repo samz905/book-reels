@@ -515,42 +515,45 @@ export default function CreateAudioPage() {
             <div className="mx-6 mt-8 rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
               <h2 className="text-white text-2xl font-bold" style={{ fontFamily: "Mulish" }}>1. Upload Your Episode</h2>
               <div className="w-full h-px bg-[#2C2C43] my-4" />
-              <div className="flex flex-col items-center py-12">
-                {uploadedFile ? (
-                  <div className="flex items-center gap-4 p-4 bg-[#16151D] rounded-xl">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                      <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
-                    </svg>
-                    <span className="text-white">{uploadedFile.name}</span>
-                    <button onClick={() => setUploadedFile(null)} className="text-red-400">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+
+              {/* Centered Card */}
+              <div className="flex justify-center">
+                <div className="w-[636px] h-[279px] bg-[#16151D] rounded-xl flex items-center justify-center">
+                  {uploadedFile ? (
+                    <div className="flex items-center gap-4 p-4">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                        <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
                       </svg>
+                      <span className="text-white text-lg" style={{ fontFamily: "Mulish" }}>{uploadedFile.name}</span>
+                      <button onClick={() => setUploadedFile(null)} className="text-red-400 ml-2">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        const input = document.createElement("input");
+                        input.type = "file";
+                        input.accept = "audio/*";
+                        input.onchange = (e) => {
+                          const file = (e.target as HTMLInputElement).files?.[0];
+                          if (file) setUploadedFile(file);
+                        };
+                        input.click();
+                      }}
+                      className="flex items-center gap-2 px-[49px] py-4 rounded-xl text-lg font-bold text-white border border-[#B8B6FC] bg-[#262550]"
+                      style={{ fontFamily: "Mulish" }}
+                    >
+                      {/* Upload File Icon */}
+                      <svg width="15" height="19" viewBox="0 0 15 19" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M6.75 11.45V15.1345C6.75 15.3473 6.82183 15.5256 6.9655 15.6693C7.109 15.8128 7.28717 15.8845 7.5 15.8845C7.71283 15.8845 7.891 15.8128 8.0345 15.6693C8.17817 15.5256 8.25 15.3473 8.25 15.1345V11.45L9.573 12.773C9.6475 12.8473 9.73117 12.9031 9.824 12.9402C9.917 12.9774 10.01 12.9935 10.103 12.9885C10.1958 12.9833 10.2878 12.9622 10.3788 12.925C10.4698 12.8878 10.5525 12.8321 10.627 12.7578C10.7718 12.6026 10.8468 12.4269 10.852 12.2308C10.857 12.0346 10.782 11.8589 10.627 11.7037L8.13275 9.2095C8.03908 9.116 7.94033 9.05 7.8365 9.0115C7.73267 8.973 7.6205 8.95375 7.5 8.95375C7.3795 8.95375 7.26733 8.973 7.1635 9.0115C7.05967 9.05 6.96092 9.116 6.86725 9.2095L4.373 11.7037C4.22433 11.8526 4.151 12.0267 4.153 12.226C4.15483 12.4253 4.23333 12.6026 4.3885 12.7578C4.54367 12.9026 4.71933 12.9776 4.9155 12.9827C5.1115 12.9878 5.28708 12.9128 5.44225 12.7578L6.75 11.45ZM1.80775 19C1.30258 19 0.875 18.825 0.525 18.475C0.175 18.125 0 17.6974 0 17.1923V1.80775C0 1.30258 0.175 0.875 0.525 0.525C0.875 0.175 1.30258 0 1.80775 0H9.002C9.243 0 9.47475 0.0468332 9.69725 0.1405C9.91958 0.234 10.1128 0.362834 10.277 0.527L14.473 4.723C14.6372 4.88717 14.766 5.08042 14.8595 5.30275C14.9532 5.52525 15 5.757 15 5.998V17.1923C15 17.6974 14.825 18.125 14.475 18.475C14.125 18.825 13.6974 19 13.1923 19H1.80775ZM9 5.096C9 5.35383 9.08625 5.56892 9.25875 5.74125C9.43108 5.91375 9.64617 6 9.904 6H13.5L9 1.5V5.096Z" fill="white"/>
+                      </svg>
+                      <span>Upload File</span>
                     </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => {
-                      const input = document.createElement("input");
-                      input.type = "file";
-                      input.accept = "audio/*";
-                      input.onchange = (e) => {
-                        const file = (e.target as HTMLInputElement).files?.[0];
-                        if (file) setUploadedFile(file);
-                      };
-                      input.click();
-                    }}
-                    className="flex items-center gap-2 px-6 py-3 rounded-xl text-white"
-                    style={{ background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)" }}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="17 8 12 3 7 8" />
-                      <line x1="12" y1="3" x2="12" y2="15" />
-                    </svg>
-                    Upload File
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           )}
