@@ -116,6 +116,19 @@ body {
   color: var(--foreground);
 }
 
+/* Ensure all interactive elements have pointer cursor */
+button,
+[role="button"],
+input[type="submit"],
+input[type="button"],
+input[type="reset"],
+select,
+a,
+label[for],
+.cursor-pointer {
+  cursor: pointer;
+}
+
 /* =================================================================
    Utility Classes
    ================================================================= */
