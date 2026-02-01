@@ -142,7 +142,7 @@ export default function CreateAudioPage() {
           ]}
           activeTab="audio"
           onTabChange={(id) => {
-            if (id === "video") router.push("/create");
+            if (id === "video") router.push("/create-video");
           }}
           className="mb-4"
         />
