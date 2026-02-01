@@ -459,7 +459,7 @@ export default function CreateAudioPage() {
                     {/* Bottom Row: Audio Player + Checkbox + Name Input */}
                     <div className="flex items-center gap-4 mt-6">
                       {/* Audio Player */}
-                      <div className="flex items-center gap-3 px-3 py-2 bg-[#16151D] rounded-lg" style={{ width: 280 }}>
+                      <div className="flex-1 flex items-center gap-3 px-3 py-2 bg-[#16151D] rounded-lg">
                         <button className="w-6 h-6 flex items-center justify-center flex-shrink-0">
                           <svg width="10" height="12" viewBox="0 0 10 12" fill="white">
                             <path d="M0 0L10 6L0 12V0Z"/>
@@ -472,7 +472,7 @@ export default function CreateAudioPage() {
                       </div>
 
                       {/* Checkbox */}
-                      <label className="flex items-center gap-3 whitespace-nowrap">
+                      <label className="flex items-center gap-3 whitespace-nowrap flex-shrink-0">
                         <div className="w-6 h-6 bg-white rounded flex items-center justify-center flex-shrink-0">
                           <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
                             <path d="M1 5L5 9L13 1" stroke="#16151D" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -485,7 +485,7 @@ export default function CreateAudioPage() {
                       <input
                         type="text"
                         placeholder="Name your voice"
-                        className="flex-1 h-10 px-4 bg-[#262626] rounded-lg text-white text-base placeholder-[#ADADAD] focus:outline-none"
+                        className="w-[180px] h-10 px-4 bg-[#262626] rounded-lg text-white text-base placeholder-[#ADADAD] focus:outline-none flex-shrink-0"
                         style={{ fontFamily: "Mulish" }}
                       />
                     </div>
