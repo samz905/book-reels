@@ -405,89 +405,60 @@ export default function CreateAudioPage() {
                   </>
                 ) : (
                   <>
-                    {/* Top Row: Voice Preview + Buttons */}
-                    <div className="flex gap-4">
-                      {/* Voice Preview Card */}
-                      <div className="w-[200px] h-[200px] bg-[#16151D] rounded-xl flex flex-col items-center justify-center gap-3">
-                        <img
-                          src="https://i.pravatar.cc/90?u=my-voice"
-                          alt="My Voice"
-                          className="w-[90px] h-[90px] rounded-full"
-                        />
-                        <span className="text-white text-xl font-bold" style={{ fontFamily: "Mulish" }}>Sarah</span>
-                        <span className="text-[#ADADAD] text-sm" style={{ fontFamily: "Mulish" }}>Use this voice</span>
+                    {/* 3 Column Grid */}
+                    <div className="grid grid-cols-3 gap-6">
+                      {/* Saved Voice Card */}
+                      <div className="h-[279px] bg-[#16151D] rounded-xl flex flex-col items-center justify-center relative">
+                        <div className="flex flex-col items-center gap-7">
+                          <span className="text-white text-4xl font-bold text-center" style={{ fontFamily: "Mulish" }}>Sarah</span>
+                          <label className="flex items-center gap-3">
+                            <div className="w-6 h-6 bg-white rounded flex items-center justify-center">
+                              <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
+                                <path d="M1 5L5 9L13 1" stroke="#16151D" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            </div>
+                            <span className="text-white text-[17px] font-semibold" style={{ fontFamily: "Mulish" }}>Use this voice</span>
+                          </label>
+                        </div>
+                        <span className="absolute bottom-6 text-[#ADADAD] text-base" style={{ fontFamily: "Mulish", letterSpacing: "-0.025em" }}>Saved Voice</span>
                       </div>
 
-                      {/* Start Recording Button */}
-                      <button
-                        onClick={() => setShowRecordingModal(true)}
-                        className="flex-1 h-[200px] bg-[#16151D] rounded-xl flex items-center justify-center"
-                      >
-                        <div className="flex items-center gap-2 px-[49px] py-4 rounded-xl text-lg font-bold text-white border border-[#B8B6FC] bg-[#262550]" style={{ fontFamily: "Mulish" }}>
-                          {/* Mic Icon */}
-                          <svg width="15" height="20" viewBox="0 0 15 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      {/* Start Recording Card */}
+                      <div className="h-[279px] bg-[#16151D] rounded-xl flex items-center justify-center">
+                        <button
+                          onClick={() => setShowRecordingModal(true)}
+                          className="flex items-center gap-2 px-[49px] py-4 rounded-xl text-lg font-bold text-white border border-[#B8B6FC] bg-[#262550]"
+                          style={{ fontFamily: "Mulish" }}
+                        >
+                          <svg width="24" height="24" viewBox="0 0 15 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M7.2404 12.4125C6.34324 12.4125 5.58107 12.0989 4.9539 11.4718C4.32674 10.8446 4.01315 10.0824 4.01315 9.18525V3.22725C4.01315 2.33008 4.32674 1.56792 4.9539 0.94075C5.58107 0.313583 6.34324 0 7.2404 0C8.13757 0 8.89974 0.313583 9.5269 0.94075C10.1541 1.56792 10.4677 2.33008 10.4677 3.22725V9.18525C10.4677 10.0824 10.1541 10.8446 9.5269 11.4718C8.89974 12.0989 8.13757 12.4125 7.2404 12.4125ZM6.15065 18.4125V16.4032C4.56165 16.1826 3.20232 15.5107 2.07265 14.3875C0.943154 13.2643 0.255737 11.9018 0.010404 10.3C-0.0307627 9.99283 0.0502373 9.73025 0.253404 9.51225C0.456737 9.29425 0.711987 9.18525 1.01915 9.18525C1.32649 9.18525 1.5869 9.29108 1.8004 9.50275C2.01407 9.71425 2.15824 9.97367 2.2329 10.281C2.48607 11.4637 3.08415 12.431 4.02715 13.183C4.96999 13.9348 6.04107 14.3108 7.2404 14.3108C8.4564 14.3108 9.53165 13.9307 10.4662 13.1705C11.4008 12.4102 11.9947 11.447 12.2479 10.281C12.3226 9.97367 12.4667 9.71425 12.6804 9.50275C12.8939 9.29108 13.1543 9.18525 13.4617 9.18525C13.7688 9.18525 14.0231 9.29525 14.2244 9.51525C14.4257 9.73508 14.5057 9.99867 14.4644 10.306C14.2191 11.8745 13.5368 13.2277 12.4177 14.3655C11.2983 15.5033 9.93582 16.1826 8.33015 16.4032V18.4125C8.33015 18.7198 8.22532 18.9783 8.01565 19.1877C7.80599 19.3974 7.54757 19.5022 7.2404 19.5022C6.93324 19.5022 6.67482 19.3974 6.46515 19.1877C6.25549 18.9783 6.15065 18.7198 6.15065 18.4125Z" fill="white"/>
                           </svg>
                           <span>Start Recording</span>
-                        </div>
-                      </button>
+                        </button>
+                      </div>
 
-                      {/* Upload File Button */}
-                      <button
-                        onClick={() => {
-                          const input = document.createElement("input");
-                          input.type = "file";
-                          input.accept = "audio/*";
-                          input.onchange = (e) => {
-                            const file = (e.target as HTMLInputElement).files?.[0];
-                            if (file) setUploadedFile(file);
-                          };
-                          input.click();
-                        }}
-                        className="flex-1 h-[200px] bg-[#16151D] rounded-xl flex items-center justify-center"
-                      >
-                        <div className="flex items-center gap-2 px-[49px] py-4 rounded-xl text-lg font-bold text-white border border-[#B8B6FC] bg-[#262550]" style={{ fontFamily: "Mulish" }}>
-                          {/* Upload File Icon */}
-                          <svg width="15" height="19" viewBox="0 0 15 19" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      {/* Upload File Card */}
+                      <div className="h-[279px] bg-[#16151D] rounded-xl flex items-center justify-center">
+                        <button
+                          onClick={() => {
+                            const input = document.createElement("input");
+                            input.type = "file";
+                            input.accept = "audio/*";
+                            input.onchange = (e) => {
+                              const file = (e.target as HTMLInputElement).files?.[0];
+                              if (file) setUploadedFile(file);
+                            };
+                            input.click();
+                          }}
+                          className="flex items-center gap-2 px-[49px] py-4 rounded-xl text-lg font-bold text-white border border-[#B8B6FC] bg-[#262550]"
+                          style={{ fontFamily: "Mulish" }}
+                        >
+                          <svg width="24" height="24" viewBox="0 0 15 19" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M6.75 11.45V15.1345C6.75 15.3473 6.82183 15.5256 6.9655 15.6693C7.109 15.8128 7.28717 15.8845 7.5 15.8845C7.71283 15.8845 7.891 15.8128 8.0345 15.6693C8.17817 15.5256 8.25 15.3473 8.25 15.1345V11.45L9.573 12.773C9.6475 12.8473 9.73117 12.9031 9.824 12.9402C9.917 12.9774 10.01 12.9935 10.103 12.9885C10.1958 12.9833 10.2878 12.9622 10.3788 12.925C10.4698 12.8878 10.5525 12.8321 10.627 12.7578C10.7718 12.6026 10.8468 12.4269 10.852 12.2308C10.857 12.0346 10.782 11.8589 10.627 11.7037L8.13275 9.2095C8.03908 9.116 7.94033 9.05 7.8365 9.0115C7.73267 8.973 7.6205 8.95375 7.5 8.95375C7.3795 8.95375 7.26733 8.973 7.1635 9.0115C7.05967 9.05 6.96092 9.116 6.86725 9.2095L4.373 11.7037C4.22433 11.8526 4.151 12.0267 4.153 12.226C4.15483 12.4253 4.23333 12.6026 4.3885 12.7578C4.54367 12.9026 4.71933 12.9776 4.9155 12.9827C5.1115 12.9878 5.28708 12.9128 5.44225 12.7578L6.75 11.45ZM1.80775 19C1.30258 19 0.875 18.825 0.525 18.475C0.175 18.125 0 17.6974 0 17.1923V1.80775C0 1.30258 0.175 0.875 0.525 0.525C0.875 0.175 1.30258 0 1.80775 0H9.002C9.243 0 9.47475 0.0468332 9.69725 0.1405C9.91958 0.234 10.1128 0.362834 10.277 0.527L14.473 4.723C14.6372 4.88717 14.766 5.08042 14.8595 5.30275C14.9532 5.52525 15 5.757 15 5.998V17.1923C15 17.6974 14.825 18.125 14.475 18.475C14.125 18.825 13.6974 19 13.1923 19H1.80775ZM9 5.096C9 5.35383 9.08625 5.56892 9.25875 5.74125C9.43108 5.91375 9.64617 6 9.904 6H13.5L9 1.5V5.096Z" fill="white"/>
                           </svg>
                           <span>Upload File</span>
-                        </div>
-                      </button>
-                    </div>
-
-                    {/* Bottom Row: Audio Player + Checkbox + Name Input */}
-                    <div className="flex items-center gap-4 mt-6">
-                      {/* Audio Player */}
-                      <div className="flex-1 flex items-center gap-3 px-3 py-2 bg-[#16151D] rounded-lg">
-                        <button className="w-6 h-6 flex items-center justify-center flex-shrink-0">
-                          <svg width="10" height="12" viewBox="0 0 10 12" fill="white">
-                            <path d="M0 0L10 6L0 12V0Z"/>
-                          </svg>
                         </button>
-                        <div className="flex-1 h-[4px] bg-[#272726] rounded-full relative">
-                          <div className="absolute left-0 top-0 w-[40px] h-full bg-[#5C5C5B] rounded-full"/>
-                        </div>
-                        <span className="text-white text-sm whitespace-nowrap" style={{ fontFamily: "Mulish" }}>0:00 / 1:28</span>
                       </div>
-
-                      {/* Checkbox */}
-                      <label className="flex items-center gap-3 whitespace-nowrap flex-shrink-0">
-                        <div className="w-6 h-6 bg-white rounded flex items-center justify-center flex-shrink-0">
-                          <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
-                            <path d="M1 5L5 9L13 1" stroke="#16151D" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        </div>
-                        <span className="text-white text-base font-semibold" style={{ fontFamily: "Mulish" }}>Use my voice and save it</span>
-                      </label>
-
-                      {/* Name Input */}
-                      <input
-                        type="text"
-                        placeholder="Name your voice"
-                        className="w-[220px] h-10 px-4 bg-[#262626] rounded-lg text-white text-base placeholder-[#ADADAD] focus:outline-none flex-shrink-0"
-                        style={{ fontFamily: "Mulish" }}
-                      />
                     </div>
 
                     {/* Generate Narration Button */}
