@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import HOST, PORT
-from .routers import test
+from .routers import test, story
 
 # Create FastAPI app
 app = FastAPI(
@@ -25,6 +25,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(test.router, prefix="/test", tags=["test"])
+app.include_router(story.router, prefix="/story", tags=["story"])
 
 
 @app.get("/")
