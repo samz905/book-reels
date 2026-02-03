@@ -52,7 +52,11 @@
       "Bash(powershell.exe -Command \"winget list | Select-String ''ffmpeg''\")",
       "Bash(powershell.exe -Command:*)",
       "Bash(ping:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(python -m app.main:*)",
+      "Bash(/c/Users/samZ9/Downloads/Code/book-reels/backend/venv/Scripts/python:*)",
+      "Bash(python -c:*)",
+      "Bash(./venv/Scripts/pip:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -1,9 +1,12 @@
 """
 Image generation utility using Google GenAI.
 Uses Gemini's native image generation capabilities.
+Supports reference images for character/scene consistency.
 """
 import base64
-from typing import Literal
+import io
+from typing import Literal, List, Optional
+from PIL import Image
 from google.genai import types
 from ..config import genai_client
 
@@ -53,6 +56,98 @@ async def generate_image(
                     "image_base64": image_base64,
                     "mime_type": getattr(image_data, 'mime_type', 'image/png') or "image/png",
                 }
+
+    # If no image in response, raise error
+    raise ValueError(
+        "No image was generated. The model may have returned text only. "
+        f"Response parts: {[type(p).__name__ for p in response.candidates[0].content.parts]}"
+    )
+
+
+def _base64_to_pil(base64_str: str, mime_type: str = "image/png") -> Image.Image:
+    """Convert base64 string to PIL Image."""
+    image_bytes = base64.b64decode(base64_str)
+    return Image.open(io.BytesIO(image_bytes))
+
+
+async def generate_image_with_references(
+    prompt: str,
+    reference_images: List[dict],  # List of {"image_base64": str, "mime_type": str}
+    aspect_ratio: Literal["9:16", "16:9", "1:1", "4:3", "3:4", "5:4", "4:5", "2:3", "3:2"] = "9:16",
+    resolution: Literal["1K", "2K", "4K"] = "2K",
+    model: str = "gemini-3-pro-image-preview",
+) -> dict:
+    """
+    Generate an image using reference images for consistency.
+    Uses Gemini 3 Pro Preview which supports up to 14 reference images:
+    - Up to 5 human images for character consistency
+    - Up to 6 object images for scene consistency
+
+    Args:
+        prompt: Text description of the image to generate
+        reference_images: List of dicts with image_base64 and mime_type
+        aspect_ratio: Output aspect ratio
+        resolution: Output resolution (1K, 2K, or 4K)
+        model: Model to use (gemini-3-pro-image-preview)
+
+    Returns:
+        dict with:
+          - image_base64: Base64 encoded image data
+          - mime_type: Image MIME type
+    """
+    # Build contents list: prompt first, then reference images
+    contents = [prompt]
+
+    # Add reference images as PIL Images
+    for ref in reference_images:
+        try:
+            pil_image = _base64_to_pil(ref["image_base64"], ref.get("mime_type", "image/png"))
+            contents.append(pil_image)
+        except Exception as e:
+            print(f"Warning: Could not load reference image: {e}")
+            continue
+
+    print(f"Generating with {len(contents) - 1} reference images...")
+
+    # Generate with reference images
+    response = genai_client.models.generate_content(
+        model=model,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            response_modalities=["TEXT", "IMAGE"],
+            image_config=types.ImageConfig(
+                aspect_ratio=aspect_ratio,
+                image_size=resolution,
+            ),
+        )
+    )
+
+    # Extract image from response
+    for part in response.candidates[0].content.parts:
+        if hasattr(part, 'inline_data') and part.inline_data is not None:
+            image_data = part.inline_data
+            if hasattr(image_data, 'data') and image_data.data:
+                image_bytes = image_data.data
+                image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+                return {
+                    "image_base64": image_base64,
+                    "mime_type": getattr(image_data, 'mime_type', 'image/png') or "image/png",
+                }
+        # Also check for as_image() method (newer API)
+        if hasattr(part, 'as_image'):
+            try:
+                pil_img = part.as_image()
+                if pil_img:
+                    # Convert PIL back to base64
+                    buffer = io.BytesIO()
+                    pil_img.save(buffer, format="PNG")
+                    image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                    return {
+                        "image_base64": image_base64,
+                        "mime_type": "image/png",
+                    }
+            except Exception:
+                pass
 
     # If no image in response, raise error
     raise ValueError(
