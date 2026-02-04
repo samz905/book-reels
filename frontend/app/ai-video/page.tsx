@@ -730,6 +730,7 @@ export default function AIVideoPage() {
       completedShots: [],
       finalVideoUrl: null,
       error: null,
+      cost: { keyframes_usd: 0, videos_usd: 0, total_usd: 0 },
     });
 
     try {
