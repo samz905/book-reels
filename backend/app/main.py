@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import HOST, PORT
-from .routers import test, story, moodboard
+from .routers import test, story, moodboard, film
 
 # Create FastAPI app
 app = FastAPI(
@@ -27,6 +27,7 @@ app.add_middleware(
 app.include_router(test.router, prefix="/test", tags=["test"])
 app.include_router(story.router, prefix="/story", tags=["story"])
 app.include_router(moodboard.router, prefix="/moodboard", tags=["moodboard"])
+app.include_router(film.router, prefix="/film", tags=["film"])
 
 
 @app.get("/")

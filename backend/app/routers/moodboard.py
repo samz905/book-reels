@@ -7,7 +7,7 @@ from typing import Optional, Literal, List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..core import generate_image, generate_image_with_references
+from ..core import generate_image, generate_image_with_references, COST_IMAGE_GENERATION
 from .story import Story, Character, Setting, Beat
 
 router = APIRouter()
@@ -47,6 +47,7 @@ class GenerateCharacterResponse(BaseModel):
     character_id: str
     image: MoodboardImage
     prompt_used: str
+    cost_usd: float = 0.0
 
 
 class RefineCharacterRequest(BaseModel):
@@ -59,6 +60,7 @@ class RefineCharacterResponse(BaseModel):
     character_id: str
     image: MoodboardImage
     prompt_used: str
+    cost_usd: float = 0.0
 
 
 # --- Environment ---
@@ -69,6 +71,7 @@ class GenerateEnvironmentRequest(BaseModel):
 class GenerateEnvironmentResponse(BaseModel):
     image: MoodboardImage
     prompt_used: str
+    cost_usd: float = 0.0
 
 
 class RefineEnvironmentRequest(BaseModel):
@@ -79,6 +82,7 @@ class RefineEnvironmentRequest(BaseModel):
 class RefineEnvironmentResponse(BaseModel):
     image: MoodboardImage
     prompt_used: str
+    cost_usd: float = 0.0
 
 
 # --- Key Moments (3 images: hook, midpoint, climax) ---
@@ -112,6 +116,7 @@ class GenerateKeyMomentsRequest(BaseModel):
 
 class GenerateKeyMomentsResponse(BaseModel):
     key_moments: List[KeyMomentImage]
+    cost_usd: float = 0.0
 
 
 class RefineKeyMomentRequest(BaseModel):
@@ -123,6 +128,7 @@ class RefineKeyMomentRequest(BaseModel):
 
 class RefineKeyMomentResponse(BaseModel):
     key_moment: KeyMomentImage
+    cost_usd: float = 0.0
 
 
 # ============================================================
@@ -280,7 +286,8 @@ async def generate_character(request: GenerateCharacterRequest):
                 mime_type=result["mime_type"],
                 prompt_used=prompt
             ),
-            prompt_used=prompt
+            prompt_used=prompt,
+            cost_usd=COST_IMAGE_GENERATION
         )
 
     except ValueError as e:
@@ -317,7 +324,8 @@ async def refine_character(request: RefineCharacterRequest):
                 mime_type=result["mime_type"],
                 prompt_used=prompt
             ),
-            prompt_used=prompt
+            prompt_used=prompt,
+            cost_usd=COST_IMAGE_GENERATION
         )
 
     except ValueError as e:
@@ -356,7 +364,8 @@ async def generate_environment(request: GenerateEnvironmentRequest):
                 mime_type=result["mime_type"],
                 prompt_used=prompt
             ),
-            prompt_used=prompt
+            prompt_used=prompt,
+            cost_usd=COST_IMAGE_GENERATION
         )
 
     except Exception as e:
@@ -389,7 +398,8 @@ async def refine_environment(request: RefineEnvironmentRequest):
                 mime_type=result["mime_type"],
                 prompt_used=prompt
             ),
-            prompt_used=prompt
+            prompt_used=prompt,
+            cost_usd=COST_IMAGE_GENERATION
         )
 
     except Exception as e:
@@ -472,7 +482,9 @@ async def generate_key_moments(request: GenerateKeyMomentsRequest):
                 prompt_used=prompt
             ))
 
-        return GenerateKeyMomentsResponse(key_moments=key_moments)
+        # 3 key moment images
+        total_cost = COST_IMAGE_GENERATION * 3
+        return GenerateKeyMomentsResponse(key_moments=key_moments, cost_usd=total_cost)
 
     except Exception as e:
         import traceback
@@ -537,7 +549,8 @@ async def refine_key_moment(request: RefineKeyMomentRequest):
                     prompt_used=prompt
                 ),
                 prompt_used=prompt
-            )
+            ),
+            cost_usd=COST_IMAGE_GENERATION
         )
 
     except Exception as e:

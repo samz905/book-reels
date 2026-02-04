@@ -7,7 +7,7 @@ from typing import Optional, List, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..core import generate_text
+from ..core import generate_text, estimate_story_cost
 
 router = APIRouter()
 
@@ -110,6 +110,7 @@ class GenerateStoryRequest(BaseModel):
 
 class GenerateStoryResponse(BaseModel):
     story: Story
+    cost_usd: float = 0.0
 
 
 class RegenerateStoryRequest(BaseModel):
@@ -238,7 +239,8 @@ async def generate_story(request: GenerateStoryRequest):
         )
 
         story = parse_story_response(response, request.duration, request.style)
-        return GenerateStoryResponse(story=story)
+        cost = estimate_story_cost(len(story.beats))
+        return GenerateStoryResponse(story=story, cost_usd=round(cost, 4))
 
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse AI response as JSON: {str(e)}")
@@ -269,7 +271,8 @@ async def regenerate_story(request: RegenerateStoryRequest):
         )
 
         story = parse_story_response(response, request.duration, request.style)
-        return GenerateStoryResponse(story=story)
+        cost = estimate_story_cost(len(story.beats))
+        return GenerateStoryResponse(story=story, cost_usd=round(cost, 4))
 
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse AI response as JSON: {str(e)}")

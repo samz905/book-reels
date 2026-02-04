@@ -56,7 +56,8 @@
       "Bash(python -m app.main:*)",
       "Bash(/c/Users/samZ9/Downloads/Code/book-reels/backend/venv/Scripts/python:*)",
       "Bash(python -c:*)",
-      "Bash(./venv/Scripts/pip:*)"
+      "Bash(./venv/Scripts/pip:*)",
+      "Bash(./venv/Scripts/python:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

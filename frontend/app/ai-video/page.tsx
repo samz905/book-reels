@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 
@@ -78,6 +78,39 @@ interface KeyMomentImageState {
   promptUsed: string;
 }
 
+// Phase 4: Film Generation
+interface CompletedShot {
+  number: number;
+  previewUrl: string;
+}
+
+interface FilmCost {
+  keyframes_usd: number;
+  videos_usd: number;
+  total_usd: number;
+}
+
+interface FilmState {
+  filmId: string | null;
+  status: "idle" | "generating" | "assembling" | "ready" | "failed";
+  currentShot: number;
+  totalShots: number;
+  phase: "keyframe" | "filming" | "assembling";
+  completedShots: CompletedShot[];
+  finalVideoUrl: string | null;
+  error: string | null;
+  cost: FilmCost;
+}
+
+// Cost tracking across all phases
+interface TotalCost {
+  story: number;
+  characters: number;
+  environment: number;
+  keyMoments: number;
+  film: number;
+}
+
 // ============================================================
 // Constants
 // ============================================================
@@ -152,6 +185,29 @@ export default function AIVideoPage() {
   const [keyMoments, setKeyMoments] = useState<KeyMomentImageState[]>([]);
   const [isGeneratingKeyMoments, setIsGeneratingKeyMoments] = useState(false);
 
+  // Phase 4: Film Generation state
+  const [film, setFilm] = useState<FilmState>({
+    filmId: null,
+    status: "idle",
+    currentShot: 0,
+    totalShots: 0,
+    phase: "filming",
+    completedShots: [],
+    finalVideoUrl: null,
+    error: null,
+    cost: { keyframes_usd: 0, videos_usd: 0, total_usd: 0 },
+  });
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cost tracking across all phases
+  const [totalCost, setTotalCost] = useState<TotalCost>({
+    story: 0,
+    characters: 0,
+    environment: 0,
+    keyMoments: 0,
+    film: 0,
+  });
+
   // ============================================================
   // API Calls
   // ============================================================
@@ -182,6 +238,10 @@ export default function AIVideoPage() {
 
       const data = await response.json();
       setStory(data.story);
+      // Track story generation cost
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, story: prev.story + data.cost_usd }));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate story");
     } finally {
@@ -324,6 +384,10 @@ export default function AIVideoPage() {
           isGenerating: false,
         },
       }));
+      // Track character image cost
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate character image");
       setCharacterImages((prev) => ({
@@ -371,6 +435,10 @@ export default function AIVideoPage() {
           feedback: "",
         },
       }));
+      // Track character refinement cost
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refine character image");
       setCharacterImages((prev) => ({
@@ -425,6 +493,10 @@ export default function AIVideoPage() {
         feedback: "",
         promptUsed: data.prompt_used,
       });
+      // Track environment image cost
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, environment: prev.environment + data.cost_usd }));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate environment image");
       setEnvironmentImage((prev) => prev ? { ...prev, isGenerating: false } : null);
@@ -460,6 +532,10 @@ export default function AIVideoPage() {
         feedback: "",
         promptUsed: data.prompt_used,
       });
+      // Track environment refinement cost
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, environment: prev.environment + data.cost_usd }));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refine environment image");
       setEnvironmentImage((prev) => prev ? { ...prev, isGenerating: false } : null);
@@ -515,6 +591,10 @@ export default function AIVideoPage() {
       }));
 
       setKeyMoments(moments);
+      // Track key moments cost (3 images)
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + data.cost_usd }));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate key moments");
     } finally {
@@ -581,6 +661,10 @@ export default function AIVideoPage() {
             : m
         )
       );
+      // Track key moment refinement cost
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + data.cost_usd }));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refine key moment");
       setKeyMoments((prev) =>
@@ -595,6 +679,175 @@ export default function AIVideoPage() {
   const approvedCount = story
     ? story.characters.filter((char) => characterImages[char.id]?.approved).length
     : 0;
+
+  // ============================================================
+  // Phase 4: Film Generation Functions
+  // ============================================================
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  const startFilmGeneration = async () => {
+    if (!story || !environmentImage?.image || keyMoments.length === 0) return;
+
+    // Build approved visuals
+    const approvedVisuals = {
+      character_images: story.characters
+        .filter((char) => characterImages[char.id]?.image)
+        .map((char) => ({
+          image_base64: characterImages[char.id].image!.image_base64,
+          mime_type: characterImages[char.id].image!.mime_type,
+        })),
+      environment_image: {
+        image_base64: environmentImage.image.image_base64,
+        mime_type: environmentImage.image.mime_type,
+      },
+      character_descriptions: story.characters.map((char) => char.appearance),
+      environment_description: `${story.setting.location}, ${story.setting.time}. ${story.setting.atmosphere}`,
+    };
+
+    // Build key moment images for video references
+    const keyMomentImages = keyMoments
+      .filter((m) => m.image)
+      .map((m) => ({
+        moment_type: m.moment_type,
+        image_base64: m.image!.image_base64,
+        mime_type: m.image!.mime_type,
+      }));
+
+    setFilm({
+      filmId: null,
+      status: "generating",
+      currentShot: 0,
+      totalShots: story.beats.length,
+      phase: "filming",
+      completedShots: [],
+      finalVideoUrl: null,
+      error: null,
+    });
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/film/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          story,
+          approved_visuals: approvedVisuals,
+          key_moment_images: keyMomentImages,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to start film generation");
+      }
+
+      const data = await response.json();
+
+      setFilm((prev) => ({
+        ...prev,
+        filmId: data.film_id,
+        totalShots: data.total_shots,
+      }));
+
+      // Start polling
+      startPolling(data.film_id);
+    } catch (err) {
+      setFilm((prev) => ({
+        ...prev,
+        status: "failed",
+        error: err instanceof Error ? err.message : "Failed to start film generation",
+      }));
+    }
+  };
+
+  const startPolling = (filmId: string) => {
+    // Clear any existing interval
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+
+    // Poll every 5 seconds
+    pollingIntervalRef.current = setInterval(async () => {
+      try {
+        const response = await fetch(`${BACKEND_URL}/film/${filmId}`);
+        if (!response.ok) {
+          throw new Error("Failed to get film status");
+        }
+
+        const data = await response.json();
+
+        setFilm({
+          filmId: data.film_id,
+          status: data.status,
+          currentShot: data.current_shot,
+          totalShots: data.total_shots,
+          phase: data.phase,
+          completedShots: data.completed_shots,
+          finalVideoUrl: data.final_video_url,
+          error: data.error_message,
+          cost: data.cost || { keyframes_usd: 0, videos_usd: 0, total_usd: 0 },
+        });
+
+        // Update film cost in total
+        if (data.cost) {
+          setTotalCost((prev) => ({ ...prev, film: data.cost.total_usd }));
+        }
+
+        // Stop polling when done
+        if (data.status === "ready" || data.status === "failed") {
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
+        }
+      } catch (err) {
+        console.error("Polling error:", err);
+      }
+    }, 5000);
+  };
+
+  const resetFilm = () => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    setFilm({
+      filmId: null,
+      status: "idle",
+      currentShot: 0,
+      totalShots: 0,
+      phase: "filming",
+      completedShots: [],
+      finalVideoUrl: null,
+      error: null,
+      cost: { keyframes_usd: 0, videos_usd: 0, total_usd: 0 },
+    });
+  };
+
+  const resetAll = () => {
+    resetFilm();
+    resetVisualDirection();
+    setStory(null);
+    setIdea("");
+    // Reset all costs
+    setTotalCost({
+      story: 0,
+      characters: 0,
+      environment: 0,
+      keyMoments: 0,
+      film: 0,
+    });
+  };
+
+  // Calculate grand total cost
+  const grandTotalCost = totalCost.story + totalCost.characters + totalCost.environment + totalCost.keyMoments + totalCost.film;
 
   // ============================================================
   // Render
@@ -1102,16 +1355,214 @@ export default function AIVideoPage() {
                   </div>
                 )}
 
-                {keyMoments.length > 0 && (
+                {keyMoments.length > 0 && film.status === "idle" && (
                   <div className="mt-6 pt-6 border-t border-white/10 flex justify-end">
                     <button
-                      disabled
-                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium opacity-50 cursor-not-allowed"
+                      onClick={startFilmGeneration}
+                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
                     >
-                      Approve & Generate Video (Coming Soon)
+                      Approve & Generate Video →
                     </button>
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Section 4: Film Generation */}
+        {(film.status === "generating" || film.status === "assembling" || film.status === "ready" || film.status === "failed") && (
+          <div className="mt-8 bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
+            <h2 className="text-xl font-semibold text-white mb-2">4. Creating Your Film</h2>
+            {story && <p className="text-[#ADADAD] mb-6">&ldquo;{story.title}&rdquo;</p>}
+
+            {/* Generating State */}
+            {(film.status === "generating" || film.status === "assembling") && (
+              <div>
+                {/* Preview of latest completed shot */}
+                {film.completedShots.length > 0 && (
+                  <div className="aspect-[9/16] max-w-xs mx-auto bg-black rounded-xl overflow-hidden mb-6">
+                    <video
+                      key={film.completedShots[film.completedShots.length - 1].previewUrl}
+                      src={`${BACKEND_URL}${film.completedShots[film.completedShots.length - 1].previewUrl}`}
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                )}
+
+                {/* Progress bar */}
+                <div className="mb-6">
+                  <div className="flex justify-between text-sm text-[#ADADAD] mb-2">
+                    <span>
+                      {film.status === "assembling"
+                        ? "Assembling final video..."
+                        : film.phase === "keyframe"
+                        ? "Setting up frame..."
+                        : `Filming Scene ${film.currentShot}`}
+                    </span>
+                    <span>{film.completedShots.length} of {film.totalShots} shots</span>
+                  </div>
+                  <div className="h-2 bg-[#262626] rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-[#9C99FF] to-[#7370FF] transition-all duration-500"
+                      style={{ width: `${(film.completedShots.length / film.totalShots) * 100}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Shot status indicators */}
+                <div className="flex flex-wrap gap-2 justify-center">
+                  {Array.from({ length: film.totalShots }, (_, i) => {
+                    const shotNum = i + 1;
+                    const isComplete = film.completedShots.some((s) => s.number === shotNum);
+                    const isCurrent = film.currentShot === shotNum;
+
+                    return (
+                      <div
+                        key={shotNum}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${
+                          isComplete
+                            ? "bg-green-500 text-white"
+                            : isCurrent
+                            ? "bg-[#B8B6FC] text-black animate-pulse"
+                            : "bg-[#262626] text-[#ADADAD]"
+                        }`}
+                      >
+                        {isComplete ? "✓" : shotNum}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <p className="text-center text-[#ADADAD] text-sm mt-6">
+                  {film.status === "assembling"
+                    ? "Almost there! Stitching your scenes together..."
+                    : "Each scene takes about 30-60 seconds to generate. Sit back and relax!"}
+                </p>
+
+                {/* Live cost during generation */}
+                {film.cost.total_usd > 0 && (
+                  <p className="text-center text-[#ADADAD] text-xs mt-4">
+                    Video cost so far: <span className="text-white">${film.cost.total_usd.toFixed(2)}</span>
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Ready State */}
+            {film.status === "ready" && film.finalVideoUrl && (
+              <div className="text-center">
+                <div className="aspect-[9/16] max-w-sm mx-auto bg-black rounded-xl overflow-hidden mb-6">
+                  <video
+                    src={`${BACKEND_URL}${film.finalVideoUrl}`}
+                    controls
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+
+                <p className="text-green-400 mb-4">Your film is ready!</p>
+
+                {/* Cost Summary */}
+                <div className="bg-[#1A1E2F] rounded-xl p-4 mb-6 max-w-md mx-auto text-left">
+                  <h4 className="text-white font-medium mb-3 text-center">Generation Cost Summary</h4>
+                  <div className="space-y-1 text-sm">
+                    {totalCost.story > 0 && (
+                      <div className="flex justify-between text-[#ADADAD]">
+                        <span>Story generation</span>
+                        <span>${totalCost.story.toFixed(4)}</span>
+                      </div>
+                    )}
+                    {totalCost.characters > 0 && (
+                      <div className="flex justify-between text-[#ADADAD]">
+                        <span>Character images</span>
+                        <span>${totalCost.characters.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {totalCost.environment > 0 && (
+                      <div className="flex justify-between text-[#ADADAD]">
+                        <span>Environment image</span>
+                        <span>${totalCost.environment.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {totalCost.keyMoments > 0 && (
+                      <div className="flex justify-between text-[#ADADAD]">
+                        <span>Key moment images</span>
+                        <span>${totalCost.keyMoments.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {film.cost.keyframes_usd > 0 && (
+                      <div className="flex justify-between text-[#ADADAD]">
+                        <span>Video keyframes</span>
+                        <span>${film.cost.keyframes_usd.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {film.cost.videos_usd > 0 && (
+                      <div className="flex justify-between text-[#ADADAD]">
+                        <span>Video clips ({film.totalShots} × 8s)</span>
+                        <span>${film.cost.videos_usd.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div className="border-t border-white/10 pt-2 mt-2 flex justify-between text-white font-medium">
+                      <span>Total</span>
+                      <span>${grandTotalCost.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-4 justify-center">
+                  <a
+                    href={`${BACKEND_URL}${film.finalVideoUrl}`}
+                    download
+                    className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
+                  >
+                    Download Video
+                  </a>
+                  <button
+                    onClick={resetAll}
+                    className="px-6 py-3 bg-[#262626] text-white rounded-xl font-medium hover:bg-[#333]"
+                  >
+                    Make New Film
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Failed State */}
+            {film.status === "failed" && (
+              <div className="text-center">
+                <div className="text-red-400 mb-4">
+                  <svg className="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="font-medium">Film generation failed</p>
+                  {film.error && <p className="text-sm mt-2 opacity-80">{film.error}</p>}
+                </div>
+
+                {/* Show completed shots if any */}
+                {film.completedShots.length > 0 && (
+                  <p className="text-[#ADADAD] text-sm mb-4">
+                    {film.completedShots.length} of {film.totalShots} shots were completed before the error.
+                  </p>
+                )}
+
+                <div className="flex gap-4 justify-center">
+                  <button
+                    onClick={startFilmGeneration}
+                    className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
+                  >
+                    Try Again
+                  </button>
+                  <button
+                    onClick={resetFilm}
+                    className="px-6 py-3 bg-[#262626] text-white rounded-xl font-medium hover:bg-[#333]"
+                  >
+                    Go Back
+                  </button>
+                </div>
               </div>
             )}
           </div>
