@@ -1,9 +1,17 @@
 import { GoogleGenAI, GenerateVideosOperation } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GOOGLE_GENAI_API_KEY,
-});
+// Lazy initialization to avoid build-time errors
+let ai: GoogleGenAI | null = null;
+
+function getAI(): GoogleGenAI {
+  if (!ai) {
+    ai = new GoogleGenAI({
+      apiKey: process.env.GOOGLE_GENAI_API_KEY,
+    });
+  }
+  return ai;
+}
 
 // Store operations in memory (for demo purposes)
 // In production, you'd use a database or Redis
@@ -23,7 +31,7 @@ export async function POST(request: NextRequest) {
 
     console.log("Starting video generation with prompt:", prompt);
 
-    const operation = await ai.models.generateVideos({
+    const operation = await getAI().models.generateVideos({
       model: "veo-3.1-generate-preview",
       prompt: prompt,
     });
@@ -73,7 +81,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Poll for updated status
-    const operation = await ai.operations.getVideosOperation({
+    const operation = await getAI().operations.getVideosOperation({
       operation: storedOperation,
     });
 
