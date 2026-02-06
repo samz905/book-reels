@@ -15,6 +15,7 @@ if not GOOGLE_GENAI_API_KEY:
     raise ValueError("GOOGLE_GENAI_API_KEY environment variable is required")
 
 # Initialize Google GenAI client
+# Note: The API key must be from Google AI Studio (aistudio.google.com), NOT Google Cloud Console
 genai_client = genai.Client(api_key=GOOGLE_GENAI_API_KEY)
 
 # Temp directory for file processing

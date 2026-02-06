@@ -57,7 +57,17 @@
       "Bash(/c/Users/samZ9/Downloads/Code/book-reels/backend/venv/Scripts/python:*)",
       "Bash(python -c:*)",
       "Bash(./venv/Scripts/pip:*)",
-      "Bash(./venv/Scripts/python:*)"
+      "Bash(./venv/Scripts/python:*)",
+      "Bash(git -C \"c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\" status)",
+      "Bash(git -C \"c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\" diff frontend/app/ai-video/page.tsx)",
+      "Bash(git -C \"c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\" add frontend/app/ai-video/page.tsx)",
+      "Bash(git -C \"c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\" commit -m \"$\\(cat <<''EOF''\nfix: add missing cost property to FilmState initialization\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git -C \"c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\" push)",
+      "Bash(git -C \"c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\" add frontend/app/api/generate-video/route.ts)",
+      "Bash(git -C \"c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\" commit -m \"$\\(cat <<''EOF''\nfix: lazy-init Gemini client to avoid build-time API key error\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(venvScriptspython -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000)",
+      "Bash(./venv/Scripts/python.exe -m uvicorn:*)",
+      "Bash(python -m py_compile:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

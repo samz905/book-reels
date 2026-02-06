@@ -1,42 +1,45 @@
 # AI Story Generator: MVP Design
-## Version 1.0 — User Experience
+## Version 1.1 — User Experience
 
 ---
 
 ## Overview
 
-This document defines the user experience for the MVP. It is designed to work in concert with:
-- **Workflow Architecture** — Technical pipeline and frame chaining
-- **Prompting Guide** — AI prompts used at each stage
+This document defines the user experience for the MVP.
+
+**Critical UX requirement:** The beat structure (Hook/Rise/Spike/Drop/Cliff) is proprietary and must **never** be exposed to users. Users see only "Scene 1, Scene 2..." etc.
+
+Companion documents:
+- **Workflow Architecture** — Technical pipeline
+- **Prompting Guide** — Retention-optimized prompts
 
 ---
 
 ## Core Flow
 
 ```
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│ 1. IDEA  │ →  │ 2. STORY │ →  │ 3. LOOK  │ →  │ 4. MAKE  │ →  │ 5. DONE  │
-│          │    │          │    │          │    │          │    │          │
-│ Write &  │    │ Read &   │    │ View &   │    │ Wait &   │    │ Watch &  │
-│ Configure│    │ Approve  │    │ Approve  │    │ Preview  │    │ Share    │
-│          │    │          │    │          │    │          │    │          │
-│  ~30s    │    │  ~20s    │    │  ~30s    │    │ ~5-15min │    │   —      │
-└──────────┘    └──────────┘    └──────────┘    └──────────┘    └──────────┘
+┌──────────┐    ┌──────────┐    ┌────────────────┐    ┌──────────┐    ┌──────────┐
+│ 1. IDEA  │ →  │ 2. STORY │ →  │   3. LOOK      │ →  │ 4. MAKE  │ →  │ 5. DONE  │
+│          │    │          │    │                │    │          │    │          │
+│ Write &  │    │ Read &   │    │ 3a: Protagonist│    │ Wait &   │    │ Watch &  │
+│ Pick     │    │ Approve  │    │     (style)    │    │ Preview  │    │ Share    │
+│ Style    │    │          │    │ 3b: Full       │    │          │    │          │
+│          │    │          │    │     moodboard  │    │          │    │          │
+│  ~30s    │    │  ~20s    │    │  ~40s          │    │ ~6-8min  │    │   —      │
+└──────────┘    └──────────┘    └────────────────┘    └──────────┘    └──────────┘
                      ▲               ▲
                 Checkpoint 1    Checkpoint 2
+                                (two steps)
 ```
 
-**Total time to finished film:**
-- 1-minute film: ~7 minutes
-- 2-minute film: ~12 minutes
-- 3-minute film: ~18 minutes
+**Total time: ~9-10 minutes to finished 60-second film**
 
 ---
 
 ## Screen 1: Idea
 
 ### Purpose
-Capture story idea and configuration with minimal friction.
+Capture story idea and style. **Duration is fixed at 1 minute — no selector needed.**
 
 ### Layout
 
@@ -46,24 +49,16 @@ Capture story idea and configuration with minimal friction.
 │   [Logo: StoryGen]                                              │
 │                                                                 │
 │                                                                 │
-│                    ✨ Create a short film                       │
+│                    ✨ Create a 60-second film                   │
 │                                                                 │
 │                                                                 │
 │   What's your story?                                           │
 │   ┌─────────────────────────────────────────────────────────┐  │
 │   │                                                         │  │
-│   │  A lonely robot discovers a music box and learns to    │  │
-│   │  dance in an abandoned factory...                       │  │
+│   │  A wife discovers her husband has been hiding a        │  │
+│   │  second family for six years...                         │  │
 │   │                                                         │  │
 │   └─────────────────────────────────────────────────────────┘  │
-│                                                                 │
-│                                                                 │
-│   How long?                                                    │
-│                                                                 │
-│       ┌─────────┐   ┌─────────┐   ┌─────────┐                  │
-│       │  1 min  │   │  2 min  │   │  3 min  │                  │
-│       │         │   │    ●    │   │         │                  │
-│       └─────────┘   └─────────┘   └─────────┘                  │
 │                                                                 │
 │                                                                 │
 │   What style?                                                  │
@@ -80,8 +75,8 @@ Capture story idea and configuration with minimal friction.
 │                                                                 │
 │                                                                 │
 │   ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
-│   💡 Need ideas? "Time-traveling barista" • "Last human on     │
-│      Mars" • "A letter arrives 100 years late"                 │
+│   💡 Need ideas? "Caught cheating at the altar" •              │
+│      "The inheritance has conditions" • "She's not really dead"│
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -90,11 +85,12 @@ Capture story idea and configuration with minimal friction.
 
 | Component | Description |
 |-----------|-------------|
-| **Text Area** | Large, multi-line. Placeholder: "A robot learns to dance..." |
-| **Duration Toggle** | 3 options: 1 / 2 / 3 min. Default: 2 min |
+| **Text Area** | Large, multi-line. Placeholder: "A woman discovers a secret..." |
 | **Style Cards** | 3 cards with 2-3 sec video preview loops. Default: Cinematic |
 | **Submit Button** | "Create Story →" — disabled until text entered |
-| **Inspiration** | Clickable prompts that fill the text area |
+| **Inspiration** | Clickable dramatic prompts |
+
+**Note:** No duration selector. All films are 60 seconds.
 
 ### States
 
@@ -102,14 +98,14 @@ Capture story idea and configuration with minimal friction.
 |-------|----------|
 | Empty | Submit button disabled |
 | Filled | Submit button enabled |
-| Loading | "Understanding your story..." with spinner |
+| Loading | "Understanding your story..." |
 
 ---
 
 ## Screen 2: Story
 
 ### Purpose
-Show generated story beats for approval.
+Show generated story for approval. **Beat names (Hook/Rise/etc.) are NEVER shown.**
 
 ### Layout
 
@@ -119,34 +115,36 @@ Show generated story beats for approval.
 │   ← Back                                           Step 2 of 4 │
 │                                                                 │
 │                                                                 │
-│              📖 "The Last Dance"                                │
+│              📖 "The Other Wife"                                │
 │                                                                 │
-│              Your 1-minute story in 7 scenes                   │
+│              Your story in 8 scenes                            │
 │                                                                 │
 │                                                                 │
 │   ┌─────────────────────────────────────────────────────────┐  │
 │   │                                                         │  │
-│   │   1. A rusted robot sits motionless in a dark,         │  │
-│   │      abandoned factory. Dust floats in a shaft of      │  │
-│   │      light. Silence.                                    │  │
+│   │   1. Elena slams a photograph on the counter. "Who is  │  │
+│   │      she, Marcus?" He freezes mid-reach for his wine.  │  │
 │   │                                                         │  │
-│   │   2. A faint melody breaks the silence — a music box   │  │
-│   │      buried in the debris begins to play.              │  │
+│   │   2. Marcus: "Where did you get that?" Elena: "Your    │  │
+│   │      gym bag. The one you told me not to touch."       │  │
 │   │                                                         │  │
-│   │   3. The robot's eye flickers to life. Its head turns  │  │
-│   │      slowly toward the sound, joints creaking.         │  │
+│   │   3. He reaches for her arm. "Let me explain—" She     │  │
+│   │      jerks away. "Explain the CHILD?"                   │  │
 │   │                                                         │  │
-│   │   4. It reaches into the rubble and lifts out a small, │  │
-│   │      ornate music box. The melody grows.               │  │
+│   │   4. She flips the photo. The back reads: "To Daddy,   │  │
+│   │      love always, Sophie. Age 6." His face crumbles.   │  │
 │   │                                                         │  │
-│   │   5. Holding the box close, the robot begins to sway.  │  │
-│   │      Awkward at first. Hesitant.                        │  │
+│   │   5. Elena slides off her wedding ring. "Six years.    │  │
+│   │      You've been lying to me for six years."           │  │
 │   │                                                         │  │
-│   │   6. The movement becomes rhythm. The robot is         │  │
-│   │      dancing — really dancing — finding grace.         │  │
+│   │   6. "I was going to tell you—" She grabs her keys.    │  │
+│   │      "The right time to destroy my life?"              │  │
 │   │                                                         │  │
-│   │   7. Wide: the robot dances alone in the light beam,   │  │
-│   │      surrounded by silent machines. It has found joy.  │  │
+│   │   7. She heads for the door. He follows. "Where are    │  │
+│   │      you going?" She doesn't answer.                    │  │
+│   │                                                         │  │
+│   │   8. His phone lights up: "JESSICA ❤️ calling."         │  │
+│   │      Elena looks at him. "Answer it."                   │  │
 │   │                                                         │  │
 │   └─────────────────────────────────────────────────────────┘  │
 │                                                                 │
@@ -157,125 +155,181 @@ Show generated story beats for approval.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### Critical: Hidden Beat Names
+
+The UI shows:
+- ✅ "Scene 1", "Scene 2", "Scene 3"...
+- ✅ Just numbers (1, 2, 3...)
+
+The UI **never** shows:
+- ❌ "Hook", "Rise", "Spike", "Drop", "Cliff"
+- ❌ "Pattern Break", "Dopamine Hit", "Cliffhanger"
+- ❌ Any terminology revealing our formula
+
 ### Components
 
 | Component | Description |
 |-----------|-------------|
-| **Back Arrow** | Returns to Screen 1 (preserves input data) |
+| **Back Arrow** | Returns to Screen 1 |
 | **Step Indicator** | "Step 2 of 4" |
-| **Title** | Auto-generated title in quotes |
-| **Subtitle** | "Your X-minute story in Y scenes" |
-| **Beat List** | Numbered, plain English descriptions. Scrollable. |
-| **Retry Button** | "Try Different Story" — regenerates beats |
-| **Approve Button** | "Looks Good →" — proceeds to Screen 3 |
+| **Title** | Auto-generated title |
+| **Subtitle** | "Your story in 7 scenes" |
+| **Scene List** | Numbered 1-7, plain descriptions only |
+| **Retry Button** | "Try Different Story" |
+| **Approve Button** | "Looks Good →" |
 
 ### States
 
 | State | Behavior |
 |-------|----------|
 | Loading | "Writing your story..." |
-| Error | "Couldn't create the story. Try adding more detail." + [ ← Edit Idea ] |
-| Success | Show beats list with both buttons |
+| Error | "Couldn't create the story. Try adding more conflict." |
+| Success | Show numbered scene list |
 
 ---
 
-## Screen 3: Look (Moodboard)
+## Screen 3: Look (Protagonist-First)
 
 ### Purpose
-Show visual direction for approval before expensive video generation. These images also become the reference anchors that maintain consistency throughout the film.
+Establish visual style with protagonist as the anchor. This is a **two-step flow**:
+1. Approve the protagonist look (defines style)
+2. Approve the rest (generated using protagonist as reference)
 
-### Layout
+### Screen 3a: Protagonist Look
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                                                                 │
-│   ← Back                                           Step 3 of 4 │
+│   ← Back                                          Step 3a of 4 │
 │                                                                 │
 │                                                                 │
-│              🎨 Here's how it will look                        │
+│              🎨 First, let's nail the look                     │
 │                                                                 │
-│              Your visual direction                             │
+│              Your main character sets the style                │
+│                                                                 │
+│                                                                 │
+│   ┌───────────────────────────────────────────────────────┐    │
+│   │                                                       │    │
+│   │                                                       │    │
+│   │                                                       │    │
+│   │                  [ELENA IMAGE]                        │    │
+│   │                                                       │    │
+│   │                                                       │    │
+│   │                                                       │    │
+│   └───────────────────────────────────────────────────────┘    │
+│                         Elena                                   │
+│                                                                 │
+│                                                                 │
+│        [ ↻ Try Different Look ]         [ Looks Good → ]       │
+│                                                                 │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**On "Looks Good →":** Generate other characters + environment + key moment in parallel, all using protagonist as reference.
+
+### Screen 3b: Full Moodboard
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│   ← Back                                          Step 3b of 4 │
+│                                                                 │
+│                                                                 │
+│              🎨 Here's your world                              │
 │                                                                 │
 │                                                                 │
 │   ┌─────────────────────────────────────────────────────────┐  │
 │   │                                                         │  │
-│   │   ┌─────────────────┐       ┌─────────────────┐        │  │
-│   │   │                 │       │                 │        │  │
-│   │   │                 │       │                 │        │  │
-│   │   │  [CHARACTER]    │       │  [ENVIRONMENT]  │        │  │
-│   │   │                 │       │                 │        │  │
-│   │   │                 │       │                 │        │  │
-│   │   └─────────────────┘       └─────────────────┘        │  │
-│   │     The Robot                 Abandoned Factory        │  │
-│   │                                                         │  │
+│   │   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐      │  │
+│   │   │             │ │             │ │             │      │  │
+│   │   │   ELENA     │ │   MARCUS    │ │  SETTING    │      │  │
+│   │   │     🔒      │ │             │ │             │      │  │
+│   │   └─────────────┘ └─────────────┘ └─────────────┘      │  │
+│   │     Style anchor    [↻ Retry]      [↻ Retry]           │  │
 │   │                                                         │  │
 │   │   ┌───────────────────────────────────────────┐        │  │
 │   │   │                                           │        │  │
-│   │   │          [KEY MOMENT]                     │        │  │
+│   │   │            [KEY MOMENT]                   │        │  │
 │   │   │                                           │        │  │
 │   │   └───────────────────────────────────────────┘        │  │
-│   │              The Dance                                  │  │
+│   │                    [↻ Retry]                           │  │
 │   │                                                         │  │
 │   └─────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │                                                                 │
-│        [ ↻ Try Different Look ]         [ Make Film → ]        │
+│   ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
+│   Want a completely different style?                           │
+│   [ ← Change Main Character Look ]                             │
 │                                                                 │
+│                              [ Make Film → ]                   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Behaviors
+
+**Protagonist is locked** after approval:
+- Shown with 🔒 icon
+- No individual retry button
+- To change: use "Change Main Character Look" which goes back to 3a
+
+**Other elements have individual retry:**
+- Each can be regenerated independently
+- All regenerations use protagonist as style reference
+- Style stays consistent
+
+**Cascade warning** (when changing protagonist):
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│   ⚠️ Changing the main character will regenerate               │
+│      all other images to match the new style.                  │
+│                                                                 │
+│              [ Cancel ]        [ Continue ]                    │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Components
 
+**Screen 3a:**
 | Component | Description |
 |-----------|-------------|
-| **Back Arrow** | Returns to Screen 2 |
-| **Step Indicator** | "Step 3 of 4" |
-| **Title** | "Here's how it will look" |
-| **Moodboard Grid** | 3 AI-generated images (character, environment, key moment) |
-| **Image Labels** | Brief description under each |
-| **Retry Button** | "Try Different Look" — regenerates images |
-| **Approve Button** | "Make Film →" — starts generation |
+| **Protagonist Image** | Large, centered, defines the style |
+| **Retry Button** | "Try Different Look" — regenerates protagonist |
+| **Approve Button** | "Looks Good →" — triggers parallel generation |
 
-### Image Layout
-
-**Single character stories:**
-```
-┌───────────┐  ┌───────────┐
-│ Character │  │ Environ-  │
-│           │  │ ment      │
-└───────────┘  └───────────┘
-┌───────────────────────────┐
-│      Key Moment           │
-└───────────────────────────┘
-```
-
-**Multi-character stories:**
-```
-┌───────────┐  ┌───────────┐
-│ Character │  │ Character │
-│     1     │  │     2     │
-└───────────┘  └───────────┘
-┌───────────┐  ┌───────────┐
-│ Environ-  │  │ Key       │
-│ ment      │  │ Moment    │
-└───────────┘  └───────────┘
-```
+**Screen 3b:**
+| Component | Description |
+|-----------|-------------|
+| **Protagonist Image** | Locked with 🔒, no retry |
+| **Other Images** | Each has individual [↻ Retry] button |
+| **Change Style Link** | "Change Main Character Look" — goes back to 3a with warning |
+| **Approve Button** | "Make Film →" — proceeds to generation |
 
 ### States
 
+**Screen 3a:**
 | State | Behavior |
 |-------|----------|
-| Loading | "Creating your visual direction..." with progress (1 of 3 images) |
-| Error | "Couldn't create the look. Let's try again." + [ Try Again ] |
-| Success | Show moodboard grid with both buttons |
+| Loading | "Creating your main character..." |
+| Error | "Couldn't create the look. Let's try again." |
+| Success | Show protagonist image |
+
+**Screen 3b:**
+| State | Behavior |
+|-------|----------|
+| Loading | "Building your world..." (shows progress) |
+| Retrying | Individual image shows spinner, others remain |
+| Success | Show full moodboard |
 
 ---
 
 ## Screen 4: Make
 
 ### Purpose
-Show generation progress with live scene previews. Frame chaining means generation is sequential, so the progress is straightforward: one scene at a time.
+Show generation progress. Scenes complete one at a time due to frame chaining.
 
 ### Layout
 
@@ -286,7 +340,7 @@ Show generation progress with live scene previews. Frame chaining means generati
 │                                                                 │
 │                    🎬 Creating your film...                     │
 │                                                                 │
-│                       "The Last Dance"                          │
+│                       "The Other Wife"                          │
 │                                                                 │
 │                                                                 │
 │   ┌─────────────────────────────────────────────────────────┐  │
@@ -299,14 +353,14 @@ Show generation progress with live scene previews. Frame chaining means generati
 │   └─────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │                                                                 │
-│         ████████████████░░░░░░░░░░░░░░░░░░░░  5 of 7           │
+│         ████████████████████░░░░░░░░░░░░░░░░  5 of 8           │
 │                                                                 │
-│                     About 2 minutes left                        │
+│                     About 3 minutes left                        │
 │                                                                 │
 │                                                                 │
 │   ┌─────────────────────────────────────────────────────────┐  │
 │   │  ✓ Scene 1   ✓ Scene 2   ✓ Scene 3   ✓ Scene 4         │  │
-│   │  ⟳ Scene 5   ○ Scene 6   ○ Scene 7                      │  │
+│   │  ⟳ Scene 5   ○ Scene 6   ○ Scene 7   ○ Scene 8         │  │
 │   └─────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │                                                                 │
@@ -318,41 +372,32 @@ Show generation progress with live scene previews. Frame chaining means generati
 | Component | Description |
 |-----------|-------------|
 | **Title** | "Creating your film..." |
-| **Film Title** | The generated title |
-| **Preview Area** | Shows most recently completed scene looping |
-| **Progress Bar** | Visual bar + "X of Y" |
-| **Time Estimate** | "About X minutes left" (recalculated per shot) |
-| **Scene Status** | ✓ complete / ⟳ generating / ○ queued |
+| **Preview** | Most recently completed scene on loop |
+| **Progress Bar** | "X of 7" |
+| **Time Estimate** | "About X minutes left" |
+| **Scene Status** | ✓/⟳/○ for each scene (numbered, NOT named) |
 
-### Time Estimates by Duration
+**Critical:** Scene status shows "Scene 1, Scene 2..." — never "Hook, Rise, Spike..."
 
-Since frame chaining is sequential (~45-60s per shot):
+### Timing
 
-| Film Length | Shots | Estimated Wait |
-|-------------|-------|----------------|
-| 1 minute | 7 | ~5-7 minutes |
-| 2 minutes | 15 | ~10-13 minutes |
-| 3 minutes | 22 | ~15-18 minutes |
+8 shots × ~45-60 seconds each = **6-8 minutes total**
 
 ### States
 
 | State | Behavior |
 |-------|----------|
-| Generating | Progress updates after each scene. Preview refreshes. |
-| Scene Error | "Scene X had an issue — retrying..." (auto-retry) |
-| Assembling | "Putting it all together..." (after all scenes done) |
+| Generating | Progress updates per scene |
+| Scene Error | "Scene X had an issue — retrying..." |
+| Assembling | "Putting it all together..." |
 | Complete | Auto-navigate to Screen 5 |
-
-### Note on Sequential Progress
-
-Because of frame chaining, scenes complete **one at a time in order**. This actually makes the progress screen feel natural — the user watches their film being built scene by scene, left to right. Each new preview shows a scene that visually continues from the last, which builds confidence in the quality.
 
 ---
 
 ## Screen 5: Done
 
 ### Purpose
-Celebrate, watch, and share.
+Celebrate, watch, share. The film ends with a hard cut (no fade) — this is intentional.
 
 ### Layout
 
@@ -369,7 +414,6 @@ Celebrate, watch, and share.
 │   │                                                         │  │
 │   │                                                         │  │
 │   │                                                         │  │
-│   │                                                         │  │
 │   │                  [ VIDEO PLAYER ]                       │  │
 │   │                     9:16 format                         │  │
 │   │                                                         │  │
@@ -380,7 +424,7 @@ Celebrate, watch, and share.
 │   └─────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │                                                                 │
-│                 "The Last Dance" • 0:56                        │
+│                 "The Other Wife" • 0:58                        │
 │                                                                 │
 │                                                                 │
 │          ┌─────────────────┐   ┌─────────────────┐             │
@@ -390,7 +434,7 @@ Celebrate, watch, and share.
 │                                                                 │
 │   ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
 │                                                                 │
-│   Not what you expected?                                       │
+│   Want a different take?                                       │
 │                                                                 │
 │   [ ↻ Regenerate Film ]            [ ✨ Make New Film ]        │
 │                                                                 │
@@ -402,41 +446,28 @@ Celebrate, watch, and share.
 
 | Component | Description |
 |-----------|-------------|
-| **Celebration Header** | "Your film is ready!" with sparkle |
-| **Video Player** | Large, centered, 9:16, native controls |
-| **Title & Duration** | Film title + actual runtime |
-| **Download** | Saves MP4 to device |
-| **Copy Link** | Copies shareable URL |
-| **Regenerate** | Re-runs generation (same story, same look) |
-| **New Film** | Returns to Screen 1 fresh |
-
-### States
-
-| State | Behavior |
-|-------|----------|
-| Initial | Video auto-plays muted, confetti animation |
-| Downloading | Button shows "Downloading..." then "✓ Downloaded" |
-| Link Copied | Button shows "✓ Copied!" for 2 seconds |
+| **Video Player** | Large, 9:16, native controls |
+| **Title & Duration** | Film title + runtime (~58-60 sec) |
+| **Download** | Saves MP4 |
+| **Copy Link** | Shareable URL |
+| **Regenerate** | Same story/look, new generation |
+| **New Film** | Back to Screen 1 |
 
 ---
 
 ## Mobile Layouts
 
-All screens stack vertically. Key adaptations:
-
 ### Mobile Screen 1
 ```
 ┌───────────────────┐
 │ ✨ Create a       │
-│   short film      │
+│   60-second film  │
 │                   │
 │ What's your story?│
 │ ┌───────────────┐ │
-│ │ A robot...    │ │
+│ │ A wife        │ │
+│ │ discovers...  │ │
 │ └───────────────┘ │
-│                   │
-│ How long?         │
-│ [1m] [2m] [3m]    │
 │                   │
 │ Style?            │
 │ ┌─────┐ ┌─────┐   │
@@ -447,34 +478,35 @@ All screens stack vertically. Key adaptations:
 │ └─────┘           │
 │                   │
 │ [Create Story →]  │
+│                   │
+│ 💡 Ideas...       │
 └───────────────────┘
 ```
 
-### Mobile Screen 3
+### Mobile Screen 2
 ```
 ┌───────────────────┐
-│ ←         3 of 4  │
+│ ←         2 of 4  │
 │                   │
-│ 🎨 How it will    │
-│    look           │
+│ 📖 "The Other     │
+│     Wife"         │
 │                   │
-│ ┌───────────────┐ │
-│ │  CHARACTER    │ │
-│ └───────────────┘ │
-│   The Robot       │
+│ 1. Elena slams a  │
+│    photo down...  │
 │                   │
-│ ┌───────────────┐ │
-│ │  ENVIRONMENT  │ │
-│ └───────────────┘ │
-│   The Factory     │
+│ 2. "Where did you │
+│    get that?"...  │
 │                   │
-│ ┌───────────────┐ │
-│ │  KEY MOMENT   │ │
-│ └───────────────┘ │
-│   The Dance       │
+│ 3. He reaches for │
+│    her arm...     │
 │                   │
-│ [Different Look]  │
-│ [Make Film →]     │
+│ ...               │
+│                   │
+│ 7. His phone      │
+│    lights up...   │
+│                   │
+│ [Different Story] │
+│ [Looks Good →]    │
 └───────────────────┘
 ```
 
@@ -486,10 +518,10 @@ All screens stack vertically. Key adaptations:
 ```
 😅 Couldn't create the story
 
-We had trouble understanding your idea.
-Try adding a bit more detail:
-• Who's the main character?
-• What happens to them?
+We need a bit more to work with.
+Try adding:
+• Who's in conflict?
+• What's at stake?
 
 [ ← Edit Idea ]
 ```
@@ -498,17 +530,16 @@ Try adding a bit more detail:
 ```
 😅 Couldn't create the look
 
-We had trouble visualizing this story.
+Let's try again with a different approach.
 
 [ Try Again ]       [ ← Edit Story ]
 ```
 
-### Partial Video Generation Failed
+### Video Generation Failed
 ```
 ⚠️ Some scenes had issues
 
 5 of 7 scenes generated successfully.
-Your film will be a bit shorter than expected.
 
 [ Continue Anyway ]     [ Try Again ]
 ```
@@ -520,23 +551,24 @@ Your film will be a bit shorter than expected.
 ### Screen 1 → 2
 ```
 Understanding your story...
+Finding the conflict...
 ```
 
 ### Screen 2 → 3
 ```
-Creating the visual direction...
-Designing your character...     (1 of 3)
+Creating your visual direction...
+Designing the characters...     (1 of 3)
 Building the world...           (2 of 3)
 Capturing the key moment...     (3 of 3)
 ```
 
 ### Screen 4
 ```
-Setting up the first frame...          (before Shot 1)
-Filming Scene 1...                     (per scene)
+Setting up the opening shot...
+Filming Scene 1...
 Filming Scene 2...
 ...
-Putting it all together...             (assembly)
+Putting it all together...
 ```
 
 ---
@@ -545,40 +577,23 @@ Putting it all together...             (assembly)
 
 ### User Decisions
 
-| Screen | Decision | Options |
-|--------|----------|---------|
-| 1. Idea | What's my story? | Free text |
-| 1. Idea | How long? | 1 / 2 / 3 min |
-| 1. Idea | What style? | Cinematic / 3D / 2D |
-| 2. Story | Does this story work? | Approve / Retry |
-| 3. Look | Does this look right? | Approve / Retry |
-
-**Total decisions: 5**
-
-### Time Budget
-
-| Screen | Duration |
+| Screen | Decision |
 |--------|----------|
-| 1. Idea | ~30 seconds |
-| 2. Story | ~20 seconds |
-| 3. Look | ~30 seconds (includes image gen) |
-| 4. Make | ~5-18 minutes (depends on film length) |
-| 5. Done | — |
+| 1. Idea | What's my story? (free text) |
+| 1. Idea | What style? (Cinematic / 3D / 2D) |
+| 2. Story | Does this story work? (Approve / Retry) |
+| 3. Look | Does this look right? (Approve / Retry) |
 
----
+**Total decisions: 4**
 
-## What's NOT in MVP
+### What Users See vs. What's Hidden
 
-| Feature | Why Deferred |
-|---------|--------------|
-| Per-scene editing | Adds complexity, regenerate full story instead |
-| Per-scene regeneration | Would break frame chain, regenerate full film instead |
-| Character customization | Moodboard approval is enough |
-| Music selection | Veo native audio handles it |
-| User accounts | Anonymous for MVP |
-| Film history | One film at a time |
-| Direct social sharing | Download works |
-| Notifications ("film ready") | V2 enhancement |
+| Users See | Hidden (Internal Only) |
+|-----------|------------------------|
+| "Scene 1, Scene 2..." | "Hook, Rise, Spike, Drop, Cliff" |
+| "7 scenes" | Beat timing structure |
+| Story descriptions | Retention formula mechanics |
+| "Your story" | Psychological engineering |
 
 ---
 
@@ -590,63 +605,76 @@ Putting it all together...             (assembly)
   step: 1 | 2 | 3 | 4 | 5,
   input: {
     idea: string,
-    duration: 1 | 2 | 3,
     style: 'cinematic' | '3d' | '2d'
   },
   story: {
     id: string,
     title: string,
-    beats: Beat[],
+    beats: Beat[],  // beat_type is internal, never sent to client display
     characters: Character[],
     setting: Setting
   } | null,
   moodboard: {
     id: string,
-    images: {
-      character: Image,
-      environment: Image,
-      key_moment: Image
-    }
+    images: { character, environment, key_moment }
   } | null,
   film: {
     id: string,
     status: 'generating' | 'assembling' | 'ready' | 'failed',
-    progress: { current: number, total: number },
+    progress: { current: number, total: 8 },
     videoUrl: string | null
   } | null
 }
 ```
 
-### API Calls
+### API Response Sanitization
 
-| Transition | Endpoint |
-|------------|----------|
-| Screen 1 → 2 | `POST /api/generate-story` |
-| Retry story | `POST /api/regenerate-story/{id}` |
-| Screen 2 → 3 | `POST /api/generate-moodboard/{storyId}` |
-| Retry look | `POST /api/regenerate-moodboard/{id}` |
-| Screen 3 → 4 | `POST /api/generate-film/{storyId}` |
-| Screen 4 poll | `GET /api/film/{id}` (every 5s) |
-| Retry film | `POST /api/regenerate-film/{id}` |
+The `/api/generate-story` endpoint returns beats to the client, but **must strip internal fields**:
 
-### Polling Strategy (Screen 4)
+```javascript
+// Internal beat (stored in database)
+{
+  beat_number: 1,
+  beat_type: "hook",        // NEVER send to client
+  time_range: "0:00-0:08",  // NEVER send to client
+  description: "Elena slams...",
+  scene_change: false
+}
 
-Poll `GET /api/film/{id}` every 5 seconds:
+// Client-facing beat (API response)
+{
+  scene_number: 1,
+  description: "Elena slams..."
+}
+```
+
+### Polling (Screen 4)
+
 ```json
 {
   "status": "generating",
   "progress": {
     "current": 5,
-    "total": 7,
-    "phase": "filming"  // "keyframe" | "filming" | "assembling"
+    "total": 8
   },
-  "completed_shots": [
-    { "number": 1, "preview_url": "..." },
-    { "number": 2, "preview_url": "..." },
-    { "number": 3, "preview_url": "..." },
-    { "number": 4, "preview_url": "..." }
+  "completed_scenes": [
+    { "scene_number": 1, "preview_url": "..." },
+    { "scene_number": 2, "preview_url": "..." },
+    { "scene_number": 3, "preview_url": "..." },
+    { "scene_number": 4, "preview_url": "..." }
   ]
 }
 ```
 
-When `status` becomes `"ready"`, navigate to Screen 5.
+---
+
+## What's NOT in MVP
+
+| Feature | Why Deferred |
+|---------|--------------|
+| Duration options | 1 minute is optimal for retention |
+| Per-scene editing | Regenerate full story instead |
+| Per-scene regeneration | Would break frame chain |
+| User accounts | Anonymous for MVP |
+| Episode series | V2 feature |
+| Direct social sharing | Download works |

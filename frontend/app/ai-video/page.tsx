@@ -8,17 +8,15 @@ import Footer from "../components/Footer";
 // Types
 // ============================================================
 
-type Duration = "1" | "2" | "3";
 type Style = "cinematic" | "3d_animated" | "2d_animated";
-type StoryFunction = string;
-type VisualStep = "characters" | "environment" | "key_moments";
-type MomentType = "hook" | "midpoint" | "climax";
+type VisualStep = "characters" | "setting" | "key_moment";
+type MoodboardStep = "protagonist" | "full";
 
 interface Character {
   id: string;
   name: string;
   appearance: string;
-  role: "protagonist" | "supporting";
+  role: "protagonist" | "antagonist" | "supporting";
 }
 
 interface Setting {
@@ -28,9 +26,8 @@ interface Setting {
 }
 
 interface Beat {
-  beat_number: number;
+  scene_number: number;
   description: string;
-  story_function: StoryFunction;
   scene_change: boolean;
   dialogue: string | null;
 }
@@ -41,12 +38,11 @@ interface Story {
   characters: Character[];
   setting: Setting;
   beats: Beat[];
-  duration: string;
   style: string;
 }
 
 interface MoodboardImage {
-  type: "character" | "environment" | "key_moment";
+  type: "character" | "setting" | "key_moment";
   image_base64: string;
   mime_type: string;
   prompt_used: string;
@@ -60,7 +56,7 @@ interface CharacterImageState {
   promptUsed: string;
 }
 
-interface EnvironmentImageState {
+interface SettingImageState {
   image: MoodboardImage | null;
   approved: boolean;
   isGenerating: boolean;
@@ -69,10 +65,9 @@ interface EnvironmentImageState {
 }
 
 interface KeyMomentImageState {
-  moment_type: MomentType;
+  image: MoodboardImage | null;
   beat_number: number;
   beat_description: string;
-  image: MoodboardImage | null;
   isGenerating: boolean;
   feedback: string;
   promptUsed: string;
@@ -106,7 +101,7 @@ interface FilmState {
 interface TotalCost {
   story: number;
   characters: number;
-  environment: number;
+  setting: number;
   keyMoments: number;
   film: number;
 }
@@ -117,45 +112,14 @@ interface TotalCost {
 
 const BACKEND_URL = "http://localhost:8000";
 
-const DURATION_OPTIONS: { value: Duration; label: string; shots: string }[] = [
-  { value: "1", label: "1 min", shots: "7-8 shots" },
-  { value: "2", label: "2 min", shots: "15 shots" },
-  { value: "3", label: "3 min", shots: "22-23 shots" },
-];
+// Fixed at 8 shots (8 seconds each = ~64 seconds)
+const TOTAL_SHOTS = 8;
 
 const STYLE_OPTIONS: { value: Style; label: string }[] = [
   { value: "cinematic", label: "Cinematic" },
   { value: "3d_animated", label: "3D Animated" },
   { value: "2d_animated", label: "2D Animated" },
 ];
-
-const STORY_FUNCTION_COLORS: Record<string, string> = {
-  hook: "bg-blue-500/20 text-blue-400",
-  setup: "bg-blue-500/20 text-blue-400",
-  inciting_incident: "bg-yellow-500/20 text-yellow-400",
-  rising_action: "bg-orange-500/20 text-orange-400",
-  midpoint: "bg-purple-500/20 text-purple-400",
-  climax: "bg-red-500/20 text-red-400",
-  crisis: "bg-red-400/20 text-red-300",
-  resolution: "bg-green-500/20 text-green-400",
-  falling_action: "bg-teal-500/20 text-teal-400",
-};
-
-const getStoryFunctionColor = (func: string) => {
-  return STORY_FUNCTION_COLORS[func] || "bg-gray-500/20 text-gray-400";
-};
-
-const MOMENT_TYPE_LABELS: Record<MomentType, string> = {
-  hook: "Opening Hook",
-  midpoint: "Midpoint",
-  climax: "Climax",
-};
-
-const MOMENT_TYPE_COLORS: Record<MomentType, string> = {
-  hook: "bg-blue-500/20 text-blue-400",
-  midpoint: "bg-purple-500/20 text-purple-400",
-  climax: "bg-red-500/20 text-red-400",
-};
 
 // ============================================================
 // Main Component
@@ -164,7 +128,6 @@ const MOMENT_TYPE_COLORS: Record<MomentType, string> = {
 export default function AIVideoPage() {
   // Input state
   const [idea, setIdea] = useState("");
-  const [duration, setDuration] = useState<Duration>("1");
   const [style, setStyle] = useState<Style>("cinematic");
 
   // Story state
@@ -180,10 +143,19 @@ export default function AIVideoPage() {
 
   // Visual Direction state (Phase 3)
   const [visualStep, setVisualStep] = useState<VisualStep | null>(null);
+  const [moodboardStep, setMoodboardStep] = useState<MoodboardStep>("protagonist");
   const [characterImages, setCharacterImages] = useState<Record<string, CharacterImageState>>({});
-  const [environmentImage, setEnvironmentImage] = useState<EnvironmentImageState | null>(null);
-  const [keyMoments, setKeyMoments] = useState<KeyMomentImageState[]>([]);
-  const [isGeneratingKeyMoments, setIsGeneratingKeyMoments] = useState(false);
+  const [settingImage, setSettingImage] = useState<SettingImageState | null>(null);
+  const [keyMoment, setKeyMoment] = useState<KeyMomentImageState | null>(null);
+
+  // Protagonist-first state
+  const [protagonistImage, setProtagonistImage] = useState<{
+    character_id: string;
+    character_name: string;
+    image: MoodboardImage;
+  } | null>(null);
+  const [protagonistLocked, setProtagonistLocked] = useState(false);
+  const [isGeneratingProtagonist, setIsGeneratingProtagonist] = useState(false);
 
   // Phase 4: Film Generation state
   const [film, setFilm] = useState<FilmState>({
@@ -203,7 +175,7 @@ export default function AIVideoPage() {
   const [totalCost, setTotalCost] = useState<TotalCost>({
     story: 0,
     characters: 0,
-    environment: 0,
+    setting: 0,
     keyMoments: 0,
     film: 0,
   });
@@ -228,7 +200,7 @@ export default function AIVideoPage() {
       const response = await fetch(`${BACKEND_URL}/story/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idea, duration, style }),
+        body: JSON.stringify({ idea, style }),
       });
 
       if (!response.ok) {
@@ -261,7 +233,6 @@ export default function AIVideoPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           idea,
-          duration,
           style,
           feedback: globalFeedback || null,
         }),
@@ -325,32 +296,125 @@ export default function AIVideoPage() {
 
   const resetVisualDirection = () => {
     setVisualStep(null);
+    setMoodboardStep("protagonist");
     setCharacterImages({});
-    setEnvironmentImage(null);
-    setKeyMoments([]);
-    setIsGeneratingKeyMoments(false);
+    setSettingImage(null);
+    setKeyMoment(null);
+    setProtagonistImage(null);
+    setProtagonistLocked(false);
+    setIsGeneratingProtagonist(false);
   };
 
   const startVisualDirection = async () => {
     if (!story) return;
 
     setVisualStep("characters");
+    setMoodboardStep("protagonist");
+    setProtagonistLocked(false);
 
+    // Generate protagonist first (style anchor)
+    await generateProtagonistImage();
+  };
+
+  // Generate protagonist without reference images (style anchor)
+  const generateProtagonistImage = async () => {
+    if (!story) return;
+
+    setIsGeneratingProtagonist(true);
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/moodboard/generate-protagonist`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ story }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to generate protagonist image");
+      }
+
+      const data = await response.json();
+
+      // Find protagonist name
+      const protagonist = story.characters.find((c) => c.id === data.character_id);
+
+      setProtagonistImage({
+        character_id: data.character_id,
+        character_name: protagonist?.name || "Protagonist",
+        image: data.image,
+      });
+
+      // Track cost
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate protagonist image");
+    } finally {
+      setIsGeneratingProtagonist(false);
+    }
+  };
+
+  // Approve protagonist and generate everything else in parallel
+  const approveProtagonist = async () => {
+    if (!story || !protagonistImage) return;
+
+    setProtagonistLocked(true);
+    setMoodboardStep("full");
+
+    // Initialize other character states
     const initialStates: Record<string, CharacterImageState> = {};
-    story.characters.forEach((char) => {
-      initialStates[char.id] = {
-        image: null,
-        approved: false,
-        isGenerating: true,
-        feedback: "",
-        promptUsed: "",
-      };
-    });
+    story.characters
+      .filter((char) => char.id !== protagonistImage.character_id)
+      .forEach((char) => {
+        initialStates[char.id] = {
+          image: null,
+          approved: false,
+          isGenerating: true,
+          feedback: "",
+          promptUsed: "",
+        };
+      });
     setCharacterImages(initialStates);
 
-    await Promise.all(
-      story.characters.map((char) => generateCharacterImage(char.id))
+    // Initialize setting state
+    setSettingImage({
+      image: null,
+      approved: false,
+      isGenerating: true,
+      feedback: "",
+      promptUsed: "",
+    });
+
+    // Generate other characters and setting in parallel, using protagonist as reference
+    const protagonistRef = {
+      image_base64: protagonistImage.image.image_base64,
+      mime_type: protagonistImage.image.mime_type,
+    };
+
+    await Promise.all([
+      ...story.characters
+        .filter((char) => char.id !== protagonistImage.character_id)
+        .map((char) => generateCharacterImageWithRef(char.id, protagonistRef)),
+      generateSettingWithRef(protagonistRef),
+    ]);
+  };
+
+  // Change protagonist look (with cascade warning)
+  const handleChangeProtagonistLook = () => {
+    const confirmed = window.confirm(
+      "Changing the main character will regenerate all other images to match the new style. Continue?"
     );
+    if (confirmed) {
+      setProtagonistLocked(false);
+      setMoodboardStep("protagonist");
+      setCharacterImages({});
+      setSettingImage(null);
+      setKeyMoment(null);
+      // Regenerate protagonist
+      generateProtagonistImage();
+    }
   };
 
   const generateCharacterImage = async (characterId: string) => {
@@ -397,6 +461,99 @@ export default function AIVideoPage() {
     }
   };
 
+  // Generate character with protagonist as style reference
+  const generateCharacterImageWithRef = async (characterId: string, protagonistRef: { image_base64: string; mime_type: string }) => {
+    if (!story) return;
+
+    setCharacterImages((prev) => ({
+      ...prev,
+      [characterId]: { ...prev[characterId], isGenerating: true },
+    }));
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/moodboard/generate-character`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          story,
+          character_id: characterId,
+          protagonist_image: protagonistRef,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to generate character image");
+      }
+
+      const data = await response.json();
+
+      setCharacterImages((prev) => ({
+        ...prev,
+        [characterId]: {
+          ...prev[characterId],
+          image: data.image,
+          promptUsed: data.prompt_used,
+          isGenerating: false,
+        },
+      }));
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate character image");
+      setCharacterImages((prev) => ({
+        ...prev,
+        [characterId]: { ...prev[characterId], isGenerating: false },
+      }));
+    }
+  };
+
+  // Generate setting with protagonist as style reference
+  const generateSettingWithRef = async (protagonistRef: { image_base64: string; mime_type: string }) => {
+    if (!story) return;
+
+    setSettingImage((prev) => prev ? { ...prev, isGenerating: true } : {
+      image: null,
+      approved: false,
+      isGenerating: true,
+      feedback: "",
+      promptUsed: "",
+    });
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/moodboard/generate-setting`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          story,
+          protagonist_image: protagonistRef,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to generate setting image");
+      }
+
+      const data = await response.json();
+
+      setSettingImage({
+        image: data.image,
+        approved: false,
+        isGenerating: false,
+        feedback: "",
+        promptUsed: data.prompt_used,
+      });
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, setting: prev.setting + data.cost_usd }));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate setting image");
+      setSettingImage((prev) => prev ? { ...prev, isGenerating: false } : null);
+    }
+  };
+
   const refineCharacterImage = async (characterId: string) => {
     if (!story) return;
     const charState = characterImages[characterId];
@@ -408,14 +565,24 @@ export default function AIVideoPage() {
     }));
 
     try {
+      // Include protagonist reference if available
+      const requestBody: Record<string, unknown> = {
+        story,
+        character_id: characterId,
+        feedback: charState.feedback,
+      };
+
+      if (protagonistImage) {
+        requestBody.protagonist_image = {
+          image_base64: protagonistImage.image.image_base64,
+          mime_type: protagonistImage.image.mime_type,
+        };
+      }
+
       const response = await fetch(`${BACKEND_URL}/moodboard/refine-character`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          story,
-          character_id: characterId,
-          feedback: charState.feedback,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -448,6 +615,30 @@ export default function AIVideoPage() {
     }
   };
 
+  // Retry (regenerate) character with protagonist reference
+  const retryCharacterImage = async (characterId: string) => {
+    if (!story || !protagonistImage) return;
+
+    const protagonistRef = {
+      image_base64: protagonistImage.image.image_base64,
+      mime_type: protagonistImage.image.mime_type,
+    };
+
+    await generateCharacterImageWithRef(characterId, protagonistRef);
+  };
+
+  // Retry (regenerate) setting with protagonist reference
+  const retrySettingImage = async () => {
+    if (!story || !protagonistImage) return;
+
+    const protagonistRef = {
+      image_base64: protagonistImage.image.image_base64,
+      mime_type: protagonistImage.image.mime_type,
+    };
+
+    await generateSettingWithRef(protagonistRef);
+  };
+
   const approveCharacter = (characterId: string) => {
     setCharacterImages((prev) => ({
       ...prev,
@@ -455,118 +646,96 @@ export default function AIVideoPage() {
     }));
   };
 
-  const allCharactersApproved = () => {
-    if (!story) return false;
-    return story.characters.every((char) => characterImages[char.id]?.approved);
+
+  const refineSettingImage = async () => {
+    if (!story || !settingImage?.feedback.trim()) return;
+
+    setSettingImage((prev) => prev ? { ...prev, isGenerating: true } : null);
+
+    try {
+      // Include protagonist reference if available
+      const requestBody: Record<string, unknown> = {
+        story,
+        feedback: settingImage.feedback,
+      };
+
+      if (protagonistImage) {
+        requestBody.protagonist_image = {
+          image_base64: protagonistImage.image.image_base64,
+          mime_type: protagonistImage.image.mime_type,
+        };
+      }
+
+      const response = await fetch(`${BACKEND_URL}/moodboard/refine-setting`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to refine setting image");
+      }
+
+      const data = await response.json();
+
+      setSettingImage({
+        image: data.image,
+        approved: false,
+        isGenerating: false,
+        feedback: "",
+        promptUsed: data.prompt_used,
+      });
+      // Track setting refinement cost
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, setting: prev.setting + data.cost_usd }));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refine setting image");
+      setSettingImage((prev) => prev ? { ...prev, isGenerating: false } : null);
+    }
   };
 
-  const continueToEnvironment = async () => {
-    if (!story) return;
+  const continueToKeyMoment = async () => {
+    if (!story || !settingImage?.image || !protagonistImage) return;
 
-    setVisualStep("environment");
-    setEnvironmentImage({
+    setVisualStep("key_moment");
+    setKeyMoment({
       image: null,
-      approved: false,
+      beat_number: 0,
+      beat_description: "",
       isGenerating: true,
       feedback: "",
       promptUsed: "",
     });
 
-    try {
-      const response = await fetch(`${BACKEND_URL}/moodboard/generate-environment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to generate environment image");
-      }
-
-      const data = await response.json();
-
-      setEnvironmentImage({
-        image: data.image,
-        approved: false,
-        isGenerating: false,
-        feedback: "",
-        promptUsed: data.prompt_used,
-      });
-      // Track environment image cost
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, environment: prev.environment + data.cost_usd }));
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate environment image");
-      setEnvironmentImage((prev) => prev ? { ...prev, isGenerating: false } : null);
-    }
-  };
-
-  const refineEnvironmentImage = async () => {
-    if (!story || !environmentImage?.feedback.trim()) return;
-
-    setEnvironmentImage((prev) => prev ? { ...prev, isGenerating: true } : null);
-
-    try {
-      const response = await fetch(`${BACKEND_URL}/moodboard/refine-environment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          story,
-          feedback: environmentImage.feedback,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to refine environment image");
-      }
-
-      const data = await response.json();
-
-      setEnvironmentImage({
-        image: data.image,
-        approved: false,
-        isGenerating: false,
-        feedback: "",
-        promptUsed: data.prompt_used,
-      });
-      // Track environment refinement cost
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, environment: prev.environment + data.cost_usd }));
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to refine environment image");
-      setEnvironmentImage((prev) => prev ? { ...prev, isGenerating: false } : null);
-    }
-  };
-
-  const continueToKeyMoments = async () => {
-    if (!story || !environmentImage?.image) return;
-
-    setVisualStep("key_moments");
-    setIsGeneratingKeyMoments(true);
-    setKeyMoments([]);
-
     // Build approved visuals with actual image data
-    const approvedVisuals = {
-      character_images: story.characters
-        .filter((char) => characterImages[char.id]?.image)
+    // Include protagonist first, then other characters
+    const allCharacterImages = [
+      {
+        image_base64: protagonistImage.image.image_base64,
+        mime_type: protagonistImage.image.mime_type,
+      },
+      ...story.characters
+        .filter((char) => char.id !== protagonistImage.character_id && characterImages[char.id]?.image)
         .map((char) => ({
           image_base64: characterImages[char.id].image!.image_base64,
           mime_type: characterImages[char.id].image!.mime_type,
         })),
-      environment_image: {
-        image_base64: environmentImage.image.image_base64,
-        mime_type: environmentImage.image.mime_type,
+    ];
+
+    const approvedVisuals = {
+      character_images: allCharacterImages,
+      setting_image: {
+        image_base64: settingImage.image.image_base64,
+        mime_type: settingImage.image.mime_type,
       },
       character_descriptions: story.characters.map((char) => char.appearance),
-      environment_description: `${story.setting.location}, ${story.setting.time}. ${story.setting.atmosphere}`,
+      setting_description: `${story.setting.location}, ${story.setting.time}. ${story.setting.atmosphere}`,
     };
 
     try {
-      const response = await fetch(`${BACKEND_URL}/moodboard/generate-key-moments`, {
+      const response = await fetch(`${BACKEND_URL}/moodboard/generate-key-moment`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ story, approved_visuals: approvedVisuals }),
@@ -574,59 +743,56 @@ export default function AIVideoPage() {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to generate key moments");
+        throw new Error(errorData.detail || "Failed to generate key moment");
       }
 
       const data = await response.json();
 
-      // Transform backend response to frontend state
-      const moments: KeyMomentImageState[] = data.key_moments.map((km: any) => ({
-        moment_type: km.moment_type,
-        beat_number: km.beat_number,
-        beat_description: km.beat_description,
-        image: km.image,
+      setKeyMoment({
+        image: data.key_moment.image,
+        beat_number: data.key_moment.beat_number,
+        beat_description: data.key_moment.beat_description,
         isGenerating: false,
         feedback: "",
-        promptUsed: km.prompt_used,
-      }));
-
-      setKeyMoments(moments);
-      // Track key moments cost (3 images)
+        promptUsed: data.key_moment.prompt_used,
+      });
+      // Track key moment cost (1 image)
       if (data.cost_usd) {
         setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + data.cost_usd }));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate key moments");
-    } finally {
-      setIsGeneratingKeyMoments(false);
+      setError(err instanceof Error ? err.message : "Failed to generate key moment");
+      setKeyMoment((prev) => prev ? { ...prev, isGenerating: false } : null);
     }
   };
 
-  const refineKeyMoment = async (momentType: MomentType) => {
-    if (!story || !environmentImage?.image) return;
-    const moment = keyMoments.find((m) => m.moment_type === momentType);
-    if (!moment?.feedback.trim()) return;
+  const refineKeyMoment = async () => {
+    if (!story || !settingImage?.image || !keyMoment?.feedback.trim() || !protagonistImage) return;
 
-    // Update to generating state
-    setKeyMoments((prev) =>
-      prev.map((m) =>
-        m.moment_type === momentType ? { ...m, isGenerating: true } : m
-      )
-    );
+    setKeyMoment((prev) => prev ? { ...prev, isGenerating: true } : null);
 
-    const approvedVisuals = {
-      character_images: story.characters
-        .filter((char) => characterImages[char.id]?.image)
+    // Include protagonist first, then other characters
+    const allCharacterImages = [
+      {
+        image_base64: protagonistImage.image.image_base64,
+        mime_type: protagonistImage.image.mime_type,
+      },
+      ...story.characters
+        .filter((char) => char.id !== protagonistImage.character_id && characterImages[char.id]?.image)
         .map((char) => ({
           image_base64: characterImages[char.id].image!.image_base64,
           mime_type: characterImages[char.id].image!.mime_type,
         })),
-      environment_image: {
-        image_base64: environmentImage.image.image_base64,
-        mime_type: environmentImage.image.mime_type,
+    ];
+
+    const approvedVisuals = {
+      character_images: allCharacterImages,
+      setting_image: {
+        image_base64: settingImage.image.image_base64,
+        mime_type: settingImage.image.mime_type,
       },
       character_descriptions: story.characters.map((char) => char.appearance),
-      environment_description: `${story.setting.location}, ${story.setting.time}. ${story.setting.atmosphere}`,
+      setting_description: `${story.setting.location}, ${story.setting.time}. ${story.setting.atmosphere}`,
     };
 
     try {
@@ -636,8 +802,7 @@ export default function AIVideoPage() {
         body: JSON.stringify({
           story,
           approved_visuals: approvedVisuals,
-          moment_type: momentType,
-          feedback: moment.feedback,
+          feedback: keyMoment.feedback,
         }),
       });
 
@@ -648,37 +813,24 @@ export default function AIVideoPage() {
 
       const data = await response.json();
 
-      setKeyMoments((prev) =>
-        prev.map((m) =>
-          m.moment_type === momentType
-            ? {
-                ...m,
-                image: data.key_moment.image,
-                promptUsed: data.key_moment.prompt_used,
-                isGenerating: false,
-                feedback: "",
-              }
-            : m
-        )
-      );
+      setKeyMoment({
+        image: data.key_moment.image,
+        beat_number: data.key_moment.beat_number,
+        beat_description: data.key_moment.beat_description,
+        isGenerating: false,
+        feedback: "",
+        promptUsed: data.key_moment.prompt_used,
+      });
       // Track key moment refinement cost
       if (data.cost_usd) {
         setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + data.cost_usd }));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refine key moment");
-      setKeyMoments((prev) =>
-        prev.map((m) =>
-          m.moment_type === momentType ? { ...m, isGenerating: false } : m
-        )
-      );
+      setKeyMoment((prev) => prev ? { ...prev, isGenerating: false } : null);
     }
   };
 
-  // Count approved characters
-  const approvedCount = story
-    ? story.characters.filter((char) => characterImages[char.id]?.approved).length
-    : 0;
 
   // ============================================================
   // Phase 4: Film Generation Functions
@@ -694,32 +846,37 @@ export default function AIVideoPage() {
   }, []);
 
   const startFilmGeneration = async () => {
-    if (!story || !environmentImage?.image || keyMoments.length === 0) return;
+    if (!story || !settingImage?.image || !keyMoment?.image || !protagonistImage) return;
 
-    // Build approved visuals
-    const approvedVisuals = {
-      character_images: story.characters
-        .filter((char) => characterImages[char.id]?.image)
+    // Build approved visuals - include protagonist first
+    const allCharacterImages = [
+      {
+        image_base64: protagonistImage.image.image_base64,
+        mime_type: protagonistImage.image.mime_type,
+      },
+      ...story.characters
+        .filter((char) => char.id !== protagonistImage.character_id && characterImages[char.id]?.image)
         .map((char) => ({
           image_base64: characterImages[char.id].image!.image_base64,
           mime_type: characterImages[char.id].image!.mime_type,
         })),
-      environment_image: {
-        image_base64: environmentImage.image.image_base64,
-        mime_type: environmentImage.image.mime_type,
+    ];
+
+    const approvedVisuals = {
+      character_images: allCharacterImages,
+      setting_image: {
+        image_base64: settingImage.image.image_base64,
+        mime_type: settingImage.image.mime_type,
       },
       character_descriptions: story.characters.map((char) => char.appearance),
-      environment_description: `${story.setting.location}, ${story.setting.time}. ${story.setting.atmosphere}`,
+      setting_description: `${story.setting.location}, ${story.setting.time}. ${story.setting.atmosphere}`,
     };
 
-    // Build key moment images for video references
-    const keyMomentImages = keyMoments
-      .filter((m) => m.image)
-      .map((m) => ({
-        moment_type: m.moment_type,
-        image_base64: m.image!.image_base64,
-        mime_type: m.image!.mime_type,
-      }));
+    // Build key moment image for video reference
+    const keyMomentImage = {
+      image_base64: keyMoment.image.image_base64,
+      mime_type: keyMoment.image.mime_type,
+    };
 
     setFilm({
       filmId: null,
@@ -740,7 +897,7 @@ export default function AIVideoPage() {
         body: JSON.stringify({
           story,
           approved_visuals: approvedVisuals,
-          key_moment_images: keyMomentImages,
+          key_moment_image: keyMomentImage,
         }),
       });
 
@@ -841,14 +998,14 @@ export default function AIVideoPage() {
     setTotalCost({
       story: 0,
       characters: 0,
-      environment: 0,
+      setting: 0,
       keyMoments: 0,
       film: 0,
     });
   };
 
   // Calculate grand total cost
-  const grandTotalCost = totalCost.story + totalCost.characters + totalCost.environment + totalCost.keyMoments + totalCost.film;
+  const grandTotalCost = totalCost.story + totalCost.characters + totalCost.setting + totalCost.keyMoments + totalCost.film;
 
   // ============================================================
   // Render
@@ -881,26 +1038,6 @@ export default function AIVideoPage() {
                 placeholder="e.g., A robot learns to dance in an abandoned factory..."
                 className="w-full h-32 bg-[#262626] rounded-2xl px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none"
               />
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-sm text-[#ADADAD] mb-2">Duration</label>
-              <div className="flex gap-3">
-                {DURATION_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setDuration(opt.value)}
-                    className={`flex-1 py-3 px-4 rounded-xl text-sm font-medium transition-all ${
-                      duration === opt.value
-                        ? "bg-[#B8B6FC] text-black"
-                        : "bg-[#262626] text-white hover:bg-[#333]"
-                    }`}
-                  >
-                    <div>{opt.label}</div>
-                    <div className="text-xs opacity-70">{opt.shots}</div>
-                  </button>
-                ))}
-              </div>
             </div>
 
             <div className="mb-6">
@@ -989,7 +1126,7 @@ export default function AIVideoPage() {
                 <div className="space-y-3 max-h-[350px] overflow-y-auto pr-2">
                   {story.beats.map((beat, index) => (
                     <div
-                      key={beat.beat_number}
+                      key={beat.scene_number}
                       onClick={() => setSelectedBeatIndex(selectedBeatIndex === index ? null : index)}
                       className={`bg-[#1A1E2F] rounded-xl p-4 cursor-pointer transition-all ${
                         selectedBeatIndex === index ? "ring-2 ring-[#B8B6FC]" : "hover:bg-[#242836]"
@@ -997,17 +1134,14 @@ export default function AIVideoPage() {
                     >
                       <div className="flex items-start gap-3">
                         <div className="w-8 h-8 bg-[#B8B6FC] rounded-full flex items-center justify-center text-black font-bold text-sm flex-shrink-0">
-                          {beat.beat_number}
+                          {beat.scene_number}
                         </div>
                         <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className={`text-xs px-2 py-1 rounded-full ${getStoryFunctionColor(beat.story_function)}`}>
-                              {beat.story_function.replace("_", " ")}
-                            </span>
-                            {beat.scene_change && (
+                          {beat.scene_change && (
+                            <div className="mb-2">
                               <span className="text-xs px-2 py-1 rounded-full bg-white/10 text-white/70">scene change</span>
-                            )}
-                          </div>
+                            </div>
+                          )}
                           <p className="text-white text-sm">{beat.description}</p>
                           {beat.dialogue && (
                             <p className="text-[#ADADAD] text-sm mt-2 italic">&ldquo;{beat.dialogue}&rdquo;</p>
@@ -1074,108 +1208,171 @@ export default function AIVideoPage() {
 
             {/* Step Indicator */}
             <div className="flex items-center gap-4 mb-8">
-              <div className={`flex items-center gap-2 ${visualStep === "characters" ? "text-[#B8B6FC]" : "text-white/50"}`}>
+              <div className={`flex items-center gap-2 ${visualStep === "characters" && moodboardStep === "protagonist" ? "text-[#B8B6FC]" : "text-white/50"}`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                  visualStep === "characters" ? "bg-[#B8B6FC] text-black" :
-                  (visualStep === "environment" || visualStep === "key_moments") ? "bg-green-500 text-white" : "bg-[#262626]"
+                  visualStep === "characters" && moodboardStep === "protagonist" ? "bg-[#B8B6FC] text-black" :
+                  (moodboardStep === "full" || visualStep === "key_moment") ? "bg-green-500 text-white" : "bg-[#262626]"
                 }`}>
-                  {(visualStep === "environment" || visualStep === "key_moments") ? "✓" : "1"}
+                  {(moodboardStep === "full" || visualStep === "key_moment") ? "✓" : "3a"}
                 </div>
-                <span className="text-sm font-medium">Characters</span>
+                <span className="text-sm font-medium">Protagonist</span>
               </div>
               <div className="flex-1 h-px bg-white/10" />
-              <div className={`flex items-center gap-2 ${visualStep === "environment" ? "text-[#B8B6FC]" : "text-white/50"}`}>
+              <div className={`flex items-center gap-2 ${visualStep === "characters" && moodboardStep === "full" ? "text-[#B8B6FC]" : "text-white/50"}`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                  visualStep === "environment" ? "bg-[#B8B6FC] text-black" :
-                  visualStep === "key_moments" ? "bg-green-500 text-white" : "bg-[#262626]"
+                  visualStep === "characters" && moodboardStep === "full" ? "bg-[#B8B6FC] text-black" :
+                  visualStep === "key_moment" ? "bg-green-500 text-white" : "bg-[#262626]"
                 }`}>
-                  {visualStep === "key_moments" ? "✓" : "2"}
+                  {visualStep === "key_moment" ? "✓" : "3b"}
                 </div>
-                <span className="text-sm font-medium">Environment</span>
+                <span className="text-sm font-medium">Moodboard</span>
               </div>
               <div className="flex-1 h-px bg-white/10" />
-              <div className={`flex items-center gap-2 ${visualStep === "key_moments" ? "text-[#B8B6FC]" : "text-white/50"}`}>
+              <div className={`flex items-center gap-2 ${visualStep === "key_moment" ? "text-[#B8B6FC]" : "text-white/50"}`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                  visualStep === "key_moments" ? "bg-[#B8B6FC] text-black" : "bg-[#262626]"
+                  visualStep === "key_moment" ? "bg-[#B8B6FC] text-black" : "bg-[#262626]"
                 }`}>
-                  3
+                  3c
                 </div>
-                <span className="text-sm font-medium">Key Moments</span>
+                <span className="text-sm font-medium">Key Moment</span>
               </div>
             </div>
 
-            {/* Step 1: Characters */}
-            {visualStep === "characters" && story && (
+            {/* Step 3a: Protagonist Look (Style Anchor) */}
+            {visualStep === "characters" && moodboardStep === "protagonist" && story && (
               <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-medium text-white">Character References</h3>
-                  <span className="text-sm text-[#ADADAD]">
-                    {approvedCount} of {story.characters.length} approved
-                  </span>
+                <div className="text-center mb-6">
+                  <h3 className="text-lg font-medium text-white mb-2">First, let&apos;s nail the look</h3>
+                  <p className="text-sm text-[#ADADAD]">Your main character sets the style for the entire film</p>
+                </div>
+
+                <div className="max-w-sm mx-auto">
+                  <div className="bg-[#1A1E2F] rounded-xl overflow-hidden">
+                    <div className="aspect-[9/16] relative bg-[#262626]">
+                      {isGeneratingProtagonist ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center">
+                          <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                          <span className="text-[#ADADAD] text-sm">Creating your main character...</span>
+                        </div>
+                      ) : protagonistImage ? (
+                        <img
+                          src={`data:${protagonistImage.image.mime_type};base64,${protagonistImage.image.image_base64}`}
+                          alt={protagonistImage.character_name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : null}
+                    </div>
+
+                    {protagonistImage && !isGeneratingProtagonist && (
+                      <div className="p-4">
+                        <h4 className="text-white font-medium text-center mb-4">{protagonistImage.character_name}</h4>
+                        <div className="flex gap-3">
+                          <button
+                            onClick={generateProtagonistImage}
+                            className="flex-1 py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333]"
+                          >
+                            ↻ Try Different Look
+                          </button>
+                          <button
+                            onClick={approveProtagonist}
+                            className="flex-1 py-2 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white text-sm rounded-lg hover:opacity-90"
+                          >
+                            Looks Good →
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Step 3b: Full Moodboard (with locked protagonist) */}
+            {visualStep === "characters" && moodboardStep === "full" && story && protagonistImage && (
+              <div>
+                <div className="text-center mb-6">
+                  <h3 className="text-lg font-medium text-white mb-2">Here&apos;s your world</h3>
+                  <p className="text-sm text-[#ADADAD]">All visuals match your main character&apos;s style</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {story.characters.map((char) => {
-                    const charState = characterImages[char.id];
-                    if (!charState) return null;
+                  {/* Protagonist - LOCKED */}
+                  <div className="bg-[#1A1E2F] rounded-xl overflow-hidden">
+                    <div className="aspect-[9/16] relative bg-[#262626]">
+                      <img
+                        src={`data:${protagonistImage.image.mime_type};base64,${protagonistImage.image.image_base64}`}
+                        alt={protagonistImage.character_name}
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute top-3 right-3 w-8 h-8 bg-[#B8B6FC] rounded-full flex items-center justify-center">
+                        <span className="text-black text-sm">🔒</span>
+                      </div>
+                    </div>
+                    <div className="p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-white font-medium">{protagonistImage.character_name}</h4>
+                        <span className="text-xs px-2 py-1 rounded-full bg-[#B8B6FC]/20 text-[#B8B6FC]">
+                          style anchor
+                        </span>
+                      </div>
+                      <p className="text-[#ADADAD] text-xs text-center">Locked - defines the style</p>
+                    </div>
+                  </div>
 
-                    return (
-                      <div key={char.id} className="bg-[#1A1E2F] rounded-xl overflow-hidden">
-                        <div className="aspect-[9/16] relative bg-[#262626]">
-                          {charState.isGenerating ? (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center">
-                              <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                              </svg>
-                              <span className="text-[#ADADAD] text-sm">Generating...</span>
-                            </div>
-                          ) : charState.image ? (
-                            <>
-                              <img
-                                src={`data:${charState.image.mime_type};base64,${charState.image.image_base64}`}
-                                alt={char.name}
-                                className="w-full h-full object-cover"
-                              />
-                              {charState.approved && (
-                                <div className="absolute top-3 right-3 w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                  </svg>
-                                </div>
-                              )}
-                            </>
-                          ) : null}
-                        </div>
+                  {/* Other Characters */}
+                  {story.characters
+                    .filter((char) => char.id !== protagonistImage.character_id)
+                    .map((char) => {
+                      const charState = characterImages[char.id];
+                      if (!charState) return null;
 
-                        <div className="p-4">
-                          <div className="flex items-center justify-between mb-2">
-                            <h4 className="text-white font-medium">{char.name}</h4>
-                            <span className={`text-xs px-2 py-1 rounded-full ${
-                              char.role === "protagonist" ? "bg-[#B8B6FC]/20 text-[#B8B6FC]" : "bg-white/10 text-white/70"
-                            }`}>
-                              {char.role}
-                            </span>
+                      return (
+                        <div key={char.id} className="bg-[#1A1E2F] rounded-xl overflow-hidden">
+                          <div className="aspect-[9/16] relative bg-[#262626]">
+                            {charState.isGenerating ? (
+                              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                </svg>
+                                <span className="text-[#ADADAD] text-sm">Generating...</span>
+                              </div>
+                            ) : charState.image ? (
+                              <>
+                                <img
+                                  src={`data:${charState.image.mime_type};base64,${charState.image.image_base64}`}
+                                  alt={char.name}
+                                  className="w-full h-full object-cover"
+                                />
+                                {charState.approved && (
+                                  <div className="absolute top-3 right-3 w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+                                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  </div>
+                                )}
+                              </>
+                            ) : null}
                           </div>
 
-                          {!charState.approved && !charState.isGenerating && (
-                            <>
-                              <textarea
-                                value={charState.feedback}
-                                onChange={(e) => setCharacterImages((prev) => ({
-                                  ...prev,
-                                  [char.id]: { ...prev[char.id], feedback: e.target.value },
-                                }))}
-                                placeholder="Feedback (optional)..."
-                                className="w-full h-16 bg-[#262626] rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none mb-2"
-                              />
+                          <div className="p-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <h4 className="text-white font-medium">{char.name}</h4>
+                              <span className="text-xs px-2 py-1 rounded-full bg-white/10 text-white/70">
+                                {char.role}
+                              </span>
+                            </div>
+
+                            {!charState.approved && !charState.isGenerating && charState.image && (
                               <div className="flex gap-2">
                                 <button
-                                  onClick={() => refineCharacterImage(char.id)}
-                                  disabled={!charState.feedback.trim()}
-                                  className="flex-1 py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333] disabled:opacity-50 disabled:cursor-not-allowed"
+                                  onClick={() => retryCharacterImage(char.id)}
+                                  className="flex-1 py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333]"
                                 >
-                                  Regenerate
+                                  ↻ Retry
                                 </button>
                                 <button
                                   onClick={() => approveCharacter(char.id)}
@@ -1184,179 +1381,189 @@ export default function AIVideoPage() {
                                   Approve
                                 </button>
                               </div>
-                            </>
-                          )}
+                            )}
 
-                          {charState.approved && (
-                            <p className="text-green-400 text-sm text-center">✓ Approved</p>
-                          )}
+                            {charState.approved && (
+                              <p className="text-green-400 text-sm text-center">✓ Approved</p>
+                            )}
+                          </div>
                         </div>
+                      );
+                    })}
+
+                  {/* Setting */}
+                  {settingImage && (
+                    <div className="bg-[#1A1E2F] rounded-xl overflow-hidden">
+                      <div className="aspect-[9/16] relative bg-[#262626]">
+                        {settingImage.isGenerating ? (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center">
+                            <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                            <span className="text-[#ADADAD] text-sm">Generating...</span>
+                          </div>
+                        ) : settingImage.image ? (
+                          <>
+                            <img
+                              src={`data:${settingImage.image.mime_type};base64,${settingImage.image.image_base64}`}
+                              alt="Setting"
+                              className="w-full h-full object-cover"
+                            />
+                            {settingImage.approved && (
+                              <div className="absolute top-3 right-3 w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+                                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                              </div>
+                            )}
+                          </>
+                        ) : null}
                       </div>
-                    );
-                  })}
-                </div>
 
-                <div className="mt-6 pt-6 border-t border-white/10 flex justify-end">
-                  <button
-                    onClick={continueToEnvironment}
-                    disabled={!allCharactersApproved()}
-                    className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Continue to Environment →
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Step 2: Environment */}
-            {visualStep === "environment" && environmentImage && (
-              <div>
-                <h3 className="text-lg font-medium text-white mb-4">Environment Reference</h3>
-
-                <div className="max-w-md mx-auto">
-                  <div className="bg-[#1A1E2F] rounded-xl overflow-hidden">
-                    <div className="aspect-[9/16] relative bg-[#262626]">
-                      {environmentImage.isGenerating ? (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center">
-                          <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                          </svg>
-                          <span className="text-[#ADADAD] text-sm">Generating...</span>
+                      <div className="p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-white font-medium">Setting</h4>
+                          <span className="text-xs px-2 py-1 rounded-full bg-white/10 text-white/70">
+                            environment
+                          </span>
                         </div>
-                      ) : environmentImage.image ? (
-                        <img
-                          src={`data:${environmentImage.image.mime_type};base64,${environmentImage.image.image_base64}`}
-                          alt="Environment"
-                          className="w-full h-full object-cover"
-                        />
-                      ) : null}
-                    </div>
 
-                    <div className="p-4">
-                      <h4 className="text-white font-medium mb-2">{story?.setting.location}</h4>
-
-                      {!environmentImage.isGenerating && (
-                        <>
-                          <textarea
-                            value={environmentImage.feedback}
-                            onChange={(e) => setEnvironmentImage((prev) => prev ? { ...prev, feedback: e.target.value } : null)}
-                            placeholder="Feedback (optional)..."
-                            className="w-full h-16 bg-[#262626] rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none mb-2"
-                          />
+                        {!settingImage.approved && !settingImage.isGenerating && settingImage.image && (
                           <div className="flex gap-2">
                             <button
-                              onClick={refineEnvironmentImage}
-                              disabled={!environmentImage.feedback.trim()}
-                              className="flex-1 py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333] disabled:opacity-50 disabled:cursor-not-allowed"
+                              onClick={retrySettingImage}
+                              className="flex-1 py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333]"
                             >
-                              Regenerate
+                              ↻ Retry
                             </button>
                             <button
-                              onClick={continueToKeyMoments}
+                              onClick={() => setSettingImage((prev) => prev ? { ...prev, approved: true } : null)}
                               className="flex-1 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-500"
                             >
-                              Approve & Continue
+                              Approve
                             </button>
                           </div>
-                        </>
-                      )}
+                        )}
+
+                        {settingImage.approved && (
+                          <p className="text-green-400 text-sm text-center">✓ Approved</p>
+                        )}
+                      </div>
                     </div>
+                  )}
+                </div>
+
+                {/* Change protagonist link */}
+                <div className="mt-6 pt-6 border-t border-white/10">
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={handleChangeProtagonistLook}
+                      className="text-sm text-[#ADADAD] hover:text-white"
+                    >
+                      ← Change Main Character Look
+                    </button>
+                    <button
+                      onClick={continueToKeyMoment}
+                      disabled={
+                        !settingImage?.approved ||
+                        story.characters
+                          .filter((c) => c.id !== protagonistImage.character_id)
+                          .some((c) => !characterImages[c.id]?.approved)
+                      }
+                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Continue to Key Moment →
+                    </button>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Step 3: Key Moments */}
-            {visualStep === "key_moments" && (
+
+            {/* Step 3: Key Moment (SPIKE - emotional peak) */}
+            {visualStep === "key_moment" && (
               <div>
-                <h3 className="text-lg font-medium text-white mb-4">Key Moments (Hook, Midpoint, Climax)</h3>
+                <h3 className="text-lg font-medium text-white mb-4">Key Moment (Emotional Peak)</h3>
                 <p className="text-sm text-[#ADADAD] mb-6">
-                  These reference images use your approved characters and environment for visual consistency.
+                  This reference image captures the emotional peak of your story using your approved characters and setting.
                 </p>
 
-                {isGeneratingKeyMoments && keyMoments.length === 0 && (
+                {keyMoment?.isGenerating && !keyMoment?.image && (
                   <div className="text-center py-16">
                     <svg className="animate-spin h-12 w-12 mx-auto mb-4 text-[#B8B6FC]" viewBox="0 0 24 24" fill="none">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
-                    <p className="text-[#ADADAD]">Generating 3 key moments with reference images...</p>
-                    <p className="text-[#ADADAD] text-sm mt-2">This may take a couple of minutes</p>
+                    <p className="text-[#ADADAD]">Generating key moment image...</p>
                   </div>
                 )}
 
-                {keyMoments.length > 0 && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {keyMoments.map((moment) => (
-                      <div key={moment.moment_type} className="bg-[#1A1E2F] rounded-xl overflow-hidden">
-                        <div className="aspect-[9/16] relative bg-[#262626]">
-                          {moment.isGenerating ? (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center">
-                              <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                              </svg>
-                              <span className="text-[#ADADAD] text-sm">Regenerating...</span>
-                            </div>
-                          ) : moment.image ? (
-                            <img
-                              src={`data:${moment.image.mime_type};base64,${moment.image.image_base64}`}
-                              alt={MOMENT_TYPE_LABELS[moment.moment_type]}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : null}
-                        </div>
-
-                        <div className="p-4">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className={`text-xs px-2 py-1 rounded-full ${MOMENT_TYPE_COLORS[moment.moment_type]}`}>
-                              {MOMENT_TYPE_LABELS[moment.moment_type]}
-                            </span>
-                            <span className="text-xs text-[#ADADAD]">Beat {moment.beat_number}</span>
+                {keyMoment && (keyMoment.image || keyMoment.isGenerating) && (
+                  <div className="max-w-md mx-auto">
+                    <div className="bg-[#1A1E2F] rounded-xl overflow-hidden">
+                      <div className="aspect-[9/16] relative bg-[#262626]">
+                        {keyMoment.isGenerating ? (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center">
+                            <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                            <span className="text-[#ADADAD] text-sm">Generating...</span>
                           </div>
-                          <p className="text-white text-sm mb-3 line-clamp-2">{moment.beat_description}</p>
+                        ) : keyMoment.image ? (
+                          <img
+                            src={`data:${keyMoment.image.mime_type};base64,${keyMoment.image.image_base64}`}
+                            alt="Key Moment"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : null}
+                      </div>
 
-                          {/* Prompt Preview */}
+                      <div className="p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xs px-2 py-1 rounded-full bg-red-500/20 text-red-400">
+                            Key Moment
+                          </span>
+                          <span className="text-xs text-[#ADADAD]">Scene {keyMoment.beat_number}</span>
+                        </div>
+                        <p className="text-white text-sm mb-3">{keyMoment.beat_description}</p>
+
+                        {/* Prompt Preview */}
+                        {keyMoment.promptUsed && (
                           <details className="mb-3">
                             <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">
                               View prompt
                             </summary>
                             <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
-                              {moment.promptUsed}
+                              {keyMoment.promptUsed}
                             </pre>
                           </details>
+                        )}
 
-                          {!moment.isGenerating && (
-                            <>
-                              <textarea
-                                value={moment.feedback}
-                                onChange={(e) => setKeyMoments((prev) =>
-                                  prev.map((m) =>
-                                    m.moment_type === moment.moment_type
-                                      ? { ...m, feedback: e.target.value }
-                                      : m
-                                  )
-                                )}
-                                placeholder="Feedback (optional)..."
-                                className="w-full h-14 bg-[#262626] rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none mb-2"
-                              />
-                              <button
-                                onClick={() => refineKeyMoment(moment.moment_type)}
-                                disabled={!moment.feedback.trim()}
-                                className="w-full py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333] disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                Regenerate
-                              </button>
-                            </>
-                          )}
-                        </div>
+                        {!keyMoment.isGenerating && (
+                          <>
+                            <textarea
+                              value={keyMoment.feedback}
+                              onChange={(e) => setKeyMoment((prev) => prev ? { ...prev, feedback: e.target.value } : null)}
+                              placeholder="Feedback (optional)..."
+                              className="w-full h-14 bg-[#262626] rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none mb-2"
+                            />
+                            <button
+                              onClick={refineKeyMoment}
+                              disabled={!keyMoment.feedback.trim()}
+                              className="w-full py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333] disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Regenerate
+                            </button>
+                          </>
+                        )}
                       </div>
-                    ))}
+                    </div>
                   </div>
                 )}
 
-                {keyMoments.length > 0 && film.status === "idle" && (
+                {keyMoment?.image && !keyMoment.isGenerating && film.status === "idle" && (
                   <div className="mt-6 pt-6 border-t border-white/10 flex justify-end">
                     <button
                       onClick={startFilmGeneration}
@@ -1483,10 +1690,10 @@ export default function AIVideoPage() {
                         <span>${totalCost.characters.toFixed(2)}</span>
                       </div>
                     )}
-                    {totalCost.environment > 0 && (
+                    {totalCost.setting > 0 && (
                       <div className="flex justify-between text-[#ADADAD]">
-                        <span>Environment image</span>
-                        <span>${totalCost.environment.toFixed(2)}</span>
+                        <span>Setting image</span>
+                        <span>${totalCost.setting.toFixed(2)}</span>
                       </div>
                     )}
                     {totalCost.keyMoments > 0 && (

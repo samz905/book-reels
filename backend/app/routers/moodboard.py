@@ -1,6 +1,6 @@
 """
 Moodboard generation endpoints for AI video workflow.
-Step-by-step visual direction: Characters -> Environment -> Key Moments
+Step-by-step visual direction: Characters -> Setting -> Key Moment (SPIKE)
 """
 import uuid
 from typing import Optional, Literal, List
@@ -23,24 +23,41 @@ STYLE_PREFIXES = {
     "2d_animated": "2D animated, illustrated style, hand-drawn aesthetic, bold outlines, stylized, expressive, graphic shapes, flat lighting with soft shadows",
 }
 
-KEY_MOMENT_TYPES = ["hook", "midpoint", "climax"]
-
 
 # ============================================================
 # Request/Response Models
 # ============================================================
 
 class MoodboardImage(BaseModel):
-    type: Literal["character", "environment", "key_moment"]
+    type: Literal["character", "setting", "key_moment"]
     image_base64: str
     mime_type: str
     prompt_used: str
+
+
+class ReferenceImage(BaseModel):
+    """A reference image for visual consistency."""
+    image_base64: str
+    mime_type: str
+
+
+# --- Protagonist (Style Anchor) ---
+class GenerateProtagonistRequest(BaseModel):
+    story: Story
+
+
+class GenerateProtagonistResponse(BaseModel):
+    character_id: str
+    image: MoodboardImage
+    prompt_used: str
+    cost_usd: float = 0.0
 
 
 # --- Character ---
 class GenerateCharacterRequest(BaseModel):
     story: Story
     character_id: str
+    protagonist_image: Optional[ReferenceImage] = None  # Style anchor for consistency
 
 
 class GenerateCharacterResponse(BaseModel):
@@ -54,6 +71,7 @@ class RefineCharacterRequest(BaseModel):
     story: Story
     character_id: str
     feedback: str
+    protagonist_image: Optional[ReferenceImage] = None  # Style anchor for consistency
 
 
 class RefineCharacterResponse(BaseModel):
@@ -63,66 +81,60 @@ class RefineCharacterResponse(BaseModel):
     cost_usd: float = 0.0
 
 
-# --- Environment ---
-class GenerateEnvironmentRequest(BaseModel):
+# --- Setting (formerly Environment) ---
+class GenerateSettingRequest(BaseModel):
     story: Story
+    protagonist_image: Optional[ReferenceImage] = None  # Style anchor for consistency
 
 
-class GenerateEnvironmentResponse(BaseModel):
+class GenerateSettingResponse(BaseModel):
     image: MoodboardImage
     prompt_used: str
     cost_usd: float = 0.0
 
 
-class RefineEnvironmentRequest(BaseModel):
+class RefineSettingRequest(BaseModel):
     story: Story
     feedback: str
+    protagonist_image: Optional[ReferenceImage] = None  # Style anchor for consistency
 
 
-class RefineEnvironmentResponse(BaseModel):
+class RefineSettingResponse(BaseModel):
     image: MoodboardImage
     prompt_used: str
     cost_usd: float = 0.0
 
 
-# --- Key Moments (3 images: hook, midpoint, climax) ---
-class ReferenceImage(BaseModel):
-    """A reference image for visual consistency."""
-    image_base64: str
-    mime_type: str
-
-
+# --- Key Moment (SPIKE - emotional peak, 1 image) ---
 class ApprovedVisuals(BaseModel):
-    """Approved character and environment images for visual consistency."""
+    """Approved character and setting images for visual consistency."""
     character_images: List[ReferenceImage]  # Approved character reference images (up to 5)
-    environment_image: ReferenceImage  # Approved environment reference image
+    setting_image: ReferenceImage  # Approved setting reference image
     # Text descriptions as fallback/context
     character_descriptions: List[str]  # Appearance descriptions from approved chars
-    environment_description: str  # Setting description from approved environment
+    setting_description: str  # Setting description from approved setting
 
 
 class KeyMomentImage(BaseModel):
-    moment_type: Literal["hook", "midpoint", "climax"]
     beat_number: int
     beat_description: str
     image: MoodboardImage
     prompt_used: str
 
 
-class GenerateKeyMomentsRequest(BaseModel):
+class GenerateKeyMomentRequest(BaseModel):
     story: Story
     approved_visuals: ApprovedVisuals
 
 
-class GenerateKeyMomentsResponse(BaseModel):
-    key_moments: List[KeyMomentImage]
+class GenerateKeyMomentResponse(BaseModel):
+    key_moment: KeyMomentImage
     cost_usd: float = 0.0
 
 
 class RefineKeyMomentRequest(BaseModel):
     story: Story
     approved_visuals: ApprovedVisuals
-    moment_type: Literal["hook", "midpoint", "climax"]
     feedback: str
 
 
@@ -143,27 +155,49 @@ def get_character_by_id(story: Story, character_id: str) -> Character:
     raise ValueError(f"Character with id '{character_id}' not found")
 
 
-def get_beat_by_function(story: Story, function: str) -> Beat:
-    """Get a beat by its story function."""
+def get_spike_beat(story: Story) -> Beat:
+    """Get the SPIKE beat (emotional peak - beat_type == 'spike', typically beats 4-5)."""
+    # First try to find a beat with beat_type "spike"
     for beat in story.beats:
-        if beat.story_function == function:
+        if beat.beat_type == "spike":
             return beat
-    # Fallbacks for each type
-    if function == "hook" and story.beats:
-        return story.beats[0]  # First beat
-    if function == "midpoint" and story.beats:
+    # Fallback: return beat 4 or 5 (the middle/peak of the story)
+    if len(story.beats) >= 5:
+        return story.beats[3]  # beat_number 4 (0-indexed)
+    elif len(story.beats) >= 4:
+        return story.beats[3]
+    else:
+        # Very short story, return middle beat
         mid_idx = len(story.beats) // 2
         return story.beats[mid_idx]
-    if function == "climax" and story.beats:
-        return story.beats[-2] if len(story.beats) > 1 else story.beats[-1]
-    raise ValueError(f"No beat found for function '{function}'")
 
 
 # ============================================================
 # Prompt Builders
 # ============================================================
 
-def build_character_prompt(story: Story, character: Character, feedback: Optional[str] = None) -> str:
+def build_protagonist_prompt(story: Story, protagonist: Character) -> str:
+    """Build the prompt for protagonist (style anchor - no references)."""
+    style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
+
+    return f"""{style_prefix}
+
+Portrait of {protagonist.appearance}.
+
+Expression: {story.setting.atmosphere}.
+
+Simple background suggesting {story.setting.location}.
+
+Character clearly visible, head to mid-torso.
+Show the tension in their posture and expression.
+
+This character defines the visual style for the entire film.
+Establish clear design language: eye style, proportions, line weight.
+
+Portrait orientation, 9:16 aspect ratio."""
+
+
+def build_character_prompt(story: Story, character: Character, feedback: Optional[str] = None, use_reference: bool = False) -> str:
     """Build the prompt for a specific character reference image."""
     style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
 
@@ -176,9 +210,15 @@ Expression: {story.setting.atmosphere}.
 Simple background that suggests {story.setting.location} without distracting.
 
 Character fills most of the frame, clearly visible from head to mid-torso.
-Show enough detail to establish their complete look.
+Show enough detail to establish their complete look."""
 
-Portrait orientation, 9:16 aspect ratio."""
+    if use_reference:
+        prompt += """
+
+CRITICAL: Match the visual style of the reference image exactly.
+Same eye style, same proportions, same line weight, same color treatment."""
+
+    prompt += "\n\nPortrait orientation, 9:16 aspect ratio."
 
     if feedback:
         prompt += f"\n\nAdditional direction: {feedback}"
@@ -186,8 +226,8 @@ Portrait orientation, 9:16 aspect ratio."""
     return prompt
 
 
-def build_environment_prompt(story: Story, feedback: Optional[str] = None) -> str:
-    """Build the prompt for environment reference image."""
+def build_setting_prompt(story: Story, feedback: Optional[str] = None, use_reference: bool = False) -> str:
+    """Build the prompt for setting reference image."""
     style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
 
     prompt = f"""{style_prefix}
@@ -198,11 +238,18 @@ def build_environment_prompt(story: Story, feedback: Optional[str] = None) -> st
 
 Atmosphere: {story.setting.atmosphere}.
 
+The space should feel charged, claustrophobic, or tense.
 Wide establishing shot showing the world.
 
-No characters in frame.
+No characters in frame."""
 
-Portrait orientation, 9:16 aspect ratio."""
+    if use_reference:
+        prompt += """
+
+CRITICAL: Match the visual style of the reference image exactly.
+Same rendering approach, same color treatment, same texture quality."""
+
+    prompt += "\n\nPortrait orientation, 9:16 aspect ratio."
 
     if feedback:
         prompt += f"\n\nAdditional direction: {feedback}"
@@ -213,34 +260,27 @@ Portrait orientation, 9:16 aspect ratio."""
 def build_key_moment_prompt(
     story: Story,
     beat: Beat,
-    moment_type: str,
     approved_visuals: ApprovedVisuals,
     feedback: Optional[str] = None
 ) -> str:
-    """Build the prompt for a key moment image with character/environment consistency."""
+    """Build the prompt for the SPIKE key moment image (emotional peak) with character/setting consistency."""
     style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
 
     # Build character appearance list
     chars_description = "\n".join([f"- {desc}" for desc in approved_visuals.character_descriptions])
 
-    # Moment-specific framing
-    if moment_type == "hook":
-        framing = "Opening shot that draws the viewer in. Establish the character and world."
-    elif moment_type == "midpoint":
-        framing = "Pivotal turning point. Show the shift in the character's journey."
-    else:  # climax
-        framing = "Peak dramatic moment. Maximum tension and emotion."
-
     prompt = f"""{style_prefix}
 
 SCENE: {beat.description}
 
-SETTING: {approved_visuals.environment_description}
+SETTING: {approved_visuals.setting_description}
 
 CHARACTERS IN SCENE:
 {chars_description}
 
-MOMENT TYPE: {moment_type.upper()} - {framing}
+MOMENT TYPE: EMOTIONAL PEAK - The highest emotional payoff.
+This is the moment viewers came for - reveal, betrayal, kiss, power move, or discovery.
+Maximum dramatic tension.
 
 Mood: {story.setting.atmosphere}
 
@@ -257,6 +297,60 @@ Portrait orientation, 9:16 aspect ratio."""
 
 
 # ============================================================
+# Protagonist Endpoint (Style Anchor)
+# ============================================================
+
+@router.post("/generate-protagonist", response_model=GenerateProtagonistResponse)
+async def generate_protagonist(request: GenerateProtagonistRequest):
+    """
+    Generate protagonist image WITHOUT reference images (style anchor).
+
+    The protagonist is generated first and defines the visual style for the entire film.
+    All other characters and setting will use this image as reference.
+
+    Input: { "story": {...} }
+    Output: { "character_id": "...", "image": {...}, "prompt_used": "..." }
+    """
+    try:
+        story = request.story
+
+        # Find protagonist (role == "protagonist"), fallback to first character
+        protagonist = next(
+            (c for c in story.characters if c.role == "protagonist"),
+            story.characters[0] if story.characters else None
+        )
+
+        if not protagonist:
+            raise ValueError("No characters found in story")
+
+        prompt = build_protagonist_prompt(story, protagonist)
+        print(f"Generating protagonist '{protagonist.name}' as style anchor...")
+        print(f"Prompt: {prompt[:200]}...")
+
+        # NO reference_images - this is the style anchor
+        result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+
+        return GenerateProtagonistResponse(
+            character_id=protagonist.id,
+            image=MoodboardImage(
+                type="character",
+                image_base64=result["image_base64"],
+                mime_type=result["mime_type"],
+                prompt_used=prompt
+            ),
+            prompt_used=prompt,
+            cost_usd=COST_IMAGE_GENERATION
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        print(f"Error generating protagonist: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
 # Character Endpoints
 # ============================================================
 
@@ -265,18 +359,33 @@ async def generate_character(request: GenerateCharacterRequest):
     """
     Generate a reference image for a specific character.
 
-    Input: { "story": {...}, "character_id": "abc123" }
+    If protagonist_image is provided, uses it as style reference for consistency.
+
+    Input: { "story": {...}, "character_id": "abc123", "protagonist_image": {...} }
     Output: { "character_id": "abc123", "image": {...}, "prompt_used": "..." }
     """
     try:
         story = request.story
         character = get_character_by_id(story, request.character_id)
 
-        prompt = build_character_prompt(story, character)
+        use_reference = request.protagonist_image is not None
+        prompt = build_character_prompt(story, character, use_reference=use_reference)
         print(f"Generating character reference for '{character.name}'...")
+        print(f"Using protagonist as style reference: {use_reference}")
         print(f"Prompt: {prompt[:200]}...")
 
-        result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+        if request.protagonist_image:
+            # Use protagonist as style reference
+            result = await generate_image_with_references(
+                prompt=prompt,
+                reference_images=[{
+                    "image_base64": request.protagonist_image.image_base64,
+                    "mime_type": request.protagonist_image.mime_type,
+                }],
+                aspect_ratio="9:16",
+            )
+        else:
+            result = await generate_image(prompt=prompt, aspect_ratio="9:16")
 
         return GenerateCharacterResponse(
             character_id=request.character_id,
@@ -303,18 +412,33 @@ async def refine_character(request: RefineCharacterRequest):
     """
     Refine a character image with feedback.
 
-    Input: { "story": {...}, "character_id": "abc123", "feedback": "make them older" }
+    If protagonist_image is provided, uses it as style reference for consistency.
+
+    Input: { "story": {...}, "character_id": "abc123", "feedback": "make them older", "protagonist_image": {...} }
     Output: { "character_id": "abc123", "image": {...}, "prompt_used": "..." }
     """
     try:
         story = request.story
         character = get_character_by_id(story, request.character_id)
 
-        prompt = build_character_prompt(story, character, request.feedback)
+        use_reference = request.protagonist_image is not None
+        prompt = build_character_prompt(story, character, request.feedback, use_reference=use_reference)
         print(f"Refining character '{character.name}' with feedback: {request.feedback}")
+        print(f"Using protagonist as style reference: {use_reference}")
         print(f"Prompt: {prompt[:200]}...")
 
-        result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+        if request.protagonist_image:
+            # Use protagonist as style reference
+            result = await generate_image_with_references(
+                prompt=prompt,
+                reference_images=[{
+                    "image_base64": request.protagonist_image.image_base64,
+                    "mime_type": request.protagonist_image.mime_type,
+                }],
+                aspect_ratio="9:16",
+            )
+        else:
+            result = await generate_image(prompt=prompt, aspect_ratio="9:16")
 
         return RefineCharacterResponse(
             character_id=request.character_id,
@@ -337,29 +461,44 @@ async def refine_character(request: RefineCharacterRequest):
 
 
 # ============================================================
-# Environment Endpoints
+# Setting Endpoints (formerly Environment)
 # ============================================================
 
-@router.post("/generate-environment", response_model=GenerateEnvironmentResponse)
-async def generate_environment(request: GenerateEnvironmentRequest):
+@router.post("/generate-setting", response_model=GenerateSettingResponse)
+async def generate_setting(request: GenerateSettingRequest):
     """
-    Generate an environment reference image.
+    Generate a setting reference image.
 
-    Input: { "story": {...} }
+    If protagonist_image is provided, uses it as style reference for consistency.
+
+    Input: { "story": {...}, "protagonist_image": {...} }
     Output: { "image": {...}, "prompt_used": "..." }
     """
     try:
         story = request.story
 
-        prompt = build_environment_prompt(story)
-        print(f"Generating environment reference...")
+        use_reference = request.protagonist_image is not None
+        prompt = build_setting_prompt(story, use_reference=use_reference)
+        print(f"Generating setting reference...")
+        print(f"Using protagonist as style reference: {use_reference}")
         print(f"Prompt: {prompt[:200]}...")
 
-        result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+        if request.protagonist_image:
+            # Use protagonist as style reference
+            result = await generate_image_with_references(
+                prompt=prompt,
+                reference_images=[{
+                    "image_base64": request.protagonist_image.image_base64,
+                    "mime_type": request.protagonist_image.mime_type,
+                }],
+                aspect_ratio="9:16",
+            )
+        else:
+            result = await generate_image(prompt=prompt, aspect_ratio="9:16")
 
-        return GenerateEnvironmentResponse(
+        return GenerateSettingResponse(
             image=MoodboardImage(
-                type="environment",
+                type="setting",
                 image_base64=result["image_base64"],
                 mime_type=result["mime_type"],
                 prompt_used=prompt
@@ -370,30 +509,45 @@ async def generate_environment(request: GenerateEnvironmentRequest):
 
     except Exception as e:
         import traceback
-        print(f"Error generating environment: {traceback.format_exc()}")
+        print(f"Error generating setting: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/refine-environment", response_model=RefineEnvironmentResponse)
-async def refine_environment(request: RefineEnvironmentRequest):
+@router.post("/refine-setting", response_model=RefineSettingResponse)
+async def refine_setting(request: RefineSettingRequest):
     """
-    Refine the environment image with feedback.
+    Refine the setting image with feedback.
 
-    Input: { "story": {...}, "feedback": "make it darker" }
+    If protagonist_image is provided, uses it as style reference for consistency.
+
+    Input: { "story": {...}, "feedback": "make it darker", "protagonist_image": {...} }
     Output: { "image": {...}, "prompt_used": "..." }
     """
     try:
         story = request.story
 
-        prompt = build_environment_prompt(story, request.feedback)
-        print(f"Refining environment with feedback: {request.feedback}")
+        use_reference = request.protagonist_image is not None
+        prompt = build_setting_prompt(story, request.feedback, use_reference=use_reference)
+        print(f"Refining setting with feedback: {request.feedback}")
+        print(f"Using protagonist as style reference: {use_reference}")
         print(f"Prompt: {prompt[:200]}...")
 
-        result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+        if request.protagonist_image:
+            # Use protagonist as style reference
+            result = await generate_image_with_references(
+                prompt=prompt,
+                reference_images=[{
+                    "image_base64": request.protagonist_image.image_base64,
+                    "mime_type": request.protagonist_image.mime_type,
+                }],
+                aspect_ratio="9:16",
+            )
+        else:
+            result = await generate_image(prompt=prompt, aspect_ratio="9:16")
 
-        return RefineEnvironmentResponse(
+        return RefineSettingResponse(
             image=MoodboardImage(
-                type="environment",
+                type="setting",
                 image_base64=result["image_base64"],
                 mime_type=result["mime_type"],
                 prompt_used=prompt
@@ -404,37 +558,36 @@ async def refine_environment(request: RefineEnvironmentRequest):
 
     except Exception as e:
         import traceback
-        print(f"Error refining environment: {traceback.format_exc()}")
+        print(f"Error refining setting: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================
-# Key Moments Endpoints (Hook, Midpoint, Climax)
+# Key Moment Endpoint (SPIKE - emotional peak, 1 image)
 # ============================================================
 
-@router.post("/generate-key-moments", response_model=GenerateKeyMomentsResponse)
-async def generate_key_moments(request: GenerateKeyMomentsRequest):
+@router.post("/generate-key-moment", response_model=GenerateKeyMomentResponse)
+async def generate_key_moment(request: GenerateKeyMomentRequest):
     """
-    Generate 3 key moment reference images (hook, midpoint, climax).
-    Uses approved character and environment IMAGES for visual consistency.
+    Generate 1 key moment reference image (SPIKE - emotional peak).
+    Uses approved character and setting IMAGES for visual consistency.
 
     Input: {
         "story": {...},
         "approved_visuals": {
             "character_images": [{"image_base64": "...", "mime_type": "image/png"}, ...],
-            "environment_image": {"image_base64": "...", "mime_type": "image/png"},
+            "setting_image": {"image_base64": "...", "mime_type": "image/png"},
             "character_descriptions": ["tall man with...", ...],
-            "environment_description": "Ancient dojo..."
+            "setting_description": "Ancient dojo..."
         }
     }
-    Output: { "key_moments": [{ "moment_type": "hook", "image": {...}, ... }, ...] }
+    Output: { "key_moment": { "beat_number": 4, "image": {...}, ... } }
     """
     try:
         story = request.story
         approved = request.approved_visuals
 
-        # Build reference images list (characters + environment)
-        # Up to 5 character images + 1 environment = 6 reference images max
+        # Build reference images list (characters + setting)
         reference_images: List[dict] = []
 
         # Add character images (up to 5 for human consistency)
@@ -444,64 +597,58 @@ async def generate_key_moments(request: GenerateKeyMomentsRequest):
                 "mime_type": char_img.mime_type,
             })
 
-        # Add environment image
+        # Add setting image
         reference_images.append({
-            "image_base64": approved.environment_image.image_base64,
-            "mime_type": approved.environment_image.mime_type,
+            "image_base64": approved.setting_image.image_base64,
+            "mime_type": approved.setting_image.mime_type,
         })
 
         print(f"Using {len(reference_images)} reference images for consistency")
 
-        key_moments: List[KeyMomentImage] = []
+        # Get the SPIKE beat (emotional peak)
+        beat = get_spike_beat(story)
+        prompt = build_key_moment_prompt(story, beat, approved)
 
-        for moment_type in KEY_MOMENT_TYPES:
-            beat = get_beat_by_function(story, moment_type)
-            prompt = build_key_moment_prompt(story, beat, moment_type, approved)
+        print(f"Generating SPIKE key moment with reference images...")
+        print(f"Prompt: {prompt[:300]}...")
 
-            print(f"Generating {moment_type} key moment with reference images...")
-            print(f"Prompt: {prompt[:300]}...")
+        # Use generate_image_with_references for consistency
+        result = await generate_image_with_references(
+            prompt=prompt,
+            reference_images=reference_images,
+            aspect_ratio="9:16",
+            resolution="2K"
+        )
 
-            # Use generate_image_with_references for consistency
-            result = await generate_image_with_references(
-                prompt=prompt,
-                reference_images=reference_images,
-                aspect_ratio="9:16",
-                resolution="2K"
-            )
-
-            key_moments.append(KeyMomentImage(
-                moment_type=moment_type,
-                beat_number=beat.beat_number,
-                beat_description=beat.description,
-                image=MoodboardImage(
-                    type="key_moment",
-                    image_base64=result["image_base64"],
-                    mime_type=result["mime_type"],
-                    prompt_used=prompt
-                ),
+        key_moment = KeyMomentImage(
+            beat_number=beat.number,
+            beat_description=beat.description,
+            image=MoodboardImage(
+                type="key_moment",
+                image_base64=result["image_base64"],
+                mime_type=result["mime_type"],
                 prompt_used=prompt
-            ))
+            ),
+            prompt_used=prompt
+        )
 
-        # 3 key moment images
-        total_cost = COST_IMAGE_GENERATION * 3
-        return GenerateKeyMomentsResponse(key_moments=key_moments, cost_usd=total_cost)
+        return GenerateKeyMomentResponse(key_moment=key_moment, cost_usd=COST_IMAGE_GENERATION)
 
     except Exception as e:
         import traceback
-        print(f"Error generating key moments: {traceback.format_exc()}")
+        print(f"Error generating key moment: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/refine-key-moment", response_model=RefineKeyMomentResponse)
 async def refine_key_moment(request: RefineKeyMomentRequest):
     """
-    Refine a single key moment image with feedback.
-    Uses approved character and environment IMAGES for visual consistency.
+    Refine the key moment image with feedback.
+    Uses approved character and setting IMAGES for visual consistency.
 
     Input: {
         "story": {...},
         "approved_visuals": {...},
-        "moment_type": "hook"|"midpoint"|"climax",
         "feedback": "show more action"
     }
     Output: { "key_moment": {...} }
@@ -509,7 +656,6 @@ async def refine_key_moment(request: RefineKeyMomentRequest):
     try:
         story = request.story
         approved = request.approved_visuals
-        moment_type = request.moment_type
 
         # Build reference images list
         reference_images: List[dict] = []
@@ -519,14 +665,14 @@ async def refine_key_moment(request: RefineKeyMomentRequest):
                 "mime_type": char_img.mime_type,
             })
         reference_images.append({
-            "image_base64": approved.environment_image.image_base64,
-            "mime_type": approved.environment_image.mime_type,
+            "image_base64": approved.setting_image.image_base64,
+            "mime_type": approved.setting_image.mime_type,
         })
 
-        beat = get_beat_by_function(story, moment_type)
-        prompt = build_key_moment_prompt(story, beat, moment_type, approved, request.feedback)
+        beat = get_spike_beat(story)
+        prompt = build_key_moment_prompt(story, beat, approved, request.feedback)
 
-        print(f"Refining {moment_type} key moment with feedback: {request.feedback}")
+        print(f"Refining key moment with feedback: {request.feedback}")
         print(f"Prompt: {prompt[:300]}...")
 
         # Use generate_image_with_references for consistency
@@ -539,8 +685,7 @@ async def refine_key_moment(request: RefineKeyMomentRequest):
 
         return RefineKeyMomentResponse(
             key_moment=KeyMomentImage(
-                moment_type=moment_type,
-                beat_number=beat.beat_number,
+                beat_number=beat.number,
                 beat_description=beat.description,
                 image=MoodboardImage(
                     type="key_moment",

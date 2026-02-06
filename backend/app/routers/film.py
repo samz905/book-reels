@@ -48,8 +48,7 @@ STYLE_PREFIXES = {
 # ============================================================
 
 class KeyMomentRef(BaseModel):
-    """Key moment image for video reference."""
-    moment_type: Literal["hook", "midpoint", "climax"]
+    """Key moment image for video reference (SPIKE - emotional peak)."""
     image_base64: str
     mime_type: str
 
@@ -57,7 +56,7 @@ class KeyMomentRef(BaseModel):
 class GenerateFilmRequest(BaseModel):
     story: Story
     approved_visuals: ApprovedVisuals
-    key_moment_images: List[KeyMomentRef]  # The 3 key moments for video references
+    key_moment_image: KeyMomentRef  # Single SPIKE key moment for video reference
 
 
 class GenerateFilmResponse(BaseModel):
@@ -108,7 +107,7 @@ class FilmJob:
     # Input data
     story: Story
     approved_visuals: ApprovedVisuals
-    key_moment_images: List[KeyMomentRef]  # 3 key moments for video references
+    key_moment_image: KeyMomentRef  # Single SPIKE key moment for video reference
 
     # Progress tracking
     total_shots: int
@@ -141,19 +140,35 @@ film_jobs: Dict[str, FilmJob] = {}
 # Helper Functions
 # ============================================================
 
-def build_reference_images(key_moments: List[KeyMomentRef]) -> List[dict]:
-    """Build reference images list from key moment images.
+def build_reference_images(
+    key_moment: KeyMomentRef,
+    approved_visuals: ApprovedVisuals
+) -> List[dict]:
+    """Build reference images list from approved visuals and key moment.
 
-    Uses the 3 key moments (hook, midpoint, climax) as references
-    since they show characters in action in the environment.
+    Uses the approved character images, setting image, and SPIKE key moment
+    to maintain visual consistency across all shots.
     """
     refs = []
 
-    for moment in key_moments:
+    # Add character reference images (up to 5)
+    for char_img in approved_visuals.character_images[:5]:
         refs.append({
-            "image_base64": moment.image_base64,
-            "mime_type": moment.mime_type,
+            "image_base64": char_img.image_base64,
+            "mime_type": char_img.mime_type,
         })
+
+    # Add setting reference image
+    refs.append({
+        "image_base64": approved_visuals.setting_image.image_base64,
+        "mime_type": approved_visuals.setting_image.mime_type,
+    })
+
+    # Add SPIKE key moment (shows characters in action in setting)
+    refs.append({
+        "image_base64": key_moment.image_base64,
+        "mime_type": key_moment.mime_type,
+    })
 
     return refs
 
@@ -168,13 +183,13 @@ def build_keyframe_prompt(beat: Beat, story: Story, approved: ApprovedVisuals) -
 
 SCENE: {beat.description}
 
-SETTING: {approved.environment_description}
+SETTING: {approved.setting_description}
 
 CHARACTERS IN SCENE:
 {chars_description}
 
 Single frame establishing shot for video.
-Show characters in the environment, ready for action.
+Show characters in the setting, ready for action.
 Portrait orientation, 9:16 aspect ratio."""
 
 
@@ -235,7 +250,7 @@ async def generate_shot_with_retry(
 
     for attempt in range(max_retries + 1):
         try:
-            print(f"  Attempt {attempt + 1}/{max_retries + 1} for shot {beat.beat_number}")
+            print(f"  Attempt {attempt + 1}/{max_retries + 1} for shot {beat.number}")
             result = await generate_video(
                 prompt=prompt,
                 first_frame=first_frame,
@@ -245,11 +260,11 @@ async def generate_shot_with_retry(
             return result
         except Exception as e:
             last_error = e
-            print(f"  Shot {beat.beat_number} attempt {attempt + 1} failed: {e}")
+            print(f"  Shot {beat.number} attempt {attempt + 1} failed: {e}")
             if attempt < max_retries:
                 await asyncio.sleep(2)  # Brief pause before retry
 
-    raise Exception(f"Shot {beat.beat_number} failed after {max_retries + 1} attempts: {last_error}")
+    raise Exception(f"Shot {beat.number} failed after {max_retries + 1} attempts: {last_error}")
 
 
 # ============================================================
@@ -268,15 +283,15 @@ async def run_film_generation(film_id: str):
         print(f"Total shots: {job.total_shots}")
         print(f"{'='*60}\n")
 
-        # Build reference images from key moments (hook, midpoint, climax)
-        reference_images = build_reference_images(job.key_moment_images)
-        print(f"Using {len(reference_images)} key moment images as references")
+        # Build reference images from approved visuals + SPIKE key moment
+        reference_images = build_reference_images(job.key_moment_image, job.approved_visuals)
+        print(f"Using {len(reference_images)} reference images (characters + setting + key moment)")
 
         previous_last_frame = None
 
         for i, beat in enumerate(job.story.beats):
             job.current_shot = i + 1
-            print(f"\n--- Shot {job.current_shot}/{job.total_shots}: Beat {beat.beat_number} ---")
+            print(f"\n--- Shot {job.current_shot}/{job.total_shots}: Beat {beat.number} ---")
             print(f"Description: {beat.description[:100]}...")
             print(f"Scene change: {beat.scene_change}")
 
@@ -322,7 +337,7 @@ async def run_film_generation(film_id: str):
             video_path = await download_video(
                 video_result["video_url"],
                 job.film_id,
-                beat.beat_number,
+                beat.number,
             )
             print(f"Video saved to: {video_path}")
 
@@ -334,7 +349,7 @@ async def run_film_generation(film_id: str):
 
             # Record completed shot
             job.completed_shots.append(CompletedShot(
-                number=beat.beat_number,
+                number=beat.number,
                 video_path=video_path,
             ))
             print(f"Shot {job.current_shot} complete!")
@@ -389,7 +404,7 @@ async def generate_film(request: GenerateFilmRequest, background_tasks: Backgrou
         created_at=datetime.now(),
         story=request.story,
         approved_visuals=request.approved_visuals,
-        key_moment_images=request.key_moment_images,
+        key_moment_image=request.key_moment_image,
         total_shots=len(request.story.beats),
     )
 
