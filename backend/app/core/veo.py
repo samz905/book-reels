@@ -3,14 +3,13 @@ Video generation utility using Veo via Google GenAI.
 """
 import time
 import base64
-from typing import Optional, List
+from typing import Optional, List, Dict
 from ..config import genai_client
 
 
 async def generate_video(
     prompt: str,
-    first_frame: Optional[str] = None,  # Base64 encoded image
-    reference_images: Optional[List[str]] = None,  # List of base64 encoded images
+    first_frame: Optional[Dict[str, str]] = None,  # {"image_base64": ..., "mime_type": ...}
     duration_seconds: int = 8,
     aspect_ratio: str = "9:16",
     model: str = "veo-3.1-generate-preview",
@@ -21,8 +20,7 @@ async def generate_video(
 
     Args:
         prompt: Text description of the video to generate
-        first_frame: Optional base64 encoded image to use as first frame (for frame chaining)
-        reference_images: Optional list of base64 encoded reference images (for consistency)
+        first_frame: Optional dict with image_base64 and mime_type for first frame (frame chaining)
         duration_seconds: Video duration in seconds (default: 8)
         aspect_ratio: Video aspect ratio (default: 9:16)
         model: The Veo model to use
@@ -33,6 +31,8 @@ async def generate_video(
           - video_url: URL to download the generated video
           - duration: Video duration in seconds
     """
+    from google.genai import types
+
     # Build request kwargs
     request_kwargs = {
         "model": model,
@@ -41,11 +41,11 @@ async def generate_video(
 
     # Add first frame if provided (for frame chaining)
     if first_frame:
-        from google.genai import types
-        # Decode base64 to bytes
-        image_bytes = base64.b64decode(first_frame)
+        # Pass image with both bytes and mime_type as required by API
+        image_bytes = base64.b64decode(first_frame["image_base64"])
         request_kwargs["image"] = types.Image(
             image_bytes=image_bytes,
+            mime_type=first_frame.get("mime_type", "image/png"),
         )
 
     # Start video generation
