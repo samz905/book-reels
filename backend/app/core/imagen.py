@@ -3,6 +3,7 @@ Image generation utility using Google GenAI.
 Uses Gemini's native image generation capabilities.
 Supports reference images for character/scene consistency.
 """
+import asyncio
 import base64
 import io
 from typing import Literal, List, Optional
@@ -11,10 +12,30 @@ from google.genai import types
 from ..config import genai_client
 
 
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 5  # seconds
+
+
+async def _retry_on_resource_exhausted(fn, *args, **kwargs):
+    """Retry a sync function with exponential backoff on 429 RESOURCE_EXHAUSTED errors."""
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                if attempt < MAX_RETRIES:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    print(f"  Rate limited (429). Retrying in {delay}s... (attempt {attempt + 1}/{MAX_RETRIES})")
+                    await asyncio.sleep(delay)
+                    continue
+            raise
+
+
 async def generate_image(
     prompt: str,
     aspect_ratio: Literal["9:16", "16:9", "1:1", "4:3", "3:4"] = "9:16",
-    model: str = "gemini-2.0-flash-exp-image-generation",
+    model: str = "gemini-3-pro-image-preview",
 ) -> dict:
     """
     Generate an image using Gemini's image generation capabilities.
@@ -36,8 +57,9 @@ async def generate_image(
     elif aspect_ratio == "16:9":
         full_prompt += " The image should be in landscape orientation (wider than tall)."
 
-    # Use Gemini with image generation capability
-    response = genai_client.models.generate_content(
+    # Use Gemini with image generation capability (with retry on 429)
+    response = await _retry_on_resource_exhausted(
+        genai_client.models.generate_content,
         model=model,
         contents=full_prompt,
         config=types.GenerateContentConfig(
@@ -109,8 +131,9 @@ async def generate_image_with_references(
 
     print(f"Generating with {len(contents) - 1} reference images...")
 
-    # Generate with reference images
-    response = genai_client.models.generate_content(
+    # Generate with reference images (with retry on 429)
+    response = await _retry_on_resource_exhausted(
+        genai_client.models.generate_content,
         model=model,
         contents=contents,
         config=types.GenerateContentConfig(

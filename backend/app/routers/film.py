@@ -1,6 +1,6 @@
 """
 Film generation endpoints for AI video workflow.
-Phase 4: Generate and assemble video shots using frame chaining.
+Phase 4: Generate and assemble video shots using per-scene reference generation.
 """
 import os
 import uuid
@@ -16,7 +16,6 @@ from pydantic import BaseModel
 from ..core import (
     generate_video,
     generate_image_with_references,
-    extract_frame,
     assemble_videos,
     COST_IMAGE_GENERATION,
     COST_VIDEO_VEO_FAST_PER_SECOND,
@@ -28,7 +27,7 @@ COST_PER_VIDEO = VIDEO_DURATION_SECONDS * COST_VIDEO_VEO_FAST_PER_SECOND  # $1.2
 
 # Testing mode: limit shots for faster iteration
 MAX_SHOTS_FOR_TESTING = 3  # Set to None for full film generation
-MAX_REFERENCE_IMAGES = 3  # API limit for reference images
+SCENE_REFS_PER_SHOT = 3    # Nano Banana generates 3 scene-specific refs per shot
 from ..config import TEMP_DIR, GOOGLE_GENAI_API_KEY
 from .story import Story, Beat
 from .moodboard import ApprovedVisuals, ReferenceImage
@@ -88,7 +87,7 @@ class CompletedShotInfo(BaseModel):
 
 
 class CostBreakdown(BaseModel):
-    keyframes_usd: float
+    scene_refs_usd: float
     videos_usd: float
     total_usd: float
 
@@ -141,12 +140,12 @@ class FilmJob:
     error_message: Optional[str] = None
 
     # Cost tracking (USD)
-    cost_keyframes: float = 0.0
+    cost_scene_refs: float = 0.0
     cost_videos: float = 0.0
 
     @property
     def cost_total(self) -> float:
-        return self.cost_keyframes + self.cost_videos
+        return self.cost_scene_refs + self.cost_videos
 
 
 # In-memory storage (MVP - would use Redis/DB in production)
@@ -157,84 +156,163 @@ film_jobs: Dict[str, FilmJob] = {}
 # Helper Functions
 # ============================================================
 
-def build_reference_images(
-    key_moment: KeyMomentRef,
-    approved_visuals: ApprovedVisuals
+async def generate_scene_references(
+    beat: Beat,
+    story: Story,
+    approved_visuals: ApprovedVisuals,
 ) -> List[dict]:
-    """Build reference images list from approved visuals and key moment.
+    """Generate 3 scene-specific reference images via Nano Banana (Gemini image gen).
 
-    Priority order (limited to MAX_REFERENCE_IMAGES=3):
-    1. Key moment (shows characters in action) - most important
-    2. Protagonist/first character
-    3. Setting
+    For each shot, selects the relevant character refs + location ref from the
+    approved moodboard, then generates 3 composite images showing those characters
+    in that location from different angles. These 3 scene refs are what Veo receives.
+
+    Returns:
+        List of 3 dicts, each with image_base64 and mime_type
     """
-    refs = []
-
-    # 1. Key moment is highest priority (shows characters + setting + action)
-    refs.append({
-        "image_base64": key_moment.image_base64,
-        "mime_type": key_moment.mime_type,
-    })
-
-    # 2. Add protagonist/first character if we have room
-    if len(refs) < MAX_REFERENCE_IMAGES and approved_visuals.character_images:
-        refs.append({
-            "image_base64": approved_visuals.character_images[0].image_base64,
-            "mime_type": approved_visuals.character_images[0].mime_type,
-        })
-
-    # 3. Add setting if we have room
-    if len(refs) < MAX_REFERENCE_IMAGES:
-        refs.append({
-            "image_base64": approved_visuals.setting_image.image_base64,
-            "mime_type": approved_visuals.setting_image.mime_type,
-        })
-
-    return refs
-
-
-def build_keyframe_prompt(beat: Beat, story: Story, approved: ApprovedVisuals) -> str:
-    """Build prompt for generating a keyframe image."""
     style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
 
-    chars_description = "\n".join([f"- {desc}" for desc in approved.character_descriptions])
+    # 1. Select character refs for this scene
+    char_refs = []
+    char_names = []
 
-    return f"""{style_prefix}
+    if beat.characters_in_scene and approved_visuals.character_image_map:
+        # Use per-character mapping (preferred)
+        for char_id in beat.characters_in_scene:
+            if char_id in approved_visuals.character_image_map:
+                ref = approved_visuals.character_image_map[char_id]
+                char_refs.append({
+                    "image_base64": ref.image_base64,
+                    "mime_type": ref.mime_type,
+                })
+            # Get character name
+            char = next((c for c in story.characters if c.id == char_id), None)
+            if char:
+                char_names.append(f"{char.name} ({char.age} {char.gender})")
+    else:
+        # Fallback: use all character images in order
+        for i, char in enumerate(story.characters):
+            if i < len(approved_visuals.character_images):
+                ref = approved_visuals.character_images[i]
+                char_refs.append({
+                    "image_base64": ref.image_base64,
+                    "mime_type": ref.mime_type,
+                })
+            char_names.append(f"{char.name} ({char.age} {char.gender})")
 
-SCENE: {beat.description}
+    # 2. Select location ref for this scene
+    location_ref = None
+    location_desc = ""
+    if beat.location_id and approved_visuals.location_images:
+        if beat.location_id in approved_visuals.location_images:
+            loc_img = approved_visuals.location_images[beat.location_id]
+            location_ref = {
+                "image_base64": loc_img.image_base64,
+                "mime_type": loc_img.mime_type,
+            }
+        location_desc = approved_visuals.location_descriptions.get(beat.location_id, "")
 
-SETTING: {approved.setting_description}
+    if not location_ref and approved_visuals.setting_image:
+        location_ref = {
+            "image_base64": approved_visuals.setting_image.image_base64,
+            "mime_type": approved_visuals.setting_image.mime_type,
+        }
+        location_desc = approved_visuals.setting_description or ""
 
-CHARACTERS IN SCENE:
-{chars_description}
+    # 3. Combine all refs (Gemini can handle 5+ reference images)
+    all_refs = char_refs[:]
+    if location_ref:
+        all_refs.append(location_ref)
 
-Single frame establishing shot for video.
-Show characters in the setting, ready for action.
+    print(f"  Scene refs: {len(char_refs)} character(s) + {'1 location' if location_ref else 'no location'} = {len(all_refs)} total input refs")
+
+    # 4. Generate 3 scene refs in parallel with different angle prompts
+    angle_variants = [
+        "medium shot, eye level, showing full scene composition",
+        "over-the-shoulder shot, slightly low angle, intimate perspective",
+        "wide establishing shot, slight high angle, environmental context",
+    ]
+
+    async def gen_one_ref(angle_desc: str) -> dict:
+        action_line = f"\nAction: {beat.action}" if beat.action else ""
+        prompt = f"""{style_prefix}
+
+Generate a reference image for this scene.
+Scene: {beat.description}{action_line}
+Characters: {', '.join(char_names)}
+Location: {location_desc}
+
+Camera: {angle_desc}
+
+Show these exact characters in this exact location.
+Maintain character appearances precisely from references.
+Maintain location appearance precisely from references.
+
 Portrait orientation, 9:16 aspect ratio."""
+
+        result = await generate_image_with_references(
+            prompt=prompt,
+            reference_images=all_refs,
+            aspect_ratio="9:16",
+            resolution="2K",
+        )
+        return {
+            "image_base64": result["image_base64"],
+            "mime_type": result.get("mime_type", "image/png"),
+        }
+
+    # Run all 3 in parallel
+    results = await asyncio.gather(*[gen_one_ref(angle) for angle in angle_variants])
+    return list(results)
 
 
 def build_shot_prompt(beat: Beat, story: Story) -> str:
     """Build the Veo prompt for a video shot."""
     style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
 
-    # Character context
-    chars = "\n".join([f"- {c.name}: {c.appearance}" for c in story.characters])
+    # Get characters in this scene
+    if beat.characters_in_scene:
+        scene_chars = [c for c in story.characters if c.id in beat.characters_in_scene]
+    else:
+        scene_chars = story.characters
+
+    chars = "\n".join([f"- {c.name} ({c.age} {c.gender}): {c.appearance}" for c in scene_chars])
+
+    # Get location for this beat
+    location_desc = ""
+    atmosphere = ""
+    if beat.location_id and story.locations:
+        loc = next((l for l in story.locations if l.id == beat.location_id), None)
+        if loc:
+            location_desc = loc.description
+            atmosphere = loc.atmosphere
+    if not location_desc and story.setting:
+        location_desc = f"{story.setting.location}, {story.setting.time}"
+        atmosphere = story.setting.atmosphere
+
+    # Use scene_heading if available
+    heading = beat.scene_heading or ""
 
     prompt = f"""{style_prefix}
 
+{heading}
+
+SETTING: {location_desc}
+ATMOSPHERE: {atmosphere}
+
 SCENE: {beat.description}
 
-SETTING: {story.setting.location}, {story.setting.time}
-ATMOSPHERE: {story.setting.atmosphere}
-
 CHARACTERS:
-{chars}
+{chars}"""
 
-8-second video shot. Smooth, cinematic camera movement.
-Portrait orientation 9:16."""
+    if beat.action:
+        prompt += f"\n\nACTION: {beat.action}"
 
     if beat.dialogue:
-        prompt += f'\n\nDIALOGUE: "{beat.dialogue}"'
+        dialogue_lines = "\n".join([f'{d.character}: "{d.line}"' for d in beat.dialogue])
+        prompt += f"\n\nDIALOGUE:\n{dialogue_lines}"
+
+    prompt += "\n\n8-second video shot. Smooth, cinematic camera movement.\nPortrait orientation 9:16."
 
     return prompt
 
@@ -262,10 +340,10 @@ async def download_video(video_url: str, film_id: str, shot_number: int) -> str:
 async def generate_shot_with_retry(
     beat: Beat,
     prompt: str,
-    first_frame: dict,  # {"image_base64": ..., "mime_type": ...}
-    max_retries: int = 2
+    reference_images: List[dict],  # 3 scene-specific refs (required)
+    max_retries: int = 2,
 ) -> dict:
-    """Generate a video shot with retry logic."""
+    """Generate a video shot with retry logic. Uses reference_images only (no first_frame)."""
     last_error = None
 
     for attempt in range(max_retries + 1):
@@ -273,7 +351,7 @@ async def generate_shot_with_retry(
             print(f"  Attempt {attempt + 1}/{max_retries + 1} for shot {beat.number}")
             result = await generate_video(
                 prompt=prompt,
-                first_frame=first_frame,
+                reference_images=reference_images,
                 duration_seconds=8,
                 aspect_ratio="9:16",
             )
@@ -291,23 +369,67 @@ async def generate_shot_with_retry(
 # Background Generation Task
 # ============================================================
 
+async def process_single_shot(i: int, beat: Beat, job: "FilmJob") -> None:
+    """Process a single shot: generate scene refs → generate video → download.
+
+    Updates job.completed_shots and cost fields in-place.
+    Safe in asyncio (single-threaded, no lock needed).
+    """
+    print(f"\n--- Shot {i + 1}/{job.total_shots}: Beat {beat.number} ---")
+    print(f"Description: {beat.description[:100]}...")
+    print(f"Characters: {beat.characters_in_scene}")
+    print(f"Location: {beat.location_id}")
+
+    # STEP 1: Generate 3 scene-specific reference images via Nano Banana
+    print(f"[Shot {beat.number}] Generating 3 scene-specific reference images...")
+    scene_refs = await generate_scene_references(
+        beat=beat,
+        story=job.story,
+        approved_visuals=job.approved_visuals,
+    )
+    job.cost_scene_refs += COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT
+    print(f"[Shot {beat.number}] Scene refs generated (cost: ${COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT:.2f})")
+
+    # STEP 2: Generate video shot with ONLY reference_images (no first_frame)
+    shot_prompt = build_shot_prompt(beat, job.story)
+    print(f"[Shot {beat.number}] Generating video with {len(scene_refs)} scene refs...")
+    video_result = await generate_shot_with_retry(
+        beat=beat,
+        prompt=shot_prompt,
+        reference_images=scene_refs,
+    )
+    job.cost_videos += COST_PER_VIDEO
+    print(f"[Shot {beat.number}] Video generated (cost: ${COST_PER_VIDEO:.2f}, total so far: ${job.cost_total:.2f})")
+
+    # STEP 3: Download video
+    print(f"[Shot {beat.number}] Downloading video...")
+    video_path = await download_video(
+        video_result["video_url"],
+        job.film_id,
+        beat.number,
+    )
+    print(f"[Shot {beat.number}] Video saved to: {video_path}")
+
+    # Record completed shot
+    job.completed_shots.append(CompletedShot(
+        number=beat.number,
+        video_path=video_path,
+    ))
+    job.current_shot = len(job.completed_shots)
+    print(f"[Shot {beat.number}] Complete! ({job.current_shot}/{job.total_shots} done)")
+
+
 async def run_film_generation(film_id: str):
-    """Background task to generate all shots sequentially."""
+    """Background task to generate all shots in parallel using per-scene reference generation."""
     job = film_jobs.get(film_id)
     if not job:
         return
 
     try:
         print(f"\n{'='*60}")
-        print(f"Starting film generation: {job.film_id}")
+        print(f"Starting film generation (parallel): {job.film_id}")
         print(f"Total shots: {job.total_shots}")
         print(f"{'='*60}\n")
-
-        # Build reference images from approved visuals + SPIKE key moment
-        reference_images = build_reference_images(job.key_moment_image, job.approved_visuals)
-        print(f"Using {len(reference_images)} reference images (key moment + protagonist + setting)")
-
-        previous_last_frame = None  # dict with image_base64 and mime_type
 
         # Limit beats for testing if configured
         beats_to_process = job.story.beats
@@ -316,76 +438,29 @@ async def run_film_generation(film_id: str):
             print(f"TESTING MODE: Limiting to {MAX_SHOTS_FOR_TESTING} shots")
             job.total_shots = len(beats_to_process)
 
-        for i, beat in enumerate(beats_to_process):
-            job.current_shot = i + 1
-            print(f"\n--- Shot {job.current_shot}/{job.total_shots}: Beat {beat.number} ---")
-            print(f"Description: {beat.description[:100]}...")
-            print(f"Scene change: {beat.scene_change}")
+        # Launch all shots in parallel
+        job.phase = "filming"
+        tasks = [
+            process_single_shot(i, beat, job)
+            for i, beat in enumerate(beats_to_process)
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Determine first frame
-            if beat.scene_change or previous_last_frame is None:
-                # Generate fresh keyframe using reference images
-                job.phase = "keyframe"
-                print("Generating keyframe with reference images...")
+        # Check for failures
+        failures = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                failures.append((beats_to_process[i].number, str(result)))
 
-                keyframe_prompt = build_keyframe_prompt(beat, job.story, job.approved_visuals)
-                keyframe_result = await generate_image_with_references(
-                    prompt=keyframe_prompt,
-                    reference_images=reference_images,
-                    aspect_ratio="9:16",
-                    resolution="2K",
-                )
-                first_frame = {
-                    "image_base64": keyframe_result["image_base64"],
-                    "mime_type": keyframe_result.get("mime_type", "image/png"),
-                }
-                job.cost_keyframes += COST_IMAGE_GENERATION
-                print(f"Keyframe generated successfully (cost: ${COST_IMAGE_GENERATION:.2f})")
-            else:
-                # Use previous shot's last frame (already a dict with mime_type)
-                first_frame = previous_last_frame
-                print("Using last frame from previous shot")
+        if failures:
+            failed_shots = ", ".join(f"Shot {num}: {err}" for num, err in failures)
+            print(f"WARNING: {len(failures)} shot(s) failed: {failed_shots}")
+            if len(failures) == len(beats_to_process):
+                raise Exception(f"All shots failed. {failed_shots}")
+            print(f"Continuing with {len(job.completed_shots)} successful shots...")
 
-            # Generate video shot
-            job.phase = "filming"
-            shot_prompt = build_shot_prompt(beat, job.story)
-            print(f"Generating video shot...")
-            print(f"Prompt: {shot_prompt[:200]}...")
-
-            video_result = await generate_shot_with_retry(
-                beat=beat,
-                prompt=shot_prompt,
-                first_frame=first_frame,
-            )
-
-            # Track video cost
-            job.cost_videos += COST_PER_VIDEO
-            print(f"Video generated (cost: ${COST_PER_VIDEO:.2f}, total so far: ${job.cost_total:.2f})")
-
-            # Download video
-            print(f"Downloading video from {video_result['video_url'][:50]}...")
-            video_path = await download_video(
-                video_result["video_url"],
-                job.film_id,
-                beat.number,
-            )
-            print(f"Video saved to: {video_path}")
-
-            # Extract last frame for next shot
-            print("Extracting last frame for chaining...")
-            frame_result = await extract_frame(video_path, position="last")
-            previous_last_frame = {
-                "image_base64": frame_result["image_base64"],
-                "mime_type": frame_result.get("mime_type", "image/png"),
-            }
-            print("Last frame extracted")
-
-            # Record completed shot
-            job.completed_shots.append(CompletedShot(
-                number=beat.number,
-                video_path=video_path,
-            ))
-            print(f"Shot {job.current_shot} complete!")
+        # Sort completed shots by beat number for proper assembly order
+        job.completed_shots.sort(key=lambda s: s.number)
 
         # Assembly phase
         print(f"\n{'='*60}")
@@ -480,7 +555,7 @@ async def get_film_status(film_id: str):
         final_video_url=f"/film/{film_id}/final" if job.final_video_path else None,
         error_message=job.error_message,
         cost=CostBreakdown(
-            keyframes_usd=round(job.cost_keyframes, 4),
+            scene_refs_usd=round(job.cost_scene_refs, 4),
             videos_usd=round(job.cost_videos, 4),
             total_usd=round(job.cost_total, 4),
         ),
@@ -578,7 +653,7 @@ async def regenerate_shot(
 
 
 async def run_shot_regeneration(job: FilmJob, beat: Beat, feedback: Optional[str]):
-    """Background task to regenerate a single shot."""
+    """Background task to regenerate a single shot using per-scene reference generation."""
     try:
         print(f"\n{'='*60}")
         print(f"Regenerating shot {beat.number} for film {job.film_id}")
@@ -586,37 +661,25 @@ async def run_shot_regeneration(job: FilmJob, beat: Beat, feedback: Optional[str
             print(f"Feedback: {feedback}")
         print(f"{'='*60}\n")
 
-        # Build reference images
-        reference_images = build_reference_images(job.key_moment_image, job.approved_visuals)
-
-        # Generate keyframe with reference images
-        print("Generating keyframe with reference images...")
-        keyframe_prompt = build_keyframe_prompt(beat, job.story, job.approved_visuals)
-        if feedback:
-            keyframe_prompt += f"\n\nADJUSTMENT: {feedback}"
-
-        keyframe_result = await generate_image_with_references(
-            prompt=keyframe_prompt,
-            reference_images=reference_images,
-            aspect_ratio="9:16",
-            resolution="2K",
+        # Generate 3 scene-specific reference images
+        print("Generating 3 scene-specific reference images...")
+        scene_refs = await generate_scene_references(
+            beat=beat,
+            story=job.story,
+            approved_visuals=job.approved_visuals,
         )
-        first_frame = {
-            "image_base64": keyframe_result["image_base64"],
-            "mime_type": keyframe_result.get("mime_type", "image/png"),
-        }
-        job.cost_keyframes += COST_IMAGE_GENERATION
+        job.cost_scene_refs += COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT
 
-        # Generate video shot
+        # Generate video shot with scene refs only (no first_frame)
         shot_prompt = build_shot_prompt(beat, job.story)
         if feedback:
             shot_prompt += f"\n\nADJUSTMENT: {feedback}"
 
-        print(f"Generating video shot...")
+        print(f"Generating video shot with {len(scene_refs)} scene refs...")
         video_result = await generate_shot_with_retry(
             beat=beat,
             prompt=shot_prompt,
-            first_frame=first_frame,
+            reference_images=scene_refs,
         )
         job.cost_videos += COST_PER_VIDEO
 

@@ -87,14 +87,30 @@ class Ingredients(BaseModel):
 class Character(BaseModel):
     id: str
     name: str
+    gender: str  # e.g. "male", "female"
+    age: str  # e.g. "mid-30s", "late 20s", "early 50s"
     appearance: str
     role: Literal["protagonist", "antagonist", "supporting"]
 
 
 class Setting(BaseModel):
+    """DEPRECATED - kept for backward compatibility. Use Location instead."""
     location: str
     time: str
     atmosphere: str
+
+
+class Location(BaseModel):
+    """A specific location/environment in the story."""
+    id: str
+    description: str   # e.g. "Modern kitchen, granite countertops, harsh overhead lighting"
+    atmosphere: str     # e.g. "Tense, claustrophobic"
+
+
+class DialogueLine(BaseModel):
+    """A single line of dialogue."""
+    character: str
+    line: str
 
 
 class Beat(BaseModel):
@@ -105,9 +121,14 @@ class Beat(BaseModel):
     # Internal fields - optional when receiving from client
     beat_type: Optional[str] = None  # hook, rise, spike, drop, cliff - INTERNAL ONLY
     time_range: Optional[str] = None  # "0:00-0:08" etc - INTERNAL ONLY
+    scene_heading: Optional[str] = None  # "INT. KITCHEN - NIGHT"
     description: str
+    action: Optional[str] = None  # Physical movements, gestures, expressions
     scene_change: bool
-    dialogue: Optional[str] = None
+    dialogue: Optional[List[DialogueLine]] = None  # Structured dialogue lines
+    # Per-scene tracking for reference image selection
+    characters_in_scene: Optional[List[str]] = None  # character IDs present in this scene
+    location_id: Optional[str] = None                # which location this scene takes place in
 
     @property
     def number(self) -> int:
@@ -120,7 +141,8 @@ class Story(BaseModel):
     title: str
     ingredients: Optional[Ingredients] = None  # Internal only - not sent by client
     characters: List[Character]
-    setting: Setting
+    setting: Optional[Setting] = None  # DEPRECATED - backward compat
+    locations: List[Location] = []     # NEW - multiple locations
     beats: List[Beat]
     style: str
 
@@ -157,9 +179,20 @@ class RefineBeatResponse(BaseModel):
 class BeatClient(BaseModel):
     """Client-facing beat representation (sanitized - no beat_type or time_range)."""
     scene_number: int
+    scene_heading: Optional[str] = None
     description: str
+    action: Optional[str] = None
     scene_change: bool
-    dialogue: Optional[str] = None
+    dialogue: Optional[List[DialogueLine]] = None
+    characters_in_scene: Optional[List[str]] = None
+    location_id: Optional[str] = None
+
+
+class LocationClient(BaseModel):
+    """Client-facing location representation."""
+    id: str
+    description: str
+    atmosphere: str
 
 
 class StoryClient(BaseModel):
@@ -167,7 +200,8 @@ class StoryClient(BaseModel):
     id: str
     title: str
     characters: List[Character]
-    setting: Setting
+    setting: Optional[Setting] = None  # DEPRECATED - backward compat
+    locations: List[LocationClient] = []
     beats: List[BeatClient]
     style: str
 
@@ -184,22 +218,38 @@ class GenerateStoryResponseClient(BaseModel):
 
 def sanitize_story_for_client(story: Story) -> dict:
     """Strip internal fields (beat_type, time_range, ingredients) before sending to client."""
-    return {
+    result = {
         "id": story.id,
         "title": story.title,
         "characters": [c.model_dump() for c in story.characters],
-        "setting": story.setting.model_dump(),
+        "locations": [loc.model_dump() for loc in story.locations],
         "beats": [
             {
                 "scene_number": beat.beat_number,
+                "scene_heading": beat.scene_heading,
                 "description": beat.description,
+                "action": beat.action,
                 "scene_change": beat.scene_change,
-                "dialogue": beat.dialogue
+                "dialogue": [d.model_dump() for d in beat.dialogue] if beat.dialogue else None,
+                "characters_in_scene": beat.characters_in_scene,
+                "location_id": beat.location_id,
             }
             for beat in story.beats
         ],
-        "style": story.style
+        "style": story.style,
     }
+
+    # Backward compat: derive setting from first location
+    if story.setting:
+        result["setting"] = story.setting.model_dump()
+    elif story.locations:
+        result["setting"] = {
+            "location": story.locations[0].description,
+            "time": "",
+            "atmosphere": story.locations[0].atmosphere,
+        }
+
+    return result
 
 
 def build_story_prompt(idea: str, style: str, feedback: Optional[str] = None) -> str:
@@ -279,26 +329,43 @@ OUTPUT FORMAT (JSON):
     {{
       "id": "unique_id",
       "name": "Name",
-      "appearance": "4-5 specific visual details we will SEE",
+      "gender": "male or female",
+      "age": "rough age like mid-30s, late 20s, early 50s",
+      "appearance": "4-5 specific visual details we will SEE (hair, clothing, distinguishing features)",
       "role": "protagonist|antagonist|supporting"
     }}
   ],
 
-  "setting": {{
-    "location": "Specific location",
-    "time": "Time of day / lighting",
-    "atmosphere": "Tense, charged, intimate, etc."
-  }},
+  "locations": [
+    {{
+      "id": "loc_1",
+      "description": "Specific location with visual details (lighting, furniture, textures)",
+      "atmosphere": "Tense, charged, intimate, etc."
+    }}
+  ],
 
   "beats": [
     {{
       "beat_number": 1,
-      "description": "1-2 sentences. Action/dialogue already in progress. What we SEE and HEAR.",
+      "scene_heading": "INT. KITCHEN - NIGHT",
+      "description": "2-3 sentences. Visual, atmospheric. What the CAMERA sees when the scene opens.",
+      "action": "What the characters are DOING. Physical movements, gestures, expressions.",
       "scene_change": false,
-      "dialogue": "Exact dialogue if any, or null"
+      "dialogue": [
+        {{ "character": "Elena", "line": "Who is she, Marcus?" }},
+        {{ "character": "Marcus", "line": "..." }}
+      ],
+      "characters_in_scene": ["char_id_1", "char_id_2"],
+      "location_id": "loc_1"
     }}
   ]
 }}
+
+SCENE WRITING RULES:
+- scene_heading: Standard screenplay format (INT/EXT. LOCATION - TIME)
+- description: 2-3 sentences. Visual, atmospheric. What the CAMERA sees.
+- action: Physical movements, expressions, gestures. Show don't tell.
+- dialogue: Array of character lines. Keep dialogue punchy. Can be 1 line or several — whatever fits the scene. Some scenes may have no dialogue at all (use null).
 
 Remember:
 - 8 scenes total
@@ -335,11 +402,40 @@ def parse_story_response(response_text: str, style: str) -> Story:
     data["id"] = str(uuid.uuid4())
     data["style"] = style
 
+    # Backward compat: if response has "setting" but no "locations", auto-convert
+    if "setting" in data and "locations" not in data:
+        setting = data["setting"]
+        data["locations"] = [{
+            "id": "loc_main",
+            "description": f"{setting.get('location', '')}, {setting.get('time', '')}",
+            "atmosphere": setting.get("atmosphere", ""),
+        }]
+
+    # Ensure all character IDs are available for defaulting
+    all_char_ids = [c.get("id", "") for c in data.get("characters", [])]
+
     # Add internal beat_type and time_range to each beat
     for beat in data.get("beats", []):
         beat_num = beat.get("beat_number", 1)
         beat["beat_type"] = BEAT_NUMBER_TO_TYPE.get(beat_num, "rise")
         beat["time_range"] = BEAT_TIME_RANGES.get(beat_num, "0:00-0:08")
+
+        # Default characters_in_scene to all characters if not specified
+        if not beat.get("characters_in_scene"):
+            beat["characters_in_scene"] = all_char_ids
+
+        # Default location_id to first location if not specified
+        if not beat.get("location_id") and data.get("locations"):
+            beat["location_id"] = data["locations"][0]["id"]
+
+        # Normalize dialogue: handle string (legacy) or list (new format)
+        raw_dialogue = beat.get("dialogue")
+        if isinstance(raw_dialogue, str):
+            beat["dialogue"] = [{"character": "Unknown", "line": raw_dialogue}]
+        elif isinstance(raw_dialogue, list):
+            pass  # Already in correct format
+        else:
+            beat["dialogue"] = None
 
     return Story(**data)
 
@@ -436,16 +532,47 @@ async def refine_beat(request: RefineBeatRequest):
             raise HTTPException(status_code=400, detail=f"Beat {request.beat_number} not found in story")
 
         # Build context from all beats (without exposing beat_type)
-        beats_context = "\n".join([
-            f"Scene {b.beat_number}: {b.description}"
-            for b in request.story.beats
-        ])
+        def _beat_summary(b: Beat) -> str:
+            parts = [f"Scene {b.beat_number}: {b.description}"]
+            if b.action:
+                parts.append(f"  Action: {b.action}")
+            if b.dialogue:
+                for d in b.dialogue:
+                    parts.append(f"  {d.character}: \"{d.line}\"")
+            return "\n".join(parts)
+
+        beats_context = "\n\n".join([_beat_summary(b) for b in request.story.beats])
 
         # Build characters context
         characters_context = "\n".join([
-            f"- {c.name}: {c.appearance}"
+            f"- {c.name} ({c.age} {c.gender}): {c.appearance}"
             for c in request.story.characters
         ])
+
+        # Build locations context
+        locations_context = "\n".join([
+            f"- {loc.id}: {loc.description} ({loc.atmosphere})"
+            for loc in request.story.locations
+        ]) if request.story.locations else "No locations defined"
+
+        # Determine current setting context (backward compat)
+        if request.story.locations:
+            setting_context = locations_context
+        elif request.story.setting:
+            setting_context = f"{request.story.setting.location}, {request.story.setting.time}\nATMOSPHERE: {request.story.setting.atmosphere}"
+        else:
+            setting_context = "Not specified"
+
+        # All character IDs for the output
+        all_char_ids = [c.id for c in request.story.characters]
+        location_ids = [loc.id for loc in request.story.locations] if request.story.locations else []
+
+        # Format current dialogue for context
+        current_dialogue_str = "None"
+        if current_beat.dialogue:
+            current_dialogue_str = json.dumps(
+                [{"character": d.character, "line": d.line} for d in current_beat.dialogue]
+            )
 
         prompt = f"""You are refining Scene {request.beat_number} of a story.
 
@@ -454,15 +581,20 @@ STORY TITLE: {request.story.title}
 CHARACTERS:
 {characters_context}
 
-SETTING: {request.story.setting.location}, {request.story.setting.time}
-ATMOSPHERE: {request.story.setting.atmosphere}
+LOCATIONS:
+{setting_context}
 
 ALL SCENES FOR CONTEXT:
 {beats_context}
 
 CURRENT SCENE {request.beat_number} TO REFINE:
+Scene Heading: {current_beat.scene_heading or "Not set"}
 Description: {current_beat.description}
+Action: {current_beat.action or "Not set"}
+Dialogue: {current_dialogue_str}
 Scene Change: {current_beat.scene_change}
+Characters in scene: {current_beat.characters_in_scene or all_char_ids}
+Location: {current_beat.location_id or (location_ids[0] if location_ids else "unknown")}
 
 USER FEEDBACK: {request.feedback}
 
@@ -472,9 +604,13 @@ Remember: NO exposition, NO backstory, ONLY present-moment conflict.
 OUTPUT FORMAT (JSON only, no explanation):
 {{
   "beat_number": {request.beat_number},
-  "description": "1-2 sentences of what we SEE and HEAR",
+  "scene_heading": "INT/EXT. LOCATION - TIME",
+  "description": "2-3 sentences. Visual, atmospheric. What the CAMERA sees.",
+  "action": "Physical movements, expressions, gestures.",
   "scene_change": {str(current_beat.scene_change).lower()},
-  "dialogue": null
+  "dialogue": [{{"character": "Name", "line": "What they say"}}],
+  "characters_in_scene": {json.dumps(current_beat.characters_in_scene or all_char_ids)},
+  "location_id": "{current_beat.location_id or (location_ids[0] if location_ids else 'loc_main')}"
 }}"""
 
         system_prompt = """You are a short film writer refining a single scene.
@@ -505,6 +641,16 @@ OUTPUT: Valid JSON only. No markdown, no explanation."""
         beat_num = beat_data.get("beat_number", request.beat_number)
         beat_data["beat_type"] = BEAT_NUMBER_TO_TYPE.get(beat_num, "rise")
         beat_data["time_range"] = BEAT_TIME_RANGES.get(beat_num, "0:00-0:08")
+
+        # Normalize dialogue format
+        raw_dialogue = beat_data.get("dialogue")
+        if isinstance(raw_dialogue, str):
+            beat_data["dialogue"] = [{"character": "Unknown", "line": raw_dialogue}]
+        elif not isinstance(raw_dialogue, list):
+            beat_data["dialogue"] = None
+
+        # Ensure scene_number is set for frontend compatibility
+        beat_data["scene_number"] = beat_data.get("beat_number", request.beat_number)
 
         beat = Beat(**beat_data)
 

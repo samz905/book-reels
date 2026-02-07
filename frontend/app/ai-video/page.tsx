@@ -15,6 +15,8 @@ type MoodboardStep = "protagonist" | "full";
 interface Character {
   id: string;
   name: string;
+  gender: string;
+  age: string;
   appearance: string;
   role: "protagonist" | "antagonist" | "supporting";
 }
@@ -25,27 +27,51 @@ interface Setting {
   atmosphere: string;
 }
 
+interface Location {
+  id: string;
+  description: string;
+  atmosphere: string;
+}
+
+interface DialogueLine {
+  character: string;
+  line: string;
+}
+
 interface Beat {
   scene_number: number;
+  scene_heading?: string;
   description: string;
+  action?: string;
   scene_change: boolean;
-  dialogue: string | null;
+  dialogue: DialogueLine[] | null;
+  characters_in_scene: string[] | null;
+  location_id: string | null;
 }
 
 interface Story {
   id: string;
   title: string;
   characters: Character[];
-  setting: Setting;
+  setting?: Setting;
+  locations: Location[];
   beats: Beat[];
   style: string;
 }
 
 interface MoodboardImage {
-  type: "character" | "setting" | "key_moment";
+  type: "character" | "setting" | "location" | "key_moment";
   image_base64: string;
   mime_type: string;
   prompt_used: string;
+}
+
+interface LocationImageState {
+  image: MoodboardImage | null;
+  approved: boolean;
+  isGenerating: boolean;
+  feedback: string;
+  promptUsed: string;
 }
 
 interface CharacterImageState {
@@ -76,11 +102,11 @@ interface KeyMomentImageState {
 // Phase 4: Film Generation
 interface CompletedShot {
   number: number;
-  previewUrl: string;
+  preview_url: string;
 }
 
 interface FilmCost {
-  keyframes_usd: number;
+  scene_refs_usd: number;
   videos_usd: number;
   total_usd: number;
 }
@@ -101,7 +127,7 @@ interface FilmState {
 interface TotalCost {
   story: number;
   characters: number;
-  setting: number;
+  locations: number;
   keyMoments: number;
   film: number;
 }
@@ -140,12 +166,15 @@ export default function AIVideoPage() {
   const [feedback, setFeedback] = useState("");
   const [isRefining, setIsRefining] = useState(false);
   const [globalFeedback, setGlobalFeedback] = useState("");
+  const [editingBeatIndex, setEditingBeatIndex] = useState<number | null>(null);
+  const [editBeatDraft, setEditBeatDraft] = useState<Beat | null>(null);
 
   // Visual Direction state (Phase 3)
   const [visualStep, setVisualStep] = useState<VisualStep | null>(null);
   const [moodboardStep, setMoodboardStep] = useState<MoodboardStep>("protagonist");
   const [characterImages, setCharacterImages] = useState<Record<string, CharacterImageState>>({});
   const [settingImage, setSettingImage] = useState<SettingImageState | null>(null);
+  const [locationImages, setLocationImages] = useState<Record<string, LocationImageState>>({});
   const [keyMoment, setKeyMoment] = useState<KeyMomentImageState | null>(null);
 
   // Protagonist-first state
@@ -167,15 +196,20 @@ export default function AIVideoPage() {
     completedShots: [],
     finalVideoUrl: null,
     error: null,
-    cost: { keyframes_usd: 0, videos_usd: 0, total_usd: 0 },
+    cost: { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
   });
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Clip review state
+  const [clipsApproved, setClipsApproved] = useState(false);
+  const [regeneratingShotNum, setRegeneratingShotNum] = useState<number | null>(null);
+  const [shotFeedback, setShotFeedback] = useState<Record<number, string>>({});
 
   // Cost tracking across all phases
   const [totalCost, setTotalCost] = useState<TotalCost>({
     story: 0,
     characters: 0,
-    setting: 0,
+    locations: 0,
     keyMoments: 0,
     film: 0,
   });
@@ -299,6 +333,7 @@ export default function AIVideoPage() {
     setMoodboardStep("protagonist");
     setCharacterImages({});
     setSettingImage(null);
+    setLocationImages({});
     setKeyMoment(null);
     setProtagonistImage(null);
     setProtagonistLocked(false);
@@ -378,26 +413,45 @@ export default function AIVideoPage() {
       });
     setCharacterImages(initialStates);
 
-    // Initialize setting state
-    setSettingImage({
-      image: null,
-      approved: false,
-      isGenerating: true,
-      feedback: "",
-      promptUsed: "",
-    });
+    // Initialize location states (replaces single setting)
+    const initialLocationStates: Record<string, LocationImageState> = {};
+    if (story.locations && story.locations.length > 0) {
+      story.locations.forEach((loc) => {
+        initialLocationStates[loc.id] = {
+          image: null,
+          approved: false,
+          isGenerating: true,
+          feedback: "",
+          promptUsed: "",
+        };
+      });
+      setLocationImages(initialLocationStates);
+    } else {
+      // Backward compat: no locations, use single setting
+      setSettingImage({
+        image: null,
+        approved: false,
+        isGenerating: true,
+        feedback: "",
+        promptUsed: "",
+      });
+    }
 
-    // Generate other characters and setting in parallel, using protagonist as reference
+    // Generate other characters and locations in parallel, using protagonist as reference
     const protagonistRef = {
       image_base64: protagonistImage.image.image_base64,
       mime_type: protagonistImage.image.mime_type,
     };
 
+    const locationTasks = story.locations && story.locations.length > 0
+      ? story.locations.map((loc) => generateLocationWithRef(loc.id, protagonistRef))
+      : [generateSettingWithRef(protagonistRef)];
+
     await Promise.all([
       ...story.characters
         .filter((char) => char.id !== protagonistImage.character_id)
         .map((char) => generateCharacterImageWithRef(char.id, protagonistRef)),
-      generateSettingWithRef(protagonistRef),
+      ...locationTasks,
     ]);
   };
 
@@ -411,6 +465,7 @@ export default function AIVideoPage() {
       setMoodboardStep("protagonist");
       setCharacterImages({});
       setSettingImage(null);
+      setLocationImages({});
       setKeyMoment(null);
       // Regenerate protagonist
       generateProtagonistImage();
@@ -546,11 +601,64 @@ export default function AIVideoPage() {
         promptUsed: data.prompt_used,
       });
       if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, setting: prev.setting + data.cost_usd }));
+        setTotalCost((prev) => ({ ...prev, locations: prev.locations + data.cost_usd }));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate setting image");
       setSettingImage((prev) => prev ? { ...prev, isGenerating: false } : null);
+    }
+  };
+
+  // Generate a specific location image with protagonist as style reference
+  const generateLocationWithRef = async (
+    locationId: string,
+    protagonistRef: { image_base64: string; mime_type: string }
+  ) => {
+    if (!story) return;
+
+    setLocationImages((prev) => ({
+      ...prev,
+      [locationId]: {
+        ...(prev[locationId] || { image: null, approved: false, feedback: "", promptUsed: "" }),
+        isGenerating: true,
+      },
+    }));
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/moodboard/generate-location`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          story,
+          location_id: locationId,
+          protagonist_image: protagonistRef,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to generate location image");
+      }
+
+      const data = await response.json();
+      setLocationImages((prev) => ({
+        ...prev,
+        [locationId]: {
+          ...prev[locationId],
+          image: data.image,
+          promptUsed: data.prompt_used,
+          isGenerating: false,
+        },
+      }));
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, locations: prev.locations + data.cost_usd }));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate location image");
+      setLocationImages((prev) => ({
+        ...prev,
+        [locationId]: { ...prev[locationId], isGenerating: false },
+      }));
     }
   };
 
@@ -688,7 +796,7 @@ export default function AIVideoPage() {
       });
       // Track setting refinement cost
       if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, setting: prev.setting + data.cost_usd }));
+        setTotalCost((prev) => ({ ...prev, locations: prev.locations + data.cost_usd }));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refine setting image");
@@ -696,21 +804,10 @@ export default function AIVideoPage() {
     }
   };
 
-  const continueToKeyMoment = async () => {
-    if (!story || !settingImage?.image || !protagonistImage) return;
+  // Build approved visuals payload from current state
+  const buildApprovedVisuals = () => {
+    if (!story || !protagonistImage) return null;
 
-    setVisualStep("key_moment");
-    setKeyMoment({
-      image: null,
-      beat_number: 0,
-      beat_description: "",
-      isGenerating: true,
-      feedback: "",
-      promptUsed: "",
-    });
-
-    // Build approved visuals with actual image data
-    // Include protagonist first, then other characters
     const allCharacterImages = [
       {
         image_base64: protagonistImage.image.image_base64,
@@ -724,15 +821,96 @@ export default function AIVideoPage() {
         })),
     ];
 
-    const approvedVisuals = {
-      character_images: allCharacterImages,
-      setting_image: {
+    // Build character_image_map for per-scene selection
+    const characterImageMap: Record<string, { image_base64: string; mime_type: string }> = {};
+    // Protagonist
+    const protagonist = story.characters.find((c) => c.id === protagonistImage.character_id);
+    if (protagonist) {
+      characterImageMap[protagonist.id] = {
+        image_base64: protagonistImage.image.image_base64,
+        mime_type: protagonistImage.image.mime_type,
+      };
+    }
+    // Other characters
+    story.characters
+      .filter((char) => char.id !== protagonistImage.character_id && characterImages[char.id]?.image)
+      .forEach((char) => {
+        characterImageMap[char.id] = {
+          image_base64: characterImages[char.id].image!.image_base64,
+          mime_type: characterImages[char.id].image!.mime_type,
+        };
+      });
+
+    // Build location images and descriptions
+    const locImages: Record<string, { image_base64: string; mime_type: string }> = {};
+    const locDescs: Record<string, string> = {};
+    if (story.locations && story.locations.length > 0) {
+      story.locations.forEach((loc) => {
+        const locState = locationImages[loc.id];
+        if (locState?.image) {
+          locImages[loc.id] = {
+            image_base64: locState.image.image_base64,
+            mime_type: locState.image.mime_type,
+          };
+        }
+        locDescs[loc.id] = `${loc.description}. ${loc.atmosphere}`;
+      });
+    }
+
+    // Backward compat: setting_image from first location or old setting
+    let settingImg = undefined;
+    let settingDesc = "";
+    if (Object.keys(locImages).length > 0) {
+      const firstLocId = Object.keys(locImages)[0];
+      settingImg = locImages[firstLocId];
+      settingDesc = locDescs[firstLocId] || "";
+    } else if (settingImage?.image) {
+      settingImg = {
         image_base64: settingImage.image.image_base64,
         mime_type: settingImage.image.mime_type,
-      },
-      character_descriptions: story.characters.map((char) => char.appearance),
-      setting_description: `${story.setting.location}, ${story.setting.time}. ${story.setting.atmosphere}`,
+      };
+      settingDesc = story.setting
+        ? `${story.setting.location}, ${story.setting.time}. ${story.setting.atmosphere}`
+        : "";
+    }
+
+    return {
+      character_images: allCharacterImages,
+      character_image_map: characterImageMap,
+      setting_image: settingImg,
+      location_images: locImages,
+      character_descriptions: story.characters.map(
+        (char) => `${char.name} (${char.age} ${char.gender}): ${char.appearance}`
+      ),
+      setting_description: settingDesc,
+      location_descriptions: locDescs,
     };
+  };
+
+  const continueToKeyMoment = async () => {
+    if (!story || !protagonistImage) return;
+
+    // Check that all locations are ready (or fallback to setting)
+    const hasLocations = story.locations && story.locations.length > 0;
+    if (hasLocations) {
+      const allLocationsReady = story.locations.every((loc) => locationImages[loc.id]?.image);
+      if (!allLocationsReady) return;
+    } else if (!settingImage?.image) {
+      return;
+    }
+
+    setVisualStep("key_moment");
+    setKeyMoment({
+      image: null,
+      beat_number: 0,
+      beat_description: "",
+      isGenerating: true,
+      feedback: "",
+      promptUsed: "",
+    });
+
+    const approvedVisuals = buildApprovedVisuals();
+    if (!approvedVisuals) return;
 
     try {
       const response = await fetch(`${BACKEND_URL}/moodboard/generate-key-moment`, {
@@ -767,33 +945,12 @@ export default function AIVideoPage() {
   };
 
   const refineKeyMoment = async () => {
-    if (!story || !settingImage?.image || !keyMoment?.feedback.trim() || !protagonistImage) return;
+    if (!story || !keyMoment?.feedback.trim() || !protagonistImage) return;
 
     setKeyMoment((prev) => prev ? { ...prev, isGenerating: true } : null);
 
-    // Include protagonist first, then other characters
-    const allCharacterImages = [
-      {
-        image_base64: protagonistImage.image.image_base64,
-        mime_type: protagonistImage.image.mime_type,
-      },
-      ...story.characters
-        .filter((char) => char.id !== protagonistImage.character_id && characterImages[char.id]?.image)
-        .map((char) => ({
-          image_base64: characterImages[char.id].image!.image_base64,
-          mime_type: characterImages[char.id].image!.mime_type,
-        })),
-    ];
-
-    const approvedVisuals = {
-      character_images: allCharacterImages,
-      setting_image: {
-        image_base64: settingImage.image.image_base64,
-        mime_type: settingImage.image.mime_type,
-      },
-      character_descriptions: story.characters.map((char) => char.appearance),
-      setting_description: `${story.setting.location}, ${story.setting.time}. ${story.setting.atmosphere}`,
-    };
+    const approvedVisuals = buildApprovedVisuals();
+    if (!approvedVisuals) return;
 
     try {
       const response = await fetch(`${BACKEND_URL}/moodboard/refine-key-moment`, {
@@ -846,31 +1003,10 @@ export default function AIVideoPage() {
   }, []);
 
   const startFilmGeneration = async () => {
-    if (!story || !settingImage?.image || !keyMoment?.image || !protagonistImage) return;
+    if (!story || !keyMoment?.image || !protagonistImage) return;
 
-    // Build approved visuals - include protagonist first
-    const allCharacterImages = [
-      {
-        image_base64: protagonistImage.image.image_base64,
-        mime_type: protagonistImage.image.mime_type,
-      },
-      ...story.characters
-        .filter((char) => char.id !== protagonistImage.character_id && characterImages[char.id]?.image)
-        .map((char) => ({
-          image_base64: characterImages[char.id].image!.image_base64,
-          mime_type: characterImages[char.id].image!.mime_type,
-        })),
-    ];
-
-    const approvedVisuals = {
-      character_images: allCharacterImages,
-      setting_image: {
-        image_base64: settingImage.image.image_base64,
-        mime_type: settingImage.image.mime_type,
-      },
-      character_descriptions: story.characters.map((char) => char.appearance),
-      setting_description: `${story.setting.location}, ${story.setting.time}. ${story.setting.atmosphere}`,
-    };
+    const approvedVisuals = buildApprovedVisuals();
+    if (!approvedVisuals) return;
 
     // Build key moment image for video reference
     const keyMomentImage = {
@@ -887,7 +1023,7 @@ export default function AIVideoPage() {
       completedShots: [],
       finalVideoUrl: null,
       error: null,
-      cost: { keyframes_usd: 0, videos_usd: 0, total_usd: 0 },
+      cost: { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
     });
 
     try {
@@ -950,7 +1086,7 @@ export default function AIVideoPage() {
           completedShots: data.completed_shots,
           finalVideoUrl: data.final_video_url,
           error: data.error_message,
-          cost: data.cost || { keyframes_usd: 0, videos_usd: 0, total_usd: 0 },
+          cost: data.cost || { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
         });
 
         // Update film cost in total
@@ -985,8 +1121,76 @@ export default function AIVideoPage() {
       completedShots: [],
       finalVideoUrl: null,
       error: null,
-      cost: { keyframes_usd: 0, videos_usd: 0, total_usd: 0 },
+      cost: { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
     });
+    setClipsApproved(false);
+    setRegeneratingShotNum(null);
+    setShotFeedback({});
+  };
+
+  const regenerateShot = async (shotNumber: number) => {
+    if (!film.filmId) return;
+    const feedbackText = shotFeedback[shotNumber] || null;
+
+    setRegeneratingShotNum(shotNumber);
+
+    try {
+      const response = await fetch(
+        `${BACKEND_URL}/film/${film.filmId}/shot/${shotNumber}/regenerate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ feedback: feedbackText }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to regenerate shot");
+      }
+
+      // Clear feedback for this shot
+      setShotFeedback((prev) => {
+        const next = { ...prev };
+        delete next[shotNumber];
+        return next;
+      });
+
+      // Poll until the shot is regenerated (status returns to "ready")
+      const pollRegen = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`${BACKEND_URL}/film/${film.filmId}`);
+          if (!statusRes.ok) return;
+          const data = await statusRes.json();
+
+          setFilm({
+            filmId: data.film_id,
+            status: data.status,
+            currentShot: data.current_shot,
+            totalShots: data.total_shots,
+            phase: data.phase,
+            completedShots: data.completed_shots,
+            finalVideoUrl: data.final_video_url,
+            error: data.error_message,
+            cost: data.cost || { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
+          });
+
+          if (data.cost) {
+            setTotalCost((prev) => ({ ...prev, film: data.cost.total_usd }));
+          }
+
+          if (data.status === "ready" || data.status === "failed") {
+            clearInterval(pollRegen);
+            setRegeneratingShotNum(null);
+          }
+        } catch {
+          // Continue polling
+        }
+      }, 5000);
+    } catch (err) {
+      setRegeneratingShotNum(null);
+      console.error("Regeneration failed:", err);
+    }
   };
 
   const resetAll = () => {
@@ -998,14 +1202,14 @@ export default function AIVideoPage() {
     setTotalCost({
       story: 0,
       characters: 0,
-      setting: 0,
+      locations: 0,
       keyMoments: 0,
       film: 0,
     });
   };
 
   // Calculate grand total cost
-  const grandTotalCost = totalCost.story + totalCost.characters + totalCost.setting + totalCost.keyMoments + totalCost.film;
+  const grandTotalCost = totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film;
 
   // ============================================================
   // Render
@@ -1117,58 +1321,214 @@ export default function AIVideoPage() {
                 <div className="bg-[#1A1E2F] rounded-xl p-4 mb-6">
                   <h3 className="text-lg font-semibold text-white mb-2">{story.title}</h3>
                   <div className="text-sm text-[#ADADAD] space-y-1">
-                    <p><span className="text-white/70">Setting:</span> {story.setting.location}, {story.setting.time}</p>
-                    <p><span className="text-white/70">Atmosphere:</span> {story.setting.atmosphere}</p>
+                    {story.locations && story.locations.length > 0 ? (
+                      story.locations.map((loc) => (
+                        <p key={loc.id}><span className="text-white/70">Location:</span> {loc.description} ({loc.atmosphere})</p>
+                      ))
+                    ) : story.setting ? (
+                      <>
+                        <p><span className="text-white/70">Setting:</span> {story.setting.location}, {story.setting.time}</p>
+                        <p><span className="text-white/70">Atmosphere:</span> {story.setting.atmosphere}</p>
+                      </>
+                    ) : null}
                     <p><span className="text-white/70">Characters:</span> {story.characters.map((c) => c.name).join(", ")}</p>
                   </div>
                 </div>
 
-                <div className="space-y-3 max-h-[350px] overflow-y-auto pr-2">
-                  {story.beats.map((beat, index) => (
-                    <div
-                      key={beat.scene_number}
-                      onClick={() => setSelectedBeatIndex(selectedBeatIndex === index ? null : index)}
-                      className={`bg-[#1A1E2F] rounded-xl p-4 cursor-pointer transition-all ${
-                        selectedBeatIndex === index ? "ring-2 ring-[#B8B6FC]" : "hover:bg-[#242836]"
-                      }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="w-8 h-8 bg-[#B8B6FC] rounded-full flex items-center justify-center text-black font-bold text-sm flex-shrink-0">
-                          {beat.scene_number}
-                        </div>
-                        <div className="flex-1">
-                          {beat.scene_change && (
-                            <div className="mb-2">
-                              <span className="text-xs px-2 py-1 rounded-full bg-white/10 text-white/70">scene change</span>
-                            </div>
-                          )}
-                          <p className="text-white text-sm">{beat.description}</p>
-                          {beat.dialogue && (
-                            <p className="text-[#ADADAD] text-sm mt-2 italic">&ldquo;{beat.dialogue}&rdquo;</p>
-                          )}
-                        </div>
-                      </div>
+                <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+                  {story.beats.map((beat, index) => {
+                    const isEditing = editingBeatIndex === index;
+                    const isSelected = selectedBeatIndex === index;
+                    const draft = isEditing ? editBeatDraft : null;
 
-                      {selectedBeatIndex === index && (
-                        <div className="mt-4 pt-4 border-t border-white/10" onClick={(e) => e.stopPropagation()}>
-                          <label className="block text-xs text-[#ADADAD] mb-2">Feedback for this beat</label>
-                          <textarea
-                            value={feedback}
-                            onChange={(e) => setFeedback(e.target.value)}
-                            placeholder="e.g., Make it more dramatic..."
-                            className="w-full h-20 bg-[#262626] rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none"
-                          />
-                          <button
-                            onClick={refineBeat}
-                            disabled={isRefining || !feedback.trim()}
-                            className="mt-2 px-4 py-2 bg-[#B8B6FC] text-black text-sm font-medium rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {isRefining ? "Refining..." : "Refine This Beat"}
-                          </button>
+                    return (
+                      <div
+                        key={beat.scene_number}
+                        className={`bg-[#1A1E2F] rounded-xl p-4 transition-all ${
+                          isSelected || isEditing ? "ring-2 ring-[#B8B6FC]" : "hover:bg-[#242836]"
+                        }`}
+                      >
+                        {/* Scene header */}
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 bg-[#B8B6FC] rounded-full flex items-center justify-center text-black font-bold text-sm flex-shrink-0">
+                              {beat.scene_number}
+                            </div>
+                            <span className="text-white font-semibold text-sm">Scene {beat.scene_number}</span>
+                            {beat.scene_change && (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-white/70">scene change</span>
+                            )}
+                          </div>
+                          {!isEditing && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingBeatIndex(index);
+                                setEditBeatDraft({ ...beat, dialogue: beat.dialogue ? beat.dialogue.map(d => ({ ...d })) : null });
+                                setSelectedBeatIndex(null);
+                              }}
+                              className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10"
+                            >
+                              Edit
+                            </button>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  ))}
+
+                        {/* Scene heading */}
+                        {isEditing ? (
+                          <input
+                            value={draft?.scene_heading || ""}
+                            onChange={(e) => setEditBeatDraft(prev => prev ? { ...prev, scene_heading: e.target.value } : prev)}
+                            placeholder="INT. KITCHEN - NIGHT"
+                            className="w-full bg-[#262626] text-white/50 text-xs font-mono rounded px-2 py-1 mb-2 placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                          />
+                        ) : beat.scene_heading ? (
+                          <p className="text-white/50 text-xs font-mono mb-2">{beat.scene_heading}</p>
+                        ) : null}
+
+                        {/* Description */}
+                        {isEditing ? (
+                          <textarea
+                            value={draft?.description || ""}
+                            onChange={(e) => setEditBeatDraft(prev => prev ? { ...prev, description: e.target.value } : prev)}
+                            className="w-full bg-[#262626] text-white text-sm rounded-lg px-3 py-2 mb-2 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
+                            rows={3}
+                          />
+                        ) : (
+                          <p className="text-white text-sm">{beat.description}</p>
+                        )}
+
+                        {/* Action */}
+                        {isEditing ? (
+                          <textarea
+                            value={draft?.action || ""}
+                            onChange={(e) => setEditBeatDraft(prev => prev ? { ...prev, action: e.target.value } : prev)}
+                            placeholder="Action: physical movements, gestures..."
+                            className="w-full bg-[#262626] text-white/70 text-sm italic rounded-lg px-3 py-2 mb-2 placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
+                            rows={2}
+                          />
+                        ) : beat.action ? (
+                          <p className="text-white/70 text-sm mt-2 italic">{beat.action}</p>
+                        ) : null}
+
+                        {/* Dialogue */}
+                        {isEditing ? (
+                          <div className="mt-3 space-y-2">
+                            <label className="text-xs text-[#ADADAD]">Dialogue</label>
+                            {(draft?.dialogue || []).map((d, di) => (
+                              <div key={di} className="flex gap-2 items-center">
+                                <input
+                                  value={d.character}
+                                  onChange={(e) => {
+                                    const newDialogue = [...(draft?.dialogue || [])];
+                                    newDialogue[di] = { ...newDialogue[di], character: e.target.value };
+                                    setEditBeatDraft(prev => prev ? { ...prev, dialogue: newDialogue } : prev);
+                                  }}
+                                  className="w-24 bg-[#262626] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                                  placeholder="Name"
+                                />
+                                <input
+                                  value={d.line}
+                                  onChange={(e) => {
+                                    const newDialogue = [...(draft?.dialogue || [])];
+                                    newDialogue[di] = { ...newDialogue[di], line: e.target.value };
+                                    setEditBeatDraft(prev => prev ? { ...prev, dialogue: newDialogue } : prev);
+                                  }}
+                                  className="flex-1 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                                  placeholder="Line..."
+                                />
+                                <button
+                                  onClick={() => {
+                                    const newDialogue = (draft?.dialogue || []).filter((_, i) => i !== di);
+                                    setEditBeatDraft(prev => prev ? { ...prev, dialogue: newDialogue.length ? newDialogue : null } : prev);
+                                  }}
+                                  className="text-red-400 hover:text-red-300 text-xs px-1"
+                                >
+                                  x
+                                </button>
+                              </div>
+                            ))}
+                            <button
+                              onClick={() => {
+                                const newDialogue = [...(draft?.dialogue || []), { character: "", line: "" }];
+                                setEditBeatDraft(prev => prev ? { ...prev, dialogue: newDialogue } : prev);
+                              }}
+                              className="text-xs text-[#B8B6FC] hover:text-white"
+                            >
+                              + Add dialogue line
+                            </button>
+                          </div>
+                        ) : beat.dialogue && beat.dialogue.length > 0 ? (
+                          <div className="mt-3 space-y-1">
+                            {beat.dialogue.map((d, di) => (
+                              <p key={di} className="text-[#ADADAD] text-sm">
+                                <span className="text-white/70 font-medium">{d.character}:</span>{" "}
+                                &ldquo;{d.line}&rdquo;
+                              </p>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {/* Edit mode: save/cancel buttons */}
+                        {isEditing && (
+                          <div className="flex gap-2 mt-4 pt-3 border-t border-white/10">
+                            <button
+                              onClick={() => {
+                                if (draft && story) {
+                                  const updatedBeats = [...story.beats];
+                                  updatedBeats[index] = { ...draft };
+                                  setStory({ ...story, beats: updatedBeats });
+                                }
+                                setEditingBeatIndex(null);
+                                setEditBeatDraft(null);
+                              }}
+                              className="px-4 py-2 bg-[#B8B6FC] text-black text-sm font-medium rounded-lg hover:opacity-90"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingBeatIndex(null);
+                                setEditBeatDraft(null);
+                              }}
+                              className="px-4 py-2 bg-[#262626] text-[#ADADAD] text-sm rounded-lg hover:bg-[#333] hover:text-white"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Feedback + refine (when selected, not editing) */}
+                        {!isEditing && (
+                          <div
+                            className="mt-3 pt-3 border-t border-white/10 cursor-pointer"
+                            onClick={() => setSelectedBeatIndex(isSelected ? null : index)}
+                          >
+                            {isSelected ? (
+                              <div onClick={(e) => e.stopPropagation()}>
+                                <label className="block text-xs text-[#ADADAD] mb-2">Feedback for this scene</label>
+                                <textarea
+                                  value={feedback}
+                                  onChange={(e) => setFeedback(e.target.value)}
+                                  placeholder="e.g., Make it more dramatic..."
+                                  className="w-full h-20 bg-[#262626] rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none"
+                                />
+                                <button
+                                  onClick={refineBeat}
+                                  disabled={isRefining || !feedback.trim()}
+                                  className="mt-2 px-4 py-2 bg-[#B8B6FC] text-black text-sm font-medium rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {isRefining ? "Refining..." : "Refine This Scene"}
+                                </button>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-[#555] text-center">Click to refine this scene</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 <div className="pt-4 border-t border-white/10">
@@ -1391,8 +1751,85 @@ export default function AIVideoPage() {
                       );
                     })}
 
-                  {/* Setting */}
-                  {settingImage && (
+                  {/* Locations (replaces single Setting) */}
+                  {story.locations && story.locations.length > 0 ? (
+                    story.locations.map((loc) => {
+                      const locState = locationImages[loc.id];
+                      if (!locState) return null;
+                      return (
+                        <div key={loc.id} className="bg-[#1A1E2F] rounded-xl overflow-hidden">
+                          <div className="aspect-[9/16] relative bg-[#262626]">
+                            {locState.isGenerating ? (
+                              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                </svg>
+                                <span className="text-[#ADADAD] text-sm">Generating...</span>
+                              </div>
+                            ) : locState.image ? (
+                              <>
+                                <img
+                                  src={`data:${locState.image.mime_type};base64,${locState.image.image_base64}`}
+                                  alt={loc.description}
+                                  className="w-full h-full object-cover"
+                                />
+                                {locState.approved && (
+                                  <div className="absolute top-3 right-3 w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+                                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  </div>
+                                )}
+                              </>
+                            ) : null}
+                          </div>
+
+                          <div className="p-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <h4 className="text-white font-medium truncate" title={loc.description}>
+                                {loc.description.length > 30 ? loc.description.slice(0, 30) + "..." : loc.description}
+                              </h4>
+                              <span className="text-xs px-2 py-1 rounded-full bg-white/10 text-white/70 ml-2 whitespace-nowrap">
+                                location
+                              </span>
+                            </div>
+
+                            {!locState.approved && !locState.isGenerating && locState.image && (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={async () => {
+                                    if (!protagonistImage) return;
+                                    await generateLocationWithRef(loc.id, {
+                                      image_base64: protagonistImage.image.image_base64,
+                                      mime_type: protagonistImage.image.mime_type,
+                                    });
+                                  }}
+                                  className="flex-1 py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333]"
+                                >
+                                  ↻ Retry
+                                </button>
+                                <button
+                                  onClick={() => setLocationImages((prev) => ({
+                                    ...prev,
+                                    [loc.id]: { ...prev[loc.id], approved: true },
+                                  }))}
+                                  className="flex-1 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-500"
+                                >
+                                  Approve
+                                </button>
+                              </div>
+                            )}
+
+                            {locState.approved && (
+                              <p className="text-green-400 text-sm text-center">Approved</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : settingImage ? (
+                    /* Backward compat: single Setting card */
                     <div className="bg-[#1A1E2F] rounded-xl overflow-hidden">
                       <div className="aspect-[9/16] relative bg-[#262626]">
                         {settingImage.isGenerating ? (
@@ -1447,11 +1884,11 @@ export default function AIVideoPage() {
                         )}
 
                         {settingImage.approved && (
-                          <p className="text-green-400 text-sm text-center">✓ Approved</p>
+                          <p className="text-green-400 text-sm text-center">Approved</p>
                         )}
                       </div>
                     </div>
-                  )}
+                  ) : null}
                 </div>
 
                 {/* Change protagonist link */}
@@ -1466,7 +1903,11 @@ export default function AIVideoPage() {
                     <button
                       onClick={continueToKeyMoment}
                       disabled={
-                        !settingImage?.approved ||
+                        // All locations (or setting) must be approved
+                        (story.locations && story.locations.length > 0
+                          ? !story.locations.every((loc) => locationImages[loc.id]?.approved)
+                          : !settingImage?.approved) ||
+                        // All non-protagonist characters must be approved
                         story.characters
                           .filter((c) => c.id !== protagonistImage.character_id)
                           .some((c) => !characterImages[c.id]?.approved)
@@ -1584,33 +2025,16 @@ export default function AIVideoPage() {
             <h2 className="text-xl font-semibold text-white mb-2">4. Creating Your Film</h2>
             {story && <p className="text-[#ADADAD] mb-6">&ldquo;{story.title}&rdquo;</p>}
 
-            {/* Generating State */}
+            {/* Generating State — card grid with lazy-loading clips */}
             {(film.status === "generating" || film.status === "assembling") && (
               <div>
-                {/* Preview of latest completed shot */}
-                {film.completedShots.length > 0 && (
-                  <div className="aspect-[9/16] max-w-xs mx-auto bg-black rounded-xl overflow-hidden mb-6">
-                    <video
-                      key={film.completedShots[film.completedShots.length - 1].previewUrl}
-                      src={`${BACKEND_URL}${film.completedShots[film.completedShots.length - 1].previewUrl}`}
-                      autoPlay
-                      loop
-                      muted
-                      playsInline
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                )}
-
                 {/* Progress bar */}
                 <div className="mb-6">
                   <div className="flex justify-between text-sm text-[#ADADAD] mb-2">
                     <span>
                       {film.status === "assembling"
                         ? "Assembling final video..."
-                        : film.phase === "keyframe"
-                        ? "Setting up frame..."
-                        : `Filming Scene ${film.currentShot}`}
+                        : "Filming scenes..."}
                     </span>
                     <span>{film.completedShots.length} of {film.totalShots} shots</span>
                   </div>
@@ -1622,25 +2046,44 @@ export default function AIVideoPage() {
                   </div>
                 </div>
 
-                {/* Shot status indicators */}
-                <div className="flex flex-wrap gap-2 justify-center">
+                {/* Card grid — all shots as cards, populate as they complete */}
+                <div className="flex flex-wrap items-start justify-center gap-2 mb-8">
                   {Array.from({ length: film.totalShots }, (_, i) => {
                     const shotNum = i + 1;
-                    const isComplete = film.completedShots.some((s) => s.number === shotNum);
-                    const isCurrent = film.currentShot === shotNum;
+                    const completedShot = film.completedShots.find((s) => s.number === shotNum);
 
                     return (
-                      <div
-                        key={shotNum}
-                        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${
-                          isComplete
-                            ? "bg-green-500 text-white"
-                            : isCurrent
-                            ? "bg-[#B8B6FC] text-black animate-pulse"
-                            : "bg-[#262626] text-[#ADADAD]"
-                        }`}
-                      >
-                        {isComplete ? "✓" : shotNum}
+                      <div key={shotNum} className="flex items-start gap-2">
+                        <div className="w-40 flex-shrink-0">
+                          <div className="relative aspect-[9/16] bg-black rounded-xl overflow-hidden mb-2">
+                            {completedShot ? (
+                              <video
+                                key={`gen-${shotNum}-${completedShot.preview_url}`}
+                                src={`${BACKEND_URL}${completedShot.preview_url}`}
+                                controls
+                                playsInline
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="text-center">
+                                  <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                                  <p className="text-xs text-[#ADADAD]">Generating...</p>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <p className="text-white text-sm font-medium text-center">
+                            Scene {shotNum}
+                          </p>
+                        </div>
+
+                        {/* Plus connector between cards */}
+                        {i < film.totalShots - 1 && (
+                          <div className="flex items-center self-center mt-16">
+                            <span className="text-[#555] text-2xl font-light">+</span>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1649,7 +2092,7 @@ export default function AIVideoPage() {
                 <p className="text-center text-[#ADADAD] text-sm mt-6">
                   {film.status === "assembling"
                     ? "Almost there! Stitching your scenes together..."
-                    : "Each scene takes about 30-60 seconds to generate. Sit back and relax!"}
+                    : "All scenes generating in parallel. Each takes about 30-60 seconds."}
                 </p>
 
                 {/* Live cost during generation */}
@@ -1661,8 +2104,98 @@ export default function AIVideoPage() {
               </div>
             )}
 
-            {/* Ready State */}
-            {film.status === "ready" && film.finalVideoUrl && (
+            {/* Ready State: Clip Review */}
+            {film.status === "ready" && !clipsApproved && (
+              <div>
+                <p className="text-[#ADADAD] mb-6">
+                  Review each clip. Regenerate any that don&apos;t look right.
+                </p>
+
+                {/* Clip timeline: [Clip 1] + [Clip 2] + [Clip 3] */}
+                <div className="flex flex-wrap items-start justify-center gap-2 mb-8">
+                  {film.completedShots
+                    .slice()
+                    .sort((a, b) => a.number - b.number)
+                    .map((shot, idx) => {
+                      const isRegenerating = regeneratingShotNum === shot.number;
+                      const hasFeedback = (shotFeedback[shot.number] || "").trim().length > 0;
+
+                      return (
+                        <div key={shot.number} className="flex items-start gap-2">
+                          {/* The clip card */}
+                          <div className="w-40 flex-shrink-0">
+                            <div className="relative aspect-[9/16] bg-black rounded-xl overflow-hidden mb-2">
+                              {isRegenerating ? (
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+                                  <div className="text-center">
+                                    <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                                    <p className="text-xs text-[#ADADAD]">Regenerating...</p>
+                                  </div>
+                                </div>
+                              ) : (
+                                <video
+                                  key={`${shot.number}-${shot.preview_url}`}
+                                  src={`${BACKEND_URL}${shot.preview_url}`}
+                                  controls
+                                  playsInline
+                                  className="w-full h-full object-cover"
+                                />
+                              )}
+                            </div>
+
+                            <p className="text-white text-sm font-medium text-center mb-2">
+                              Scene {shot.number}
+                            </p>
+
+                            {/* Feedback input + regenerate */}
+                            <input
+                              type="text"
+                              placeholder="Feedback (optional)"
+                              value={shotFeedback[shot.number] || ""}
+                              onChange={(e) =>
+                                setShotFeedback((prev) => ({
+                                  ...prev,
+                                  [shot.number]: e.target.value,
+                                }))
+                              }
+                              disabled={isRegenerating || regeneratingShotNum !== null}
+                              className="w-full bg-[#1A1E2F] text-white text-xs rounded-lg px-3 py-2 mb-2 placeholder-[#555] disabled:opacity-50"
+                            />
+                            <button
+                              onClick={() => regenerateShot(shot.number)}
+                              disabled={isRegenerating || regeneratingShotNum !== null}
+                              className="w-full text-xs py-1.5 rounded-lg bg-[#262626] text-[#ADADAD] hover:bg-[#333] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              {isRegenerating ? "Regenerating..." : hasFeedback ? "Regenerate with Feedback" : "Regenerate"}
+                            </button>
+                          </div>
+
+                          {/* Plus connector between clips */}
+                          {idx < film.completedShots.length - 1 && (
+                            <div className="flex items-center self-center mt-16">
+                              <span className="text-[#555] text-2xl font-light">+</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex gap-4 justify-center border-t border-white/10 pt-6">
+                  <button
+                    onClick={() => setClipsApproved(true)}
+                    disabled={regeneratingShotNum !== null}
+                    className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50"
+                  >
+                    Looks Good — Assemble Film
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Approved State: Final Video */}
+            {film.status === "ready" && clipsApproved && film.finalVideoUrl && (
               <div className="text-center">
                 <div className="aspect-[9/16] max-w-sm mx-auto bg-black rounded-xl overflow-hidden mb-6">
                   <video
@@ -1690,10 +2223,10 @@ export default function AIVideoPage() {
                         <span>${totalCost.characters.toFixed(2)}</span>
                       </div>
                     )}
-                    {totalCost.setting > 0 && (
+                    {totalCost.locations > 0 && (
                       <div className="flex justify-between text-[#ADADAD]">
-                        <span>Setting image</span>
-                        <span>${totalCost.setting.toFixed(2)}</span>
+                        <span>Location images</span>
+                        <span>${totalCost.locations.toFixed(2)}</span>
                       </div>
                     )}
                     {totalCost.keyMoments > 0 && (
@@ -1702,10 +2235,10 @@ export default function AIVideoPage() {
                         <span>${totalCost.keyMoments.toFixed(2)}</span>
                       </div>
                     )}
-                    {film.cost.keyframes_usd > 0 && (
+                    {film.cost.scene_refs_usd > 0 && (
                       <div className="flex justify-between text-[#ADADAD]">
-                        <span>Video keyframes</span>
-                        <span>${film.cost.keyframes_usd.toFixed(2)}</span>
+                        <span>Scene references</span>
+                        <span>${film.cost.scene_refs_usd.toFixed(2)}</span>
                       </div>
                     )}
                     {film.cost.videos_usd > 0 && (
@@ -1729,6 +2262,12 @@ export default function AIVideoPage() {
                   >
                     Download Video
                   </a>
+                  <button
+                    onClick={() => setClipsApproved(false)}
+                    className="px-6 py-3 bg-[#262626] text-white rounded-xl font-medium hover:bg-[#333]"
+                  >
+                    Back to Clips
+                  </button>
                   <button
                     onClick={resetAll}
                     className="px-6 py-3 bg-[#262626] text-white rounded-xl font-medium hover:bg-[#333]"

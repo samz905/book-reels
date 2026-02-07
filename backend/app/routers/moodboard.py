@@ -3,12 +3,12 @@ Moodboard generation endpoints for AI video workflow.
 Step-by-step visual direction: Characters -> Setting -> Key Moment (SPIKE)
 """
 import uuid
-from typing import Optional, Literal, List
+from typing import Optional, Literal, List, Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..core import generate_image, generate_image_with_references, COST_IMAGE_GENERATION
-from .story import Story, Character, Setting, Beat
+from .story import Story, Character, Setting, Location, Beat
 
 router = APIRouter()
 
@@ -29,7 +29,7 @@ STYLE_PREFIXES = {
 # ============================================================
 
 class MoodboardImage(BaseModel):
-    type: Literal["character", "setting", "key_moment"]
+    type: Literal["character", "setting", "location", "key_moment"]
     image_base64: str
     mime_type: str
     prompt_used: str
@@ -105,14 +105,45 @@ class RefineSettingResponse(BaseModel):
     cost_usd: float = 0.0
 
 
+# --- Location ---
+class GenerateLocationRequest(BaseModel):
+    story: Story
+    location_id: str
+    protagonist_image: Optional[ReferenceImage] = None  # Style anchor for consistency
+
+
+class GenerateLocationResponse(BaseModel):
+    location_id: str
+    image: MoodboardImage
+    prompt_used: str
+    cost_usd: float = 0.0
+
+
+class RefineLocationRequest(BaseModel):
+    story: Story
+    location_id: str
+    feedback: str
+    protagonist_image: Optional[ReferenceImage] = None  # Style anchor for consistency
+
+
+class RefineLocationResponse(BaseModel):
+    location_id: str
+    image: MoodboardImage
+    prompt_used: str
+    cost_usd: float = 0.0
+
+
 # --- Key Moment (SPIKE - emotional peak, 1 image) ---
 class ApprovedVisuals(BaseModel):
-    """Approved character and setting images for visual consistency."""
+    """Approved character and setting/location images for visual consistency."""
     character_images: List[ReferenceImage]  # Approved character reference images (up to 5)
-    setting_image: ReferenceImage  # Approved setting reference image
+    character_image_map: Dict[str, ReferenceImage] = {}  # char_id -> image (for per-scene selection)
+    setting_image: Optional[ReferenceImage] = None  # DEPRECATED - backward compat
+    location_images: Dict[str, ReferenceImage] = {}  # location_id -> image
     # Text descriptions as fallback/context
     character_descriptions: List[str]  # Appearance descriptions from approved chars
-    setting_description: str  # Setting description from approved setting
+    setting_description: Optional[str] = None  # DEPRECATED - backward compat
+    location_descriptions: Dict[str, str] = {}  # location_id -> description
 
 
 class KeyMomentImage(BaseModel):
@@ -176,17 +207,35 @@ def get_spike_beat(story: Story) -> Beat:
 # Prompt Builders
 # ============================================================
 
+def _get_atmosphere(story: Story) -> str:
+    """Get atmosphere from locations (preferred) or deprecated setting."""
+    if story.locations:
+        return story.locations[0].atmosphere
+    if story.setting:
+        return story.setting.atmosphere
+    return "dramatic"
+
+
+def _get_location_hint(story: Story) -> str:
+    """Get a location hint for character backgrounds."""
+    if story.locations:
+        return story.locations[0].description
+    if story.setting:
+        return story.setting.location
+    return "a dramatic environment"
+
+
 def build_protagonist_prompt(story: Story, protagonist: Character) -> str:
     """Build the prompt for protagonist (style anchor - no references)."""
     style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
 
     return f"""{style_prefix}
 
-Portrait of {protagonist.appearance}.
+Portrait of {protagonist.name}, a {protagonist.age} {protagonist.gender}. {protagonist.appearance}.
 
-Expression: {story.setting.atmosphere}.
+Expression: {_get_atmosphere(story)}.
 
-Simple background suggesting {story.setting.location}.
+Simple background suggesting {_get_location_hint(story)}.
 
 Character clearly visible, head to mid-torso.
 Show the tension in their posture and expression.
@@ -203,11 +252,11 @@ def build_character_prompt(story: Story, character: Character, feedback: Optiona
 
     prompt = f"""{style_prefix}
 
-Portrait of {character.appearance}.
+Portrait of {character.name}, a {character.age} {character.gender}. {character.appearance}.
 
-Expression: {story.setting.atmosphere}.
+Expression: {_get_atmosphere(story)}.
 
-Simple background that suggests {story.setting.location} without distracting.
+Simple background that suggests {_get_location_hint(story)} without distracting.
 
 Character fills most of the frame, clearly visible from head to mid-torso.
 Show enough detail to establish their complete look."""
@@ -227,16 +276,20 @@ Same eye style, same proportions, same line weight, same color treatment."""
 
 
 def build_setting_prompt(story: Story, feedback: Optional[str] = None, use_reference: bool = False) -> str:
-    """Build the prompt for setting reference image."""
+    """Build the prompt for setting reference image. DEPRECATED - use build_location_prompt."""
     style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
+
+    location = story.setting.location if story.setting else _get_location_hint(story)
+    time = story.setting.time if story.setting else ""
+    atmosphere = story.setting.atmosphere if story.setting else _get_atmosphere(story)
 
     prompt = f"""{style_prefix}
 
-{story.setting.location}.
+{location}.
 
-{story.setting.time}.
+{time}.
 
-Atmosphere: {story.setting.atmosphere}.
+Atmosphere: {atmosphere}.
 
 The space should feel charged, claustrophobic, or tense.
 Wide establishing shot showing the world.
@@ -257,6 +310,40 @@ Same rendering approach, same color treatment, same texture quality."""
     return prompt
 
 
+def build_location_prompt(
+    story: Story,
+    location: Location,
+    feedback: Optional[str] = None,
+    use_reference: bool = False,
+) -> str:
+    """Build the prompt for a specific location reference image."""
+    style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
+
+    prompt = f"""{style_prefix}
+
+{location.description}.
+
+Atmosphere: {location.atmosphere}.
+
+The space should feel charged and atmospheric.
+Wide establishing shot showing the environment.
+
+No characters in frame.
+
+Portrait orientation, 9:16 aspect ratio."""
+
+    if use_reference:
+        prompt += """
+
+CRITICAL: Match the visual style of the reference image exactly.
+Same rendering approach, same color treatment, same texture quality."""
+
+    if feedback:
+        prompt += f"\n\nAdditional direction: {feedback}"
+
+    return prompt
+
+
 def build_key_moment_prompt(
     story: Story,
     beat: Beat,
@@ -269,11 +356,18 @@ def build_key_moment_prompt(
     # Build character appearance list
     chars_description = "\n".join([f"- {desc}" for desc in approved_visuals.character_descriptions])
 
+    # Get location description for this beat
+    setting_desc = ""
+    if beat.location_id and approved_visuals.location_descriptions:
+        setting_desc = approved_visuals.location_descriptions.get(beat.location_id, "")
+    if not setting_desc:
+        setting_desc = approved_visuals.setting_description or ""
+
     prompt = f"""{style_prefix}
 
 SCENE: {beat.description}
 
-SETTING: {approved_visuals.setting_description}
+SETTING: {setting_desc}
 
 CHARACTERS IN SCENE:
 {chars_description}
@@ -563,6 +657,120 @@ async def refine_setting(request: RefineSettingRequest):
 
 
 # ============================================================
+# Location Endpoints
+# ============================================================
+
+def _get_location_by_id(story: Story, location_id: str) -> Location:
+    """Get a specific location by ID."""
+    for loc in story.locations:
+        if loc.id == location_id:
+            return loc
+    raise ValueError(f"Location with id '{location_id}' not found")
+
+
+@router.post("/generate-location", response_model=GenerateLocationResponse)
+async def generate_location(request: GenerateLocationRequest):
+    """
+    Generate a reference image for a specific location.
+
+    If protagonist_image is provided, uses it as style reference for consistency.
+
+    Input: { "story": {...}, "location_id": "loc_1", "protagonist_image": {...} }
+    Output: { "location_id": "loc_1", "image": {...}, "prompt_used": "..." }
+    """
+    try:
+        story = request.story
+        location = _get_location_by_id(story, request.location_id)
+
+        use_reference = request.protagonist_image is not None
+        prompt = build_location_prompt(story, location, use_reference=use_reference)
+        print(f"Generating location reference for '{location.id}'...")
+        print(f"Using protagonist as style reference: {use_reference}")
+        print(f"Prompt: {prompt[:200]}...")
+
+        if request.protagonist_image:
+            result = await generate_image_with_references(
+                prompt=prompt,
+                reference_images=[{
+                    "image_base64": request.protagonist_image.image_base64,
+                    "mime_type": request.protagonist_image.mime_type,
+                }],
+                aspect_ratio="9:16",
+            )
+        else:
+            result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+
+        return GenerateLocationResponse(
+            location_id=request.location_id,
+            image=MoodboardImage(
+                type="location",
+                image_base64=result["image_base64"],
+                mime_type=result["mime_type"],
+                prompt_used=prompt
+            ),
+            prompt_used=prompt,
+            cost_usd=COST_IMAGE_GENERATION
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        print(f"Error generating location: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/refine-location", response_model=RefineLocationResponse)
+async def refine_location(request: RefineLocationRequest):
+    """
+    Refine a location image with feedback.
+
+    Input: { "story": {...}, "location_id": "loc_1", "feedback": "make it darker", "protagonist_image": {...} }
+    Output: { "location_id": "loc_1", "image": {...}, "prompt_used": "..." }
+    """
+    try:
+        story = request.story
+        location = _get_location_by_id(story, request.location_id)
+
+        use_reference = request.protagonist_image is not None
+        prompt = build_location_prompt(story, location, request.feedback, use_reference=use_reference)
+        print(f"Refining location '{location.id}' with feedback: {request.feedback}")
+        print(f"Using protagonist as style reference: {use_reference}")
+        print(f"Prompt: {prompt[:200]}...")
+
+        if request.protagonist_image:
+            result = await generate_image_with_references(
+                prompt=prompt,
+                reference_images=[{
+                    "image_base64": request.protagonist_image.image_base64,
+                    "mime_type": request.protagonist_image.mime_type,
+                }],
+                aspect_ratio="9:16",
+            )
+        else:
+            result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+
+        return RefineLocationResponse(
+            location_id=request.location_id,
+            image=MoodboardImage(
+                type="location",
+                image_base64=result["image_base64"],
+                mime_type=result["mime_type"],
+                prompt_used=prompt
+            ),
+            prompt_used=prompt,
+            cost_usd=COST_IMAGE_GENERATION
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        print(f"Error refining location: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
 # Key Moment Endpoint (SPIKE - emotional peak, 1 image)
 # ============================================================
 
@@ -587,7 +795,7 @@ async def generate_key_moment(request: GenerateKeyMomentRequest):
         story = request.story
         approved = request.approved_visuals
 
-        # Build reference images list (characters + setting)
+        # Build reference images list (characters + location/setting)
         reference_images: List[dict] = []
 
         # Add character images (up to 5 for human consistency)
@@ -597,11 +805,21 @@ async def generate_key_moment(request: GenerateKeyMomentRequest):
                 "mime_type": char_img.mime_type,
             })
 
-        # Add setting image
-        reference_images.append({
-            "image_base64": approved.setting_image.image_base64,
-            "mime_type": approved.setting_image.mime_type,
-        })
+        # Add location image (prefer beat's location, fallback to first location, then setting)
+        beat = get_spike_beat(story)
+        location_img = None
+        if beat.location_id and beat.location_id in approved.location_images:
+            location_img = approved.location_images[beat.location_id]
+        elif approved.location_images:
+            location_img = next(iter(approved.location_images.values()))
+        elif approved.setting_image:
+            location_img = approved.setting_image
+
+        if location_img:
+            reference_images.append({
+                "image_base64": location_img.image_base64,
+                "mime_type": location_img.mime_type,
+            })
 
         print(f"Using {len(reference_images)} reference images for consistency")
 
@@ -664,12 +882,22 @@ async def refine_key_moment(request: RefineKeyMomentRequest):
                 "image_base64": char_img.image_base64,
                 "mime_type": char_img.mime_type,
             })
-        reference_images.append({
-            "image_base64": approved.setting_image.image_base64,
-            "mime_type": approved.setting_image.mime_type,
-        })
 
+        # Add location/setting image
         beat = get_spike_beat(story)
+        location_img = None
+        if beat.location_id and beat.location_id in approved.location_images:
+            location_img = approved.location_images[beat.location_id]
+        elif approved.location_images:
+            location_img = next(iter(approved.location_images.values()))
+        elif approved.setting_image:
+            location_img = approved.setting_image
+
+        if location_img:
+            reference_images.append({
+                "image_base64": location_img.image_base64,
+                "mime_type": location_img.mime_type,
+            })
         prompt = build_key_moment_prompt(story, beat, approved, request.feedback)
 
         print(f"Refining key moment with feedback: {request.feedback}")

@@ -114,25 +114,44 @@ OUTPUT FORMAT (JSON):
     }
   ],
   
-  "setting": {
-    "location": "Specific location",
-    "time": "Time of day / lighting",
-    "atmosphere": "Tense, charged, intimate, etc."
-  },
-  
-  "beats": [
+  "locations": [
     {
-      "beat_number": 1,
+      "id": "unique_id",
+      "name": "Location name",
+      "description": "Visual details of the location",
+      "atmosphere": "Mood descriptor"
+    }
+  ],
+  
+  "scenes": [
+    {
+      "scene_number": 1,
       "time_range": "0:00-0:08",
-      "description": "1-2 sentences. Action/dialogue already in progress. What we SEE and HEAR.",
+      "characters_in_scene": ["character_id", "character_id"],
+      "location_id": "location_id",
+      "scene_heading": "INT. KITCHEN - NIGHT",
+      "description": "A paragraph describing the visual setting and atmosphere. What we SEE when the scene opens. Cinematic, evocative.",
+      "action": "What the characters are DOING. Physical movements, gestures, expressions.",
+      "dialogue": [
+        { "character": "Character Name", "line": "What they say" },
+        { "character": "Other Character", "line": "Their response" }
+      ],
       "scene_change": false
     }
   ]
 }
 
+SCENE WRITING RULES:
+- scene_heading: Standard screenplay format (INT/EXT. LOCATION - TIME)
+- description: 2-3 sentences. Visual, atmospheric. What the CAMERA sees.
+- action: Physical movements, expressions, gestures. Show don't tell.
+- dialogue: Each line on its own. Character name + their exact words.
+- Keep dialogue punchy — no speeches. Maximum 2 exchanges per scene.
+- If a character is silent, use "..." as their line to show tension.
+
 Remember:
 - 8 scenes total
-- Each scene = one 8-second video shot (trimmed in assembly)
+- Each scene = one 8-second video shot
 - NO backstory, NO exposition
 - End BEFORE resolution
 - The cliff must create a WORSE unanswered question
@@ -170,59 +189,123 @@ Input: `{ idea: "a woman discovers her husband has a secret second family", styl
     }
   ],
   
-  "setting": {
-    "location": "Modern kitchen, granite countertops, wine glass on counter",
-    "time": "Night, harsh overhead lighting",
-    "atmosphere": "Tense, claustrophobic, nowhere to hide"
-  },
+  "locations": [
+    {
+      "id": "kitchen",
+      "name": "Elena's Kitchen",
+      "description": "Modern kitchen with granite countertops, stainless steel appliances, wine glass on counter, harsh overhead lighting casting sharp shadows",
+      "atmosphere": "Tense, claustrophobic, nowhere to hide"
+    }
+  ],
   
-  "beats": [
+  "scenes": [
     {
-      "beat_number": 1,
+      "scene_number": 1,
       "time_range": "0:00-0:05",
-      "description": "Elena slams a photograph on the counter. 'Who is she, Marcus?' Her voice shakes with controlled rage. He freezes mid-reach for his wine.",
+      "characters_in_scene": ["elena", "marcus"],
+      "location_id": "kitchen",
+      "scene_heading": "INT. KITCHEN - NIGHT",
+      "description": "Harsh overhead light floods the modern kitchen. A photograph lies on the granite counter. Elena stands rigid, her knuckles white against the stone.",
+      "action": "Elena slams the photograph down. Marcus freezes, his hand hovering over his wine glass.",
+      "dialogue": [
+        { "character": "Elena", "line": "Who is she, Marcus?" }
+      ],
       "scene_change": false
     },
     {
-      "beat_number": 2,
+      "scene_number": 2,
       "time_range": "0:05-0:12",
-      "description": "Marcus: 'Where did you get that?' Elena: 'Your gym bag. The one you told me not to touch.' She laughs bitterly. 'Eleven years.'",
+      "characters_in_scene": ["elena", "marcus"],
+      "location_id": "kitchen",
+      "scene_heading": "INT. KITCHEN - NIGHT",
+      "description": "The wine glass trembles in Marcus's grip. Elena's eyes are red but her voice is steady — dangerously steady.",
+      "action": "She laughs bitterly, the sound hollow in the silent kitchen.",
+      "dialogue": [
+        { "character": "Marcus", "line": "Where did you get that?" },
+        { "character": "Elena", "line": "Your gym bag. The one you told me not to touch. Eleven years, Marcus." }
+      ],
       "scene_change": false
     },
     {
-      "beat_number": 3,
+      "scene_number": 3,
       "time_range": "0:12-0:20",
-      "description": "He reaches for her arm. 'Elena, let me explain—' She jerks away. 'Explain the matching rings? Explain the CHILD?' Her voice breaks.",
+      "characters_in_scene": ["elena", "marcus"],
+      "location_id": "kitchen",
+      "scene_heading": "INT. KITCHEN - NIGHT",
+      "description": "Marcus steps toward her, his composure cracking. Elena backs against the counter, trapped.",
+      "action": "He reaches for her arm. She jerks away violently. Her voice breaks on the last word.",
+      "dialogue": [
+        { "character": "Marcus", "line": "Elena, let me explain—" },
+        { "character": "Elena", "line": "Explain the matching rings? Explain the CHILD?" }
+      ],
       "scene_change": false
     },
     {
-      "beat_number": 4,
+      "scene_number": 4,
       "time_range": "0:20-0:27",
-      "description": "She flips the photo over. On the back, handwritten: 'To Daddy, love always, Sophie. Age 6.' Marcus's face crumbles. He has no words.",
+      "characters_in_scene": ["elena", "marcus"],
+      "location_id": "kitchen",
+      "scene_heading": "INT. KITCHEN - NIGHT",
+      "description": "Close on the photograph. A woman. A child. A family portrait that isn't theirs. Elena flips it over with trembling fingers.",
+      "action": "Handwriting on the back catches the light. Marcus's face crumbles as he reads it.",
+      "dialogue": [
+        { "character": "Elena", "line": "'To Daddy, love always, Sophie. Age 6.'" },
+        { "character": "Marcus", "line": "..." }
+      ],
       "scene_change": false
     },
     {
-      "beat_number": 5,
+      "scene_number": 5,
       "time_range": "0:27-0:35",
-      "description": "Elena's rage turns cold. 'Six years old. You've been lying to me... for six years.' She slides off her wedding ring. Places it on the counter.",
+      "characters_in_scene": ["elena", "marcus"],
+      "location_id": "kitchen",
+      "scene_heading": "INT. KITCHEN - NIGHT",
+      "description": "Elena's rage transforms. The heat drains from her face, replaced by something colder. More dangerous.",
+      "action": "She slowly slides off her wedding ring. Places it on the counter with a soft click that echoes.",
+      "dialogue": [
+        { "character": "Elena", "line": "Six years old. You've been lying to me... for six years." }
+      ],
       "scene_change": false
     },
     {
-      "beat_number": 6,
+      "scene_number": 6,
       "time_range": "0:35-0:42",
-      "description": "Marcus: 'I was going to tell you. I was trying to find the right—' Elena: 'The right time to destroy my life?' Her hand shakes.",
+      "characters_in_scene": ["elena", "marcus"],
+      "location_id": "kitchen",
+      "scene_heading": "INT. KITCHEN - NIGHT",
+      "description": "The wedding ring sits between them on the cold granite. Marcus's carefully constructed world is collapsing.",
+      "action": "He steps forward, hands raised in desperate supplication. Her hand shakes as she grips the counter edge.",
+      "dialogue": [
+        { "character": "Marcus", "line": "I was going to tell you. I was trying to find the right—" },
+        { "character": "Elena", "line": "The right time to destroy my life?" }
+      ],
       "scene_change": false
     },
     {
-      "beat_number": 7,
+      "scene_number": 7,
       "time_range": "0:42-0:50",
-      "description": "She grabs her keys from the counter. He steps toward her. 'Where are you going?' She doesn't answer. Heads for the door.",
+      "characters_in_scene": ["elena", "marcus"],
+      "location_id": "kitchen",
+      "scene_heading": "INT. KITCHEN - NIGHT",
+      "description": "Elena's keys glint on the counter. Her purse hangs by the door. An escape route.",
+      "action": "She snatches her keys. He steps toward her, blocking her path.",
+      "dialogue": [
+        { "character": "Marcus", "line": "Where are you going?" },
+        { "character": "Elena", "line": "..." }
+      ],
       "scene_change": false
     },
     {
-      "beat_number": 8,
+      "scene_number": 8,
       "time_range": "0:50-0:60",
-      "description": "His phone buzzes on the counter. They both freeze. The screen lights up: 'JESSICA ❤️ calling.' Elena looks at him. 'Answer it.'",
+      "characters_in_scene": ["elena", "marcus"],
+      "location_id": "kitchen",
+      "scene_heading": "INT. KITCHEN - NIGHT",
+      "description": "Silence. Then — a phone buzzes on the counter. The screen lights up the dark kitchen. A name. A heart emoji.",
+      "action": "They both freeze. The phone keeps buzzing. JESSICA ❤️ calling. Elena's eyes lock onto Marcus.",
+      "dialogue": [
+        { "character": "Elena", "line": "Answer it." }
+      ],
       "scene_change": false
     }
   ]
@@ -424,35 +507,89 @@ Portrait orientation, 9:16 aspect ratio.
 
 ## 4. Video Generation (Veo 3.1)
 
-### Frame Chaining Strategy
+### Per-Scene Reference Generation
+
+Veo 3.1 accepts max 3 reference images. For scenes with 3+ characters, we use Nano Banana to generate scene-specific refs first.
 
 ```
-Shot 1: first_frame = opening keyframe
-Shot 2: first_frame = last frame of Shot 1
-Shot 3: first_frame = last frame of Shot 2
-Shot 4: first_frame = last frame of Shot 3
-Shot 5: first_frame = last frame of Shot 4
-Shot 6: first_frame = last frame of Shot 5
-Shot 7: first_frame = last frame of Shot 6
-Shot 8: first_frame = last frame of Shot 7
+For each shot:
+
+Step 1: SELECT from moodboard
+        → Characters in this scene + location for this scene
+
+Step 2: NANO BANANA generates 3 scene refs
+        Input: Selected chars + location (can be 5+ images)
+        Output: 3 scene-specific reference images
+
+Step 3: VEO 3.1 animates
+        Input: 3 scene refs + shot prompt
+        Output: 8-second video clip
+```
+
+### Scene Reference Prompt (Nano Banana)
+
+```
+Generate 3 reference images for this scene.
+
+SCENE HEADING: {scene.scene_heading}
+
+DESCRIPTION:
+{scene.description}
+
+CHARACTERS PRESENT:
+{for char_id in scene.characters_in_scene: characters[char_id].name - characters[char_id].appearance}
+
+ACTION:
+{scene.action}
+
+Generate:
+- Image 1: Wide establishing shot of the scene
+- Image 2: Character interaction focus
+- Image 3: Key moment or emotional detail
+
+Maintain character appearances precisely from references.
+Style: {user_style}
+Aspect ratio: 9:16 portrait
+```
+
+### Video Generation (Veo)
+
+```python
+video = client.models.generate_videos(
+    model="veo-3.1-generate-preview",
+    prompt=shot_prompt,
+    config=types.GenerateVideosConfig(
+        aspect_ratio="9:16",
+        resolution="720p",
+        duration_seconds=8,
+        reference_images=[
+            {"image": scene_refs[0], "reference_type": "asset"},
+            {"image": scene_refs[1], "reference_type": "asset"},
+            {"image": scene_refs[2], "reference_type": "asset"}
+        ]
+    )
+)
 ```
 
 ### Shot Prompt Template
 
 ```
-SCENE:
-{beat.description}
-Location: {setting.location}
-Time: {setting.time}
+{scene.scene_heading}
+
+SETTING:
+{scene.description}
+
+CHARACTERS:
+{for char_id in scene.characters_in_scene: characters[char_id].name (characters[char_id].appearance)}
+
+ACTION:
+{scene.action}
+
+DIALOGUE:
+{for line in scene.dialogue: line.character + ": " + line.line}
 
 CAMERA:
 {shot_type}, {angle}, {movement}
-
-SUBJECT:
-{character.name} ({character.appearance_brief})
-Action: {single_action}
-
-DIALOGUE: "{exact_dialogue_if_any}"
 
 SOUND:
 {ambient}. {tension_building_audio}.
@@ -470,24 +607,27 @@ STYLE: {user_style} — tense, emotionally charged
 | 6-7 | DROP | MCU pulling back | Slow pull back | Sinking — consequence |
 | 8 | CLIFF | Wide or CU (contrast) | Static, then hard cut | Shock — freeze moment |
 
-### Full Example: "The Other Wife" — All 8 Shots
+### Full Example: "The Other Wife" — All 8 Shot Prompts
 
 **Shot 1 (HOOK):**
 ```
-SCENE:
-Elena slams a photograph on the granite counter. 'Who is she, Marcus?' 
-Her voice shakes with controlled rage. He freezes mid-reach for his wine.
-Location: Modern kitchen, harsh overhead lighting
-Time: Night
+INT. KITCHEN - NIGHT
+
+SETTING:
+Harsh overhead light floods the modern kitchen. A photograph lies on the granite counter. Elena stands rigid, her knuckles white against the stone.
+
+CHARACTERS:
+Elena (mid-30s, dark hair pulled back, cream silk blouse, mascara smudged)
+Marcus (late 30s, gray suit, loosened tie, gold wedding band)
+
+ACTION:
+Elena slams the photograph down. Marcus freezes, his hand hovering over his wine glass.
+
+DIALOGUE:
+Elena: "Who is she, Marcus?"
 
 CAMERA:
 Medium close-up on Elena, eye level, slow push in
-
-SUBJECT:
-Elena (mid-30s, dark hair pulled back, cream silk blouse, mascara smudged)
-Action: Slams photo down, confronts Marcus
-
-DIALOGUE: "Who is she, Marcus?"
 
 SOUND:
 Photo slapping counter. Tense silence. Distant hum of refrigerator.
@@ -497,20 +637,24 @@ STYLE: Cinematic — tense, claustrophobic, dramatic lighting
 
 **Shot 2 (RISE):**
 ```
-SCENE:
-Marcus: 'Where did you get that?' Elena: 'Your gym bag. The one you told 
-me not to touch.' She laughs bitterly. 'Eleven years.'
-Location: Kitchen, same space
-Time: Night
+INT. KITCHEN - NIGHT
+
+SETTING:
+The wine glass trembles in Marcus's grip. Elena's eyes are red but her voice is steady — dangerously steady.
+
+CHARACTERS:
+Elena (mid-30s, dark hair pulled back, cream silk blouse, mascara smudged)
+Marcus (late 30s, gray suit, loosened tie, composure cracking)
+
+ACTION:
+She laughs bitterly, the sound hollow in the silent kitchen.
+
+DIALOGUE:
+Marcus: "Where did you get that?"
+Elena: "Your gym bag. The one you told me not to touch. Eleven years, Marcus."
 
 CAMERA:
 Medium close-up on Marcus, eye level, static
-
-SUBJECT:
-Marcus (late 30s, gray suit, loosened tie, composure cracking)
-Action: Defensive, caught off guard, reaching for control
-
-DIALOGUE: "Where did you get that?"
 
 SOUND:
 His voice tight. Her bitter laugh. Tension building.
@@ -520,20 +664,24 @@ STYLE: Cinematic — trapped, exposed
 
 **Shot 3 (RISE):**
 ```
-SCENE:
-He reaches for her arm. 'Elena, let me explain—' She jerks away. 
-'Explain the matching rings? Explain the CHILD?' Her voice breaks.
-Location: Kitchen
-Time: Night
+INT. KITCHEN - NIGHT
+
+SETTING:
+Marcus steps toward her, his composure cracking. Elena backs against the counter, trapped.
+
+CHARACTERS:
+Elena (mid-30s, dark hair pulled back, cream silk blouse, mascara smudged)
+Marcus (late 30s, gray suit, loosened tie, desperation showing)
+
+ACTION:
+He reaches for her arm. She jerks away violently. Her voice breaks on the last word.
+
+DIALOGUE:
+Marcus: "Elena, let me explain—"
+Elena: "Explain the matching rings? Explain the CHILD?"
 
 CAMERA:
 Two-shot, medium, static then slight pan as she jerks away
-
-SUBJECT:
-Marcus reaching, Elena recoiling
-Action: He reaches, she pulls away violently
-
-DIALOGUE: "Elena, let me explain—" / "Explain the matching rings? Explain the CHILD?"
 
 SOUND:
 Movement. Her voice cracking. Emotional crescendo.
@@ -543,20 +691,24 @@ STYLE: Cinematic — the gap between them widening
 
 **Shot 4 (SPIKE):**
 ```
-SCENE:
-She flips the photo over. On the back, handwritten: 'To Daddy, love always, 
-Sophie. Age 6.' Marcus's face crumbles. He has no words.
-Location: Kitchen
-Time: Night
+INT. KITCHEN - NIGHT
+
+SETTING:
+Close on the photograph. A woman. A child. A family portrait that isn't theirs. Elena flips it over with trembling fingers.
+
+CHARACTERS:
+Elena (mid-30s, dark hair pulled back, cream silk blouse)
+Marcus (late 30s, gray suit, face crumbling)
+
+ACTION:
+Handwriting on the back catches the light. Marcus's face crumbles as he reads it.
+
+DIALOGUE:
+Elena: "'To Daddy, love always, Sophie. Age 6.'"
+Marcus: "..."
 
 CAMERA:
 Close-up on photo flipping, then push to extreme close-up on Marcus's face
-
-SUBJECT:
-The photo, then Marcus's reaction
-Action: Photo reveals the truth. His face breaks.
-
-DIALOGUE: None. The photo speaks.
 
 SOUND:
 Paper turning. Silence. His breath catching.
@@ -566,20 +718,23 @@ STYLE: Cinematic — the moment of destruction
 
 **Shot 5 (SPIKE):**
 ```
-SCENE:
-Elena's rage turns cold. 'Six years old. You've been lying to me... 
-for six years.' She slides off her wedding ring. Places it on the counter.
-Location: Kitchen
-Time: Night
+INT. KITCHEN - NIGHT
+
+SETTING:
+Elena's rage transforms. The heat drains from her face, replaced by something colder. More dangerous.
+
+CHARACTERS:
+Elena (mid-30s, dark hair pulled back, expression ice cold)
+Marcus (late 30s, gray suit, defeated)
+
+ACTION:
+She slowly slides off her wedding ring. Places it on the counter with a soft click that echoes.
+
+DIALOGUE:
+Elena: "Six years old. You've been lying to me... for six years."
 
 CAMERA:
 Close-up on Elena's hand removing ring, push to her cold expression
-
-SUBJECT:
-Elena (rage crystallizing into something colder)
-Action: Removes wedding ring, sets it down deliberately
-
-DIALOGUE: "Six years old. You've been lying to me... for six years."
 
 SOUND:
 Ring clicking on granite. Her voice flat, dead.
@@ -589,20 +744,24 @@ STYLE: Cinematic — cold fury
 
 **Shot 6 (DROP):**
 ```
-SCENE:
-Marcus: 'I was going to tell you. I was trying to find the right—' 
-Elena: 'The right time to destroy my life?' Her hand trembles.
-Location: Kitchen
-Time: Night
+INT. KITCHEN - NIGHT
+
+SETTING:
+The wedding ring sits between them on the cold granite. Marcus's carefully constructed world is collapsing.
+
+CHARACTERS:
+Marcus (late 30s, gray suit, desperate)
+Elena (mid-30s, dark hair pulled back, trembling with controlled rage)
+
+ACTION:
+He steps forward, hands raised in desperate supplication. Her hand shakes as she grips the counter edge.
+
+DIALOGUE:
+Marcus: "I was going to tell you. I was trying to find the right—"
+Elena: "The right time to destroy my life?"
 
 CAMERA:
 Medium close-up, slight pull back as power shifts
-
-SUBJECT:
-Marcus crumbling, desperate
-Action: He pleads, she dismisses
-
-DIALOGUE: "I was going to tell you—" / "The right time to destroy my life?"
 
 SOUND:
 His desperate words. Her cutting response.
@@ -612,20 +771,24 @@ STYLE: Cinematic — he's losing her
 
 **Shot 7 (DROP):**
 ```
-SCENE:
-Elena grabs her keys from the counter. Marcus steps toward her. 
-'Where are you going?' She doesn't answer. Moves toward the door.
-Location: Kitchen
-Time: Night
+INT. KITCHEN - NIGHT
+
+SETTING:
+Elena's keys glint on the counter. Her purse hangs by the door. An escape route.
+
+CHARACTERS:
+Elena (mid-30s, gathering herself to leave)
+Marcus (late 30s, following helplessly)
+
+ACTION:
+She snatches her keys. He steps toward her, blocking her path.
+
+DIALOGUE:
+Marcus: "Where are you going?"
+Elena: "..."
 
 CAMERA:
 Medium shot, tracking her movement toward exit
-
-SUBJECT:
-Elena gathering herself, Marcus following
-Action: She takes keys, heads for door, ignores him
-
-DIALOGUE: "Where are you going?"
 
 SOUND:
 Keys jingling. Footsteps. No answer.
@@ -635,25 +798,28 @@ STYLE: Cinematic — she's leaving, he's powerless
 
 **Shot 8 (CLIFF):**
 ```
-SCENE:
-His phone buzzes on the counter. They both freeze. The screen lights up: 
-'JESSICA ❤️ calling.' Elena looks at him. 'Answer it.'
-Location: Kitchen
-Time: Night
+INT. KITCHEN - NIGHT
+
+SETTING:
+Silence. Then — a phone buzzes on the counter. The screen lights up the dark kitchen. A name. A heart emoji.
+
+CHARACTERS:
+Elena (mid-30s, frozen by the door)
+Marcus (late 30s, frozen by the counter)
+
+ACTION:
+They both freeze. The phone keeps buzzing. JESSICA ❤️ calling. Elena's eyes lock onto Marcus.
+
+DIALOGUE:
+Elena: "Answer it."
 
 CAMERA:
-Close-up on phone screen, then wide shot of both frozen, then CU Elena's face
-
-SUBJECT:
-The phone, then both characters, then Elena's expression
-Action: Phone rings. They freeze. She challenges him.
-
-DIALOGUE: "Answer it."
+Close-up on phone screen, then wide shot of both frozen, then close on Elena's face
 
 SOUND:
-Phone vibrating on granite. Ringtone cutting through silence.
+Phone buzzing. HARD CUT before he responds.
 
-STYLE: Cinematic — frozen moment, HARD CUT before he responds
+STYLE: Cinematic — the worst unanswered question
 ```
 
 **CRITICAL: Shot 8 ends on "Answer it." — HARD CUT TO BLACK. No response. No resolution.**
@@ -665,20 +831,24 @@ STYLE: Cinematic — frozen moment, HARD CUT before he responds
 ### 3D Animated — Shot 4 (Spike):
 
 ```
-SCENE:
-She flips the photo. The back reads: 'To Daddy, love always, Sophie. Age 6.' 
-His stylized face crumbles, eyes wide with the horror of being caught.
-Location: Stylized modern kitchen
-Time: Night, dramatic lighting
+INT. STYLIZED KITCHEN - NIGHT
+
+SETTING:
+A stylized modern kitchen with bold colors and clean geometry. Dramatic top-lighting casts sharp shadows. Everything has that Pixar-quality polish.
+
+CHARACTERS:
+Elena (3D stylized, expressive eyes, exaggerated emotions)
+Marcus (3D stylized, face designed for maximum emotional range)
+
+ACTION:
+She flips the photo with trembling stylized hands. Marcus's face transforms — his eyes widen, his jaw drops, his whole posture crumbles.
+
+DIALOGUE:
+Elena: "'To Daddy, love always, Sophie. Age 6.'"
+Marcus: "..."
 
 CAMERA:
 Close-up on photo, push to his devastated expression
-
-SUBJECT:
-Marcus (3D stylized, expressive features, exaggerated emotional reaction)
-Action: Realization hits, face falls
-
-DIALOGUE: None.
 
 SOUND:
 Paper rustle. Emotional musical sting.
@@ -686,23 +856,26 @@ Paper rustle. Emotional musical sting.
 STYLE: 3D Animated, Pixar-style — maximum emotional impact
 ```
 
-### 2D Animated — Shot 7 (Cliff):
+### 2D Animated — Shot 8 (Cliff):
 
 ```
-SCENE:
-His phone buzzes. Bold graphic lighting as the screen illuminates: 
-'JESSICA ❤️.' Elena's illustrated eyes narrow. 'Answer it.'
-Location: Graphic kitchen, bold shadows
-Time: Night, dramatic flat lighting
+INT. GRAPHIC KITCHEN - NIGHT
+
+SETTING:
+Bold flat colors. Dramatic shadows cut across the scene like a graphic novel. The kitchen rendered in striking 2D illustration style.
+
+CHARACTERS:
+Elena (bold linework, expressive illustrated eyes)
+Marcus (frozen in graphic composition)
+
+ACTION:
+The phone buzzes. The screen illuminates in stark contrast: 'JESSICA ❤️.' Elena's illustrated eyes narrow dangerously.
+
+DIALOGUE:
+Elena: "Answer it."
 
 CAMERA:
-Close-up on phone, wide shot, her expression in bold lines
-
-SUBJECT:
-Phone, then both characters frozen in graphic composition
-Action: Phone lights up, she challenges
-
-DIALOGUE: "Answer it."
+Close-up on phone, wide shot of both characters frozen
 
 SOUND:
 Stylized phone buzz. Silence.
@@ -736,12 +909,41 @@ CUT BEFORE HE RESPONDS. No resolution.
 ```
 
 ### If character looks inconsistent:
+
+**Check the two-stage pipeline:**
+
+1. Are all relevant character refs being passed to Nano Banana?
+```python
+# For a scene with Elena, Marcus, Detective Ray
+char_refs = [elena_img, marcus_img, detective_ray_img, location_img]
+
+scene_refs = generate_images(
+    prompt=scene_prompt,
+    reference_images=char_refs  # All chars + location
+)
+```
+
+2. Are the 3 scene refs being passed to Veo?
+```python
+reference_images=[
+    {"image": scene_refs[0], "reference_type": "asset"},
+    {"image": scene_refs[1], "reference_type": "asset"},
+    {"image": scene_refs[2], "reference_type": "asset"}
+]
+```
+
+3. Add character lock to prompts if still drifting:
 ```
 CHARACTER LOCK:
 - Elena: dark hair pulled back, cream silk blouse, smudged mascara
 - Marcus: gray suit, loosened tie, wedding band
 These details must appear in EVERY shot.
 ```
+
+**Common causes:**
+- Wrong characters passed to Nano Banana for that scene
+- Scene ref prompt doesn't emphasize character consistency
+- Moodboard character refs weren't properly approved
 
 ---
 
@@ -757,7 +959,7 @@ These details must appear in EVERY shot.
 | 0:35-0:50 | DROP | Show aftermath, deepen tension |
 | 0:50-0:60 | CLIFF | Worse unanswered question, HARD CUT |
 
-### Rules Checklist
+### Story Rules Checklist
 
 - [ ] Opens mid-action (no setup)
 - [ ] No exposition or backstory
@@ -766,3 +968,12 @@ These details must appear in EVERY shot.
 - [ ] Cliff creates WORSE question than start
 - [ ] Ends BEFORE resolution
 - [ ] Hard cut at the end
+
+### Video Generation Checklist
+
+- [ ] Each beat has `characters_in_scene` and `location_id` specified
+- [ ] Correct character refs selected for each scene (from approved moodboard)
+- [ ] Nano Banana receives all chars + location for scene
+- [ ] Nano Banana outputs 3 scene-specific refs
+- [ ] Veo receives exactly 3 scene refs
+- [ ] Hard cuts between all shots (no crossfades)

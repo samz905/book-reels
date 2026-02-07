@@ -230,6 +230,8 @@ Establish visual style with protagonist as the anchor. This is a **two-step flow
 
 ### Screen 3b: Full Moodboard
 
+Shows all characters and all locations for user approval.
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                                                                 │
@@ -239,24 +241,29 @@ Establish visual style with protagonist as the anchor. This is a **two-step flow
 │              🎨 Here's your world                              │
 │                                                                 │
 │                                                                 │
-│   ┌─────────────────────────────────────────────────────────┐  │
-│   │                                                         │  │
-│   │   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐      │  │
-│   │   │             │ │             │ │             │      │  │
-│   │   │   ELENA     │ │   MARCUS    │ │  SETTING    │      │  │
-│   │   │     🔒      │ │             │ │             │      │  │
-│   │   └─────────────┘ └─────────────┘ └─────────────┘      │  │
-│   │     Style anchor    [↻ Retry]      [↻ Retry]           │  │
-│   │                                                         │  │
-│   │   ┌───────────────────────────────────────────┐        │  │
-│   │   │                                           │        │  │
-│   │   │            [KEY MOMENT]                   │        │  │
-│   │   │                                           │        │  │
-│   │   └───────────────────────────────────────────┘        │  │
-│   │                    [↻ Retry]                           │  │
-│   │                                                         │  │
-│   └─────────────────────────────────────────────────────────┘  │
+│   CHARACTERS                                                   │
+│   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐             │
+│   │             │ │             │ │             │             │
+│   │   ELENA     │ │   MARCUS    │ │ DET. RAY    │ ...        │
+│   │     🔒      │ │             │ │             │             │
+│   └─────────────┘ └─────────────┘ └─────────────┘             │
+│     Style anchor    [↻ Retry]      [↻ Retry]                  │
 │                                                                 │
+│   LOCATIONS                                                    │
+│   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐             │
+│   │             │ │             │ │             │             │
+│   │   KITCHEN   │ │ POLICE STN  │ │ COURTROOM   │ ...        │
+│   │             │ │             │ │             │             │
+│   └─────────────┘ └─────────────┘ └─────────────┘             │
+│      [↻ Retry]      [↻ Retry]       [↻ Retry]                 │
+│                                                                 │
+│   KEY MOMENT PREVIEW                                           │
+│   ┌───────────────────────────────────────────┐               │
+│   │                                           │               │
+│   │            [KEY MOMENT IMAGE]             │               │
+│   │                                           │               │
+│   └───────────────────────────────────────────┘               │
+│                    [↻ Retry]                                  │
 │                                                                 │
 │   ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
 │   Want a completely different style?                           │
@@ -266,6 +273,8 @@ Establish visual style with protagonist as the anchor. This is a **two-step flow
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+Note: The grid scrolls horizontally if there are many characters or locations.
 
 ### Key Behaviors
 
@@ -329,7 +338,7 @@ Establish visual style with protagonist as the anchor. This is a **two-step flow
 ## Screen 4: Make
 
 ### Purpose
-Show generation progress. Scenes complete one at a time due to frame chaining.
+Show generation progress. Each scene generates independently (scene refs + video).
 
 ### Layout
 
@@ -610,13 +619,15 @@ Putting it all together...
   story: {
     id: string,
     title: string,
-    beats: Beat[],  // beat_type is internal, never sent to client display
-    characters: Character[],
-    setting: Setting
+    beats: Beat[],       // beat_type is internal, never sent to client display
+    characters: Character[],  // All characters in the story
+    locations: Location[]     // All unique locations in the story
   } | null,
   moodboard: {
     id: string,
-    images: { character, environment, key_moment }
+    protagonist: ImageRef,           // Style anchor
+    characters: { [id]: ImageRef },  // All other characters
+    locations: { [id]: ImageRef }    // All locations
   } | null,
   film: {
     id: string,
@@ -625,6 +636,17 @@ Putting it all together...
     videoUrl: string | null
   } | null
 }
+
+// Beat structure (internal)
+{
+  beat_number: 1,
+  beat_type: "hook",              // NEVER send to client
+  time_range: "0:00-0:08",        // NEVER send to client
+  characters_in_scene: ["elena", "marcus"],  // For ref selection
+  location_id: "kitchen",         // For ref selection
+  description: "Elena slams...",
+  scene_change: false
+}
 ```
 
 ### API Response Sanitization
@@ -632,11 +654,13 @@ Putting it all together...
 The `/api/generate-story` endpoint returns beats to the client, but **must strip internal fields**:
 
 ```javascript
-// Internal beat (stored in database)
+// Internal beat (stored in database, used for video generation)
 {
   beat_number: 1,
-  beat_type: "hook",        // NEVER send to client
-  time_range: "0:00-0:08",  // NEVER send to client
+  beat_type: "hook",                         // NEVER send to client
+  time_range: "0:00-0:08",                   // NEVER send to client
+  characters_in_scene: ["elena", "marcus"],  // For ref selection
+  location_id: "kitchen",                    // For ref selection
   description: "Elena slams...",
   scene_change: false
 }
@@ -674,7 +698,7 @@ The `/api/generate-story` endpoint returns beats to the client, but **must strip
 |---------|--------------|
 | Duration options | 1 minute is optimal for retention |
 | Per-scene editing | Regenerate full story instead |
-| Per-scene regeneration | Would break frame chain |
+| Per-scene regeneration | Maintains narrative coherence; regenerate full film instead |
 | User accounts | Anonymous for MVP |
 | Episode series | V2 feature |
 | Direct social sharing | Download works |
