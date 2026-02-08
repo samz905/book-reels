@@ -38,15 +38,56 @@ interface DialogueLine {
   line: string;
 }
 
+interface SceneBlock {
+  type: "description" | "action" | "dialogue";
+  text: string;
+  character?: string; // dialogue blocks only
+}
+
+const MAX_BLOCKS_PER_SCENE = 5;
+
+function getBlocks(beat: Beat): SceneBlock[] {
+  if (beat.blocks && beat.blocks.length > 0) return beat.blocks;
+  // Fallback: derive from legacy fields
+  const blocks: SceneBlock[] = [];
+  if (beat.description) blocks.push({ type: "description", text: beat.description });
+  if (beat.action) blocks.push({ type: "action", text: beat.action });
+  if (beat.dialogue) {
+    beat.dialogue.forEach((d) =>
+      blocks.push({ type: "dialogue", text: d.line, character: d.character })
+    );
+  }
+  return blocks;
+}
+
+function blocksToLegacy(blocks: SceneBlock[]): {
+  description?: string;
+  action?: string;
+  dialogue: DialogueLine[] | null;
+} {
+  const descBlock = blocks.find((b) => b.type === "description");
+  const actionBlock = blocks.find((b) => b.type === "action");
+  const dialogueBlocks = blocks.filter((b) => b.type === "dialogue");
+  return {
+    description: descBlock?.text,
+    action: actionBlock?.text,
+    dialogue: dialogueBlocks.length > 0
+      ? dialogueBlocks.map((b) => ({ character: b.character || "", line: b.text }))
+      : null,
+  };
+}
+
 interface Beat {
   scene_number: number;
   scene_heading?: string;
-  description: string;
-  action?: string;
+  blocks: SceneBlock[];
   scene_change: boolean;
-  dialogue: DialogueLine[] | null;
   characters_in_scene: string[] | null;
   location_id: string | null;
+  // Legacy fields (still sent by backend, used as fallback)
+  description?: string;
+  action?: string;
+  dialogue?: DialogueLine[] | null;
 }
 
 interface Story {
@@ -103,6 +144,7 @@ interface KeyMomentImageState {
 interface CompletedShot {
   number: number;
   preview_url: string;
+  veo_prompt?: string;
 }
 
 interface FilmCost {
@@ -167,7 +209,22 @@ export default function AIVideoPage() {
   const [isRefining, setIsRefining] = useState(false);
   const [globalFeedback, setGlobalFeedback] = useState("");
   const [editingBeatIndex, setEditingBeatIndex] = useState<number | null>(null);
-  const [editBeatDraft, setEditBeatDraft] = useState<Beat | null>(null);
+  const [editBeatDraft, setEditBeatDraft] = useState<{
+    scene_heading: string;
+    blocks: SceneBlock[];
+    scene_change: boolean;
+    characters_in_scene: string[] | null;
+    location_id: string | null;
+  } | null>(null);
+
+  // Editable story metadata
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [expandedCharacters, setExpandedCharacters] = useState(false);
+  const [editingCharIndex, setEditingCharIndex] = useState<number | null>(null);
+  const [editCharDraft, setEditCharDraft] = useState<Character | null>(null);
+  const [expandedLocations, setExpandedLocations] = useState(false);
+  const [editingLocIndex, setEditingLocIndex] = useState<number | null>(null);
+  const [editLocDraft, setEditLocDraft] = useState<Location | null>(null);
 
   // Visual Direction state (Phase 3)
   const [visualStep, setVisualStep] = useState<VisualStep | null>(null);
@@ -1319,19 +1376,109 @@ export default function AIVideoPage() {
             {story && !isGenerating && (
               <div className="space-y-4">
                 <div className="bg-[#1A1E2F] rounded-xl p-4 mb-6">
-                  <h3 className="text-lg font-semibold text-white mb-2">{story.title}</h3>
-                  <div className="text-sm text-[#ADADAD] space-y-1">
-                    {story.locations && story.locations.length > 0 ? (
-                      story.locations.map((loc) => (
-                        <p key={loc.id}><span className="text-white/70">Location:</span> {loc.description} ({loc.atmosphere})</p>
-                      ))
-                    ) : story.setting ? (
-                      <>
-                        <p><span className="text-white/70">Setting:</span> {story.setting.location}, {story.setting.time}</p>
-                        <p><span className="text-white/70">Atmosphere:</span> {story.setting.atmosphere}</p>
-                      </>
-                    ) : null}
-                    <p><span className="text-white/70">Characters:</span> {story.characters.map((c) => c.name).join(", ")}</p>
+                  {/* Editable title */}
+                  {editingTitle ? (
+                    <input
+                      autoFocus
+                      value={story.title}
+                      onChange={(e) => setStory({ ...story, title: e.target.value })}
+                      onBlur={() => setEditingTitle(false)}
+                      onKeyDown={(e) => { if (e.key === "Enter") setEditingTitle(false); }}
+                      className="text-lg font-semibold text-white bg-[#262626] rounded px-2 py-1 mb-2 w-full focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                    />
+                  ) : (
+                    <h3
+                      className="text-lg font-semibold text-white mb-2 cursor-pointer hover:text-[#B8B6FC] transition-colors"
+                      onClick={() => setEditingTitle(true)}
+                      title="Click to edit title"
+                    >
+                      {story.title}
+                    </h3>
+                  )}
+
+                  <div className="text-sm text-[#ADADAD] space-y-2">
+                    {/* Expandable Characters */}
+                    <div>
+                      <button
+                        onClick={() => setExpandedCharacters(!expandedCharacters)}
+                        className="flex items-center gap-1 text-white/70 hover:text-white transition-colors"
+                      >
+                        <span className="text-xs">{expandedCharacters ? "\u25BE" : "\u25B8"}</span>
+                        <span>Characters ({story.characters.length})</span>
+                      </button>
+                      {expandedCharacters && (
+                        <div className="mt-2 space-y-2 pl-4">
+                          {story.characters.map((char, ci) => (
+                            <div key={char.id} className="bg-[#262626] rounded-lg p-3">
+                              {editingCharIndex === ci && editCharDraft ? (
+                                <div className="space-y-2">
+                                  <div className="flex gap-2">
+                                    <input value={editCharDraft.name} onChange={(e) => setEditCharDraft({ ...editCharDraft, name: e.target.value })} className="flex-1 bg-[#1A1E2F] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Name" />
+                                    <input value={editCharDraft.age} onChange={(e) => setEditCharDraft({ ...editCharDraft, age: e.target.value })} className="w-24 bg-[#1A1E2F] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Age" />
+                                    <input value={editCharDraft.gender} onChange={(e) => setEditCharDraft({ ...editCharDraft, gender: e.target.value })} className="w-20 bg-[#1A1E2F] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Gender" />
+                                  </div>
+                                  <textarea value={editCharDraft.appearance} onChange={(e) => setEditCharDraft({ ...editCharDraft, appearance: e.target.value })} className="w-full bg-[#1A1E2F] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none" rows={2} placeholder="Appearance..." />
+                                  <div className="flex gap-2">
+                                    <button onClick={() => { const updated = [...story.characters]; updated[ci] = editCharDraft; setStory({ ...story, characters: updated }); setEditingCharIndex(null); setEditCharDraft(null); }} className="px-3 py-1 bg-[#B8B6FC] text-black text-xs font-medium rounded hover:opacity-90">Save</button>
+                                    <button onClick={() => { setEditingCharIndex(null); setEditCharDraft(null); }} className="px-3 py-1 bg-[#333] text-[#ADADAD] text-xs rounded hover:text-white">Cancel</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-start justify-between">
+                                  <div>
+                                    <span className="text-white font-medium text-sm">{char.name}</span>
+                                    <span className="text-white/50 text-xs ml-2">{char.age} {char.gender}</span>
+                                    <p className="text-white/60 text-xs mt-1">{char.appearance}</p>
+                                  </div>
+                                  <button onClick={() => { setEditingCharIndex(ci); setEditCharDraft({ ...char }); }} className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10 flex-shrink-0">Edit</button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Expandable Locations */}
+                    {story.locations && story.locations.length > 0 && (
+                      <div>
+                        <button
+                          onClick={() => setExpandedLocations(!expandedLocations)}
+                          className="flex items-center gap-1 text-white/70 hover:text-white transition-colors"
+                        >
+                          <span className="text-xs">{expandedLocations ? "\u25BE" : "\u25B8"}</span>
+                          <span>Locations ({story.locations.length})</span>
+                        </button>
+                        {expandedLocations && (
+                          <div className="mt-2 space-y-2 pl-4">
+                            {story.locations.map((loc, li) => (
+                              <div key={loc.id} className="bg-[#262626] rounded-lg p-3">
+                                {editingLocIndex === li && editLocDraft ? (
+                                  <div className="space-y-2">
+                                    <textarea value={editLocDraft.description} onChange={(e) => setEditLocDraft({ ...editLocDraft, description: e.target.value })} className="w-full bg-[#1A1E2F] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none" rows={2} placeholder="Description..." />
+                                    <input value={editLocDraft.atmosphere} onChange={(e) => setEditLocDraft({ ...editLocDraft, atmosphere: e.target.value })} className="w-full bg-[#1A1E2F] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Atmosphere..." />
+                                    <div className="flex gap-2">
+                                      <button onClick={() => { const updated = [...story.locations]; updated[li] = editLocDraft; setStory({ ...story, locations: updated }); setEditingLocIndex(null); setEditLocDraft(null); }} className="px-3 py-1 bg-[#B8B6FC] text-black text-xs font-medium rounded hover:opacity-90">Save</button>
+                                      <button onClick={() => { setEditingLocIndex(null); setEditLocDraft(null); }} className="px-3 py-1 bg-[#333] text-[#ADADAD] text-xs rounded hover:text-white">Cancel</button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-start justify-between">
+                                    <div>
+                                      <p className="text-white/70 text-sm">{loc.description}</p>
+                                      <p className="text-white/40 text-xs mt-1">{loc.atmosphere}</p>
+                                    </div>
+                                    <button onClick={() => { setEditingLocIndex(li); setEditLocDraft({ ...loc }); }} className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10 flex-shrink-0">Edit</button>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <p className="text-xs text-white/40">Style: {story.style}</p>
                   </div>
                 </div>
 
@@ -1364,7 +1511,13 @@ export default function AIVideoPage() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setEditingBeatIndex(index);
-                                setEditBeatDraft({ ...beat, dialogue: beat.dialogue ? beat.dialogue.map(d => ({ ...d })) : null });
+                                setEditBeatDraft({
+                                  scene_heading: beat.scene_heading || "",
+                                  blocks: getBlocks(beat).map(b => ({ ...b })),
+                                  scene_change: beat.scene_change,
+                                  characters_in_scene: beat.characters_in_scene,
+                                  location_id: beat.location_id,
+                                });
                                 setSelectedBeatIndex(null);
                               }}
                               className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10"
@@ -1386,97 +1539,172 @@ export default function AIVideoPage() {
                           <p className="text-white/50 text-xs font-mono mb-2">{beat.scene_heading}</p>
                         ) : null}
 
-                        {/* Description */}
-                        {isEditing ? (
-                          <textarea
-                            value={draft?.description || ""}
-                            onChange={(e) => setEditBeatDraft(prev => prev ? { ...prev, description: e.target.value } : prev)}
-                            className="w-full bg-[#262626] text-white text-sm rounded-lg px-3 py-2 mb-2 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
-                            rows={3}
-                          />
-                        ) : (
-                          <p className="text-white text-sm">{beat.description}</p>
-                        )}
-
-                        {/* Action */}
-                        {isEditing ? (
-                          <textarea
-                            value={draft?.action || ""}
-                            onChange={(e) => setEditBeatDraft(prev => prev ? { ...prev, action: e.target.value } : prev)}
-                            placeholder="Action: physical movements, gestures..."
-                            className="w-full bg-[#262626] text-white/70 text-sm italic rounded-lg px-3 py-2 mb-2 placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
-                            rows={2}
-                          />
-                        ) : beat.action ? (
-                          <p className="text-white/70 text-sm mt-2 italic">{beat.action}</p>
-                        ) : null}
-
-                        {/* Dialogue */}
-                        {isEditing ? (
-                          <div className="mt-3 space-y-2">
-                            <label className="text-xs text-[#ADADAD]">Dialogue</label>
-                            {(draft?.dialogue || []).map((d, di) => (
-                              <div key={di} className="flex gap-2 items-center">
-                                <input
-                                  value={d.character}
+                        {/* Scene content — blocks */}
+                        {isEditing && draft ? (
+                          /* ── Edit mode: labeled block cards with reorder ── */
+                          <div className="space-y-2">
+                            {draft.blocks.map((block, bi) => (
+                              <div key={bi} className="bg-[#262626] rounded-lg p-3">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-[10px] font-semibold tracking-wider text-white/40 uppercase">
+                                    {block.type}
+                                  </span>
+                                  <div className="flex items-center gap-1">
+                                    {bi > 0 && (
+                                      <button
+                                        onClick={() => {
+                                          const newBlocks = [...draft.blocks];
+                                          [newBlocks[bi - 1], newBlocks[bi]] = [newBlocks[bi], newBlocks[bi - 1]];
+                                          setEditBeatDraft({ ...draft, blocks: newBlocks });
+                                        }}
+                                        className="text-white/40 hover:text-white text-xs px-1"
+                                        title="Move up"
+                                      >
+                                        ↑
+                                      </button>
+                                    )}
+                                    {bi < draft.blocks.length - 1 && (
+                                      <button
+                                        onClick={() => {
+                                          const newBlocks = [...draft.blocks];
+                                          [newBlocks[bi], newBlocks[bi + 1]] = [newBlocks[bi + 1], newBlocks[bi]];
+                                          setEditBeatDraft({ ...draft, blocks: newBlocks });
+                                        }}
+                                        className="text-white/40 hover:text-white text-xs px-1"
+                                        title="Move down"
+                                      >
+                                        ↓
+                                      </button>
+                                    )}
+                                    {draft.blocks.length > 1 && (
+                                      <button
+                                        onClick={() => {
+                                          const newBlocks = draft.blocks.filter((_, i) => i !== bi);
+                                          setEditBeatDraft({ ...draft, blocks: newBlocks });
+                                        }}
+                                        className="text-red-400/60 hover:text-red-400 text-xs px-1 ml-1"
+                                        title="Remove block"
+                                      >
+                                        ×
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                                {block.type === "dialogue" && (
+                                  <select
+                                    value={block.character || ""}
+                                    onChange={(e) => {
+                                      const newBlocks = [...draft.blocks];
+                                      newBlocks[bi] = { ...newBlocks[bi], character: e.target.value };
+                                      setEditBeatDraft({ ...draft, blocks: newBlocks });
+                                    }}
+                                    className="w-full bg-[#1A1E2F] text-white/70 text-sm rounded px-2 py-1 mb-2 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] appearance-none"
+                                  >
+                                    <option value="">Select character...</option>
+                                    {(beat.characters_in_scene || []).map((charId) => {
+                                      const char = story?.characters.find(c => c.id === charId || c.name === charId);
+                                      return (
+                                        <option key={charId} value={char?.name || charId}>
+                                          {char?.name || charId}
+                                        </option>
+                                      );
+                                    })}
+                                    {/* Allow free-type via "Other" */}
+                                    {block.character && !(beat.characters_in_scene || []).some(cid => {
+                                      const char = story?.characters.find(c => c.id === cid || c.name === cid);
+                                      return (char?.name || cid) === block.character;
+                                    }) && (
+                                      <option value={block.character}>{block.character}</option>
+                                    )}
+                                  </select>
+                                )}
+                                <textarea
+                                  value={block.text}
                                   onChange={(e) => {
-                                    const newDialogue = [...(draft?.dialogue || [])];
-                                    newDialogue[di] = { ...newDialogue[di], character: e.target.value };
-                                    setEditBeatDraft(prev => prev ? { ...prev, dialogue: newDialogue } : prev);
+                                    const newBlocks = [...draft.blocks];
+                                    newBlocks[bi] = { ...newBlocks[bi], text: e.target.value };
+                                    setEditBeatDraft({ ...draft, blocks: newBlocks });
                                   }}
-                                  className="w-24 bg-[#262626] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                                  placeholder="Name"
+                                  className={`w-full bg-[#1A1E2F] text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none ${
+                                    block.type === "action" ? "text-white/70 italic" : "text-white"
+                                  }`}
+                                  rows={block.type === "dialogue" ? 2 : 3}
+                                  placeholder={
+                                    block.type === "description" ? "Scene description..." :
+                                    block.type === "action" ? "Physical action, gestures..." :
+                                    "Dialogue line..."
+                                  }
                                 />
-                                <input
-                                  value={d.line}
-                                  onChange={(e) => {
-                                    const newDialogue = [...(draft?.dialogue || [])];
-                                    newDialogue[di] = { ...newDialogue[di], line: e.target.value };
-                                    setEditBeatDraft(prev => prev ? { ...prev, dialogue: newDialogue } : prev);
-                                  }}
-                                  className="flex-1 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                                  placeholder="Line..."
-                                />
-                                <button
-                                  onClick={() => {
-                                    const newDialogue = (draft?.dialogue || []).filter((_, i) => i !== di);
-                                    setEditBeatDraft(prev => prev ? { ...prev, dialogue: newDialogue.length ? newDialogue : null } : prev);
-                                  }}
-                                  className="text-red-400 hover:text-red-300 text-xs px-1"
-                                >
-                                  x
-                                </button>
                               </div>
                             ))}
-                            <button
-                              onClick={() => {
-                                const newDialogue = [...(draft?.dialogue || []), { character: "", line: "" }];
-                                setEditBeatDraft(prev => prev ? { ...prev, dialogue: newDialogue } : prev);
-                              }}
-                              className="text-xs text-[#B8B6FC] hover:text-white"
-                            >
-                              + Add dialogue line
-                            </button>
+                            {/* Add block buttons + counter */}
+                            <div className="flex items-center justify-between pt-1">
+                              <div className="flex gap-2">
+                                {draft.blocks.length < MAX_BLOCKS_PER_SCENE && (
+                                  <>
+                                    <button
+                                      onClick={() => setEditBeatDraft({ ...draft, blocks: [...draft.blocks, { type: "description", text: "" }] })}
+                                      className="text-xs text-[#B8B6FC] hover:text-white px-2 py-1 rounded bg-white/5 hover:bg-white/10"
+                                    >
+                                      + Description
+                                    </button>
+                                    <button
+                                      onClick={() => setEditBeatDraft({ ...draft, blocks: [...draft.blocks, { type: "action", text: "" }] })}
+                                      className="text-xs text-[#B8B6FC] hover:text-white px-2 py-1 rounded bg-white/5 hover:bg-white/10"
+                                    >
+                                      + Action
+                                    </button>
+                                    <button
+                                      onClick={() => setEditBeatDraft({ ...draft, blocks: [...draft.blocks, { type: "dialogue", text: "", character: "" }] })}
+                                      className="text-xs text-[#B8B6FC] hover:text-white px-2 py-1 rounded bg-white/5 hover:bg-white/10"
+                                    >
+                                      + Dialogue
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                              <span className={`text-xs ${draft.blocks.length >= MAX_BLOCKS_PER_SCENE ? "text-amber-400" : "text-white/30"}`}>
+                                {draft.blocks.length}/{MAX_BLOCKS_PER_SCENE} blocks
+                              </span>
+                            </div>
                           </div>
-                        ) : beat.dialogue && beat.dialogue.length > 0 ? (
-                          <div className="mt-3 space-y-1">
-                            {beat.dialogue.map((d, di) => (
-                              <p key={di} className="text-[#ADADAD] text-sm">
-                                <span className="text-white/70 font-medium">{d.character}:</span>{" "}
-                                &ldquo;{d.line}&rdquo;
-                              </p>
+                        ) : (
+                          /* ── Read mode: clean script text, no labels ── */
+                          <div className="space-y-2">
+                            {getBlocks(beat).map((block, bi) => (
+                              block.type === "dialogue" ? (
+                                <p key={bi} className="text-[#ADADAD] text-sm">
+                                  <span className="text-white/70 font-medium">{block.character}:</span>{" "}
+                                  &ldquo;{block.text}&rdquo;
+                                </p>
+                              ) : block.type === "action" ? (
+                                <p key={bi} className="text-white/70 text-sm italic">{block.text}</p>
+                              ) : (
+                                <p key={bi} className="text-white text-sm">{block.text}</p>
+                              )
                             ))}
                           </div>
-                        ) : null}
+                        )}
 
                         {/* Edit mode: save/cancel buttons */}
-                        {isEditing && (
+                        {isEditing && draft && (
                           <div className="flex gap-2 mt-4 pt-3 border-t border-white/10">
                             <button
                               onClick={() => {
-                                if (draft && story) {
+                                if (story) {
+                                  const legacy = blocksToLegacy(draft.blocks);
                                   const updatedBeats = [...story.beats];
-                                  updatedBeats[index] = { ...draft };
+                                  updatedBeats[index] = {
+                                    ...story.beats[index],
+                                    scene_heading: draft.scene_heading,
+                                    blocks: draft.blocks,
+                                    scene_change: draft.scene_change,
+                                    characters_in_scene: draft.characters_in_scene,
+                                    location_id: draft.location_id,
+                                    description: legacy.description,
+                                    action: legacy.action,
+                                    dialogue: legacy.dialogue,
+                                  };
                                   setStory({ ...story, beats: updatedBeats });
                                 }
                                 setEditingBeatIndex(null);
@@ -2073,9 +2301,19 @@ export default function AIVideoPage() {
                               </div>
                             )}
                           </div>
-                          <p className="text-white text-sm font-medium text-center">
+                          <p className="text-white text-sm font-medium text-center mb-1">
                             Scene {shotNum}
                           </p>
+                          {completedShot?.veo_prompt && (
+                            <details className="mb-1">
+                              <summary className="text-[10px] text-[#9C99FF] cursor-pointer hover:text-white text-center">
+                                View Veo Prompt
+                              </summary>
+                              <pre className="mt-1 text-[9px] text-[#888] bg-[#0D0F1A] rounded p-2 whitespace-pre-wrap break-words max-h-40 overflow-y-auto leading-relaxed">
+                                {completedShot.veo_prompt}
+                              </pre>
+                            </details>
+                          )}
                         </div>
 
                         {/* Plus connector between cards */}
@@ -2143,9 +2381,21 @@ export default function AIVideoPage() {
                               )}
                             </div>
 
-                            <p className="text-white text-sm font-medium text-center mb-2">
+                            <p className="text-white text-sm font-medium text-center mb-1">
                               Scene {shot.number}
                             </p>
+
+                            {/* Veo prompt toggle */}
+                            {shot.veo_prompt && (
+                              <details className="mb-2">
+                                <summary className="text-[10px] text-[#9C99FF] cursor-pointer hover:text-white text-center">
+                                  View Veo Prompt
+                                </summary>
+                                <pre className="mt-1 text-[9px] text-[#888] bg-[#0D0F1A] rounded p-2 whitespace-pre-wrap break-words max-h-40 overflow-y-auto leading-relaxed">
+                                  {shot.veo_prompt}
+                                </pre>
+                              </details>
+                            )}
 
                             {/* Feedback input + regenerate */}
                             <input

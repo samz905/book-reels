@@ -83,7 +83,14 @@
       "WebFetch(domain:docs.cloud.google.com)",
       "WebFetch(domain:ltx.studio)",
       "WebFetch(domain:subscribr.ai)",
-      "WebFetch(domain:developers.googleblog.com)"
+      "WebFetch(domain:developers.googleblog.com)",
+      "WebFetch(domain:trivision.com)",
+      "WebFetch(domain:letsenhance.io)",
+      "WebFetch(domain:openreview.net)",
+      "WebFetch(domain:dylancastillo.co)",
+      "Bash(python \"c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\\\\backend\\\\-c\" \"from app.routers.story import build_story_prompt; print\\(''ok''\\)\")",
+      "Bash(cmd /c \"cd /d c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\\\\backend && python -c \"\"from app.routers.story import build_story_prompt; print\\(''story OK''\\)\"\" && python -c \"\"from app.routers.film import generate_shot_with_retry; print\\(''film OK''\\)\"\"\")",
+      "Bash(cmd /c 'cd /d c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\\\\backend && python -c \"\"from app.routers.story import build_story_prompt; print\\(\\\\\"\"story OK\\\\\"\"\\)\"\"')"
     ]
   },
   "enableAllProjectMcpServers": true,

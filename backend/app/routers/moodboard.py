@@ -264,8 +264,8 @@ Show enough detail to establish their complete look."""
     if use_reference:
         prompt += """
 
-CRITICAL: Match the visual style of the reference image exactly.
-Same eye style, same proportions, same line weight, same color treatment."""
+STYLE REFERENCE ONLY: Match the art style, color palette, lighting, and rendering quality of the reference image.
+Do NOT copy the reference person's face, body, or features. Generate a completely different-looking person based on the character description above."""
 
     prompt += "\n\nPortrait orientation, 9:16 aspect ratio."
 
@@ -838,9 +838,14 @@ async def generate_key_moment(request: GenerateKeyMomentRequest):
             resolution="2K"
         )
 
+        # Derive description from blocks if legacy field is None
+        beat_desc = beat.description or " ".join(
+            b.text for b in (beat.blocks or []) if b.type in ("description", "action")
+        ) or "Scene moment"
+
         key_moment = KeyMomentImage(
             beat_number=beat.number,
-            beat_description=beat.description,
+            beat_description=beat_desc,
             image=MoodboardImage(
                 type="key_moment",
                 image_base64=result["image_base64"],
@@ -911,10 +916,14 @@ async def refine_key_moment(request: RefineKeyMomentRequest):
             resolution="2K"
         )
 
+        beat_desc = beat.description or " ".join(
+            b.text for b in (beat.blocks or []) if b.type in ("description", "action")
+        ) or "Scene moment"
+
         return RefineKeyMomentResponse(
             key_moment=KeyMomentImage(
                 beat_number=beat.number,
-                beat_description=beat.description,
+                beat_description=beat_desc,
                 image=MoodboardImage(
                     type="key_moment",
                     image_base64=result["image_base64"],
