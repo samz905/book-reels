@@ -7,6 +7,12 @@ load_dotenv()
 
 # Configuration
 GOOGLE_GENAI_API_KEY = os.getenv("GOOGLE_GENAI_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+# Text generation provider: "claude" or "gemini"
+# Switch this to change ALL text gen calls at once
+TEXT_PROVIDER = os.getenv("TEXT_PROVIDER", "claude")
+
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", 8000))
 

@@ -715,7 +715,6 @@ async def generate_story(request: GenerateStoryRequest):
         response = await generate_text(
             prompt=prompt,
             system_prompt=STORY_SYSTEM_PROMPT,
-            model="gemini-2.0-flash"
         )
 
         story = parse_story_response(response, request.style)
@@ -751,7 +750,6 @@ async def regenerate_story(request: RegenerateStoryRequest):
         response = await generate_text(
             prompt=prompt,
             system_prompt=STORY_SYSTEM_PROMPT,
-            model="gemini-2.0-flash"
         )
 
         story = parse_story_response(response, request.style)
@@ -995,7 +993,6 @@ async def generate_story_internal(request: GenerateStoryRequest):
         response = await generate_text(
             prompt=prompt,
             system_prompt=STORY_SYSTEM_PROMPT,
-            model="gemini-2.0-flash"
         )
 
         story = parse_story_response(response, request.style)

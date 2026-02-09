@@ -56,10 +56,11 @@ router = APIRouter()
 # ============================================================
 
 STYLE_PREFIXES = {
-    "cinematic": "Cinematic shot, photorealistic, shot on 35mm film, shallow depth of field, natural lighting, film grain, professional cinematography",
-    "3d_animated": "3D animated, Pixar-style rendering, stylized realism, expressive features, vibrant colors, clean lighting, appealing design",
-    "2d_animated": "2D animated, illustrated style, hand-drawn aesthetic, bold outlines, stylized, expressive, graphic shapes, flat lighting with soft shadows",
+    "cinematic": "Cinematic, photorealistic, 35mm film, shallow depth of field, natural lighting.",
+    "3d_animated": "3D animated, Pixar-style, stylized realism, expressive, vibrant colors.",
+    "2d_animated": "2D animated, hand-drawn, bold outlines, stylized, flat lighting.",
 }
+
 
 # Beat-type to cinematography defaults (from prompting guide)
 BEAT_CINEMATOGRAPHY = {
@@ -95,6 +96,8 @@ class GenerateFilmRequest(BaseModel):
     story: Story
     approved_visuals: ApprovedVisuals
     key_moment_image: KeyMomentRef  # Single SPIKE key moment for video reference
+    beat_numbers: Optional[List[int]] = None  # If provided, only preview these beats
+    generation_id: Optional[str] = None  # Link to generation session
 
 
 class GenerateFilmResponse(BaseModel):
@@ -130,7 +133,7 @@ class CostBreakdown(BaseModel):
 
 class FilmStatusResponse(BaseModel):
     film_id: str
-    status: Literal["generating", "assembling", "ready", "failed"]
+    status: Literal["generating", "assembling", "ready", "failed", "interrupted"]
     current_shot: int
     total_shots: int
     phase: Literal["keyframe", "filming", "assembling"]
@@ -180,13 +183,21 @@ class FilmJob:
     cost_scene_refs: float = 0.0
     cost_videos: float = 0.0
 
+    # Link to generation session (for persistence)
+    generation_id: Optional[str] = None
+
     @property
     def cost_total(self) -> float:
         return self.cost_scene_refs + self.cost_videos
 
 
-# In-memory storage (MVP - would use Redis/DB in production)
+# In-memory storage (write-through cache — backed by SQLite)
 film_jobs: Dict[str, FilmJob] = {}
+
+
+async def persist_film_job(job: FilmJob) -> None:
+    """No-op: persistence moved to Supabase on the frontend side."""
+    pass
 
 
 # ============================================================
@@ -445,80 +456,139 @@ Portrait orientation, 9:16 aspect ratio."""
     return list(results)
 
 
-def build_veo_prompt(beat: Beat, story: Story, director_script: Optional[DirectorScript] = None) -> str:
-    """Build the Veo prompt for a video shot using blocks + director script.
+def _build_char_visual_tags(story: Story) -> dict:
+    """Build contrastive visual descriptors so Veo can tell characters apart.
 
-    Format optimized for Veo:
-    - Style prefix
-    - Scene heading
-    - Camera direction (from director script or defaults)
-    - Scene content (blocks in order, dialogue with delivery verbs)
-    - SOUND section (prevents audio hallucination)
-    - Aspect ratio + duration
+    When characters share the same gender, age becomes the primary differentiator:
+      "the young man" vs "the older man"
+    When genders differ, gender alone is enough:
+      "the woman" vs "the man"
+    A distinctive visual detail (hair, clothing) is appended for extra clarity.
     """
-    style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
+    # Count how many characters share each gender
+    gender_counts: dict = {}
+    for char in story.characters:
+        gender_counts[char.gender] = gender_counts.get(char.gender, 0) + 1
 
-    # Get location for this beat
-    location_desc = ""
-    if beat.location_id and story.locations:
-        loc = next((l for l in story.locations if l.id == beat.location_id), None)
-        if loc:
-            location_desc = loc.description
-    if not location_desc and story.setting:
-        location_desc = f"{story.setting.location}, {story.setting.time}"
+    tags = {}
+    for char in story.characters:
+        # Pick the most distinctive visual detail (hair/clothing/accessory)
+        details = [d.strip().lower() for d in char.appearance.split(",") if char.appearance]
+        # First detail is often body type — prefer second if available
+        visual = details[1] if len(details) > 1 else (details[0] if details else "")
 
-    heading = beat.scene_heading or ""
+        same_gender_count = gender_counts.get(char.gender, 1)
 
+        if same_gender_count > 1:
+            # Multiple characters share this gender — use age to differentiate
+            # e.g. "the young man with close-cropped black hair"
+            # vs   "the older man with silver-streaked hair"
+            if visual:
+                tags[char.name] = f"the {char.age} {char.gender} with {visual}"
+            else:
+                tags[char.name] = f"the {char.age} {char.gender}"
+        else:
+            # Unique gender — gender alone is distinctive enough
+            # e.g. "the woman with red scarf" vs "the man with glasses"
+            if visual:
+                tags[char.name] = f"the {char.gender} with {visual}"
+            else:
+                tags[char.name] = f"the {char.gender}"
+
+    return tags
+
+
+def build_veo_prompt(beat: Beat, story: Story, director_script: Optional[DirectorScript] = None) -> str:
+    """Build a concise Veo prompt optimized for reference-image-driven generation.
+
+    With 3 scene refs showing characters + setting, the text prompt shifts from
+    DESCRIPTION to DIRECTION: camera, action, dialogue, sound.
+
+    Research-backed approach (Reddit + community guides):
+    - 100-150 words max; front-load composition
+    - Combine action + dialogue into grounded sentences for attribution
+    - Use visual descriptors (clothing/hair), not character names
+    - Colon syntax without quotation marks prevents subtitle rendering
+    - "focusing on [speaker]" guides camera framing
+    - Explicit SOUND section prevents hallucinated audio (studio laughter etc.)
+    - End with "No subtitles. No text overlay."
+    """
     # Camera direction from director script or defaults
     if director_script:
-        camera_line = f"{director_script.shot_type}, {director_script.camera_angle}, {director_script.camera_movement}."
+        shot_type = director_script.shot_type
+        camera_movement = director_script.camera_movement
         sound_line = director_script.sound_design
-        style_note = f" {director_script.style_note}." if director_script.style_note else ""
     else:
         ds = default_director_script(beat)
-        camera_line = f"{ds.shot_type}, {ds.camera_angle}, {ds.camera_movement}."
+        shot_type = ds.shot_type
+        camera_movement = ds.camera_movement
         sound_line = "Ambient sounds matching the scene."
-        style_note = ""
 
-    # Build delivery verb lookup from director script
+    # Build delivery verb lookup
     delivery_verbs: dict = {}
     if director_script and director_script.dialogue_delivery:
         for dd in director_script.dialogue_delivery:
             if isinstance(dd, dict) and "character" in dd and "verb" in dd:
                 delivery_verbs[dd["character"]] = dd["verb"]
 
-    prompt = f"""{style_prefix}
+    # Build visual descriptor tags for characters
+    char_tags = _build_char_visual_tags(story)
 
-{heading}
-{location_desc}{style_note}
+    # Extract actions and dialogue from blocks (or legacy fields)
+    actions = []
+    dialogue_entries = []  # type: list  # (visual_tag, verb, line_text)
 
-{camera_line}
-
-"""
-
-    # Render blocks in order (or fall back to legacy fields)
     if beat.blocks:
         for block in beat.blocks:
-            if block.type == "description":
-                prompt += f"{block.text}\n"
-            elif block.type == "action":
-                prompt += f"{block.text}\n"
+            if block.type == "action":
+                actions.append(block.text)
             elif block.type == "dialogue" and block.character:
                 verb = delivery_verbs.get(block.character, "says")
-                prompt += f'{block.character} {verb}: "{block.text}"\n'
+                tag = char_tags.get(block.character, block.character)
+                dialogue_entries.append((tag, verb, block.text))
     else:
-        if beat.description:
-            prompt += f"{beat.description}\n"
         if beat.action:
-            prompt += f"{beat.action}\n"
+            actions.append(beat.action)
         if beat.dialogue:
             for d in beat.dialogue:
                 verb = delivery_verbs.get(d.character, "says")
-                prompt += f'{d.character} {verb}: "{d.line}"\n'
+                tag = char_tags.get(d.character, d.character)
+                dialogue_entries.append((tag, verb, d.line))
 
-    prompt += f"\nSOUND: {sound_line}\n\nPortrait 9:16, 8 seconds."
+    # Determine primary speaker for camera focus
+    primary_speaker_tag = dialogue_entries[0][0] if dialogue_entries else None
 
-    return prompt
+    # Build camera line with speaker focus
+    if primary_speaker_tag:
+        camera_line = f"{shot_type}, {camera_movement}, focusing on {primary_speaker_tag}."
+    else:
+        camera_line = f"{shot_type}, {camera_movement}."
+
+    parts = [camera_line]
+
+    # Combine first action + first dialogue into a grounded sentence
+    # e.g. "The young man steps onto the mat, saying: I didn't come here to bow."
+    # This grounds the dialogue to a specific character via shared action.
+    if actions and dialogue_entries:
+        first_tag, first_verb, first_line = dialogue_entries[0]
+        parts.append(f"{first_tag.capitalize()} {actions[0].rstrip('.')}, {first_verb}: {first_line}")
+        # Remaining dialogue lines as standalone
+        for idx in range(1, len(dialogue_entries)):
+            tag, verb, line = dialogue_entries[idx]
+            parts.append(f"{tag.capitalize()} {verb}: {line}")
+    elif dialogue_entries:
+        # No action — dialogue only
+        for entry in dialogue_entries:
+            tag, verb, line = entry
+            parts.append(f"{tag.capitalize()} {verb}: {line}")
+    elif actions:
+        # No dialogue — action only
+        parts.append(actions[0])
+
+    parts.append(f"SOUND: {sound_line}")
+    parts.append("No subtitles. No text overlay. Portrait 9:16, 8 seconds.")
+
+    return "\n".join(parts)
 
 
 async def download_video(video_url: str, film_id: str, shot_number: int) -> str:
@@ -592,9 +662,12 @@ async def process_single_shot(
     beat: Beat,
     job: "FilmJob",
     director_script: Optional[DirectorScript] = None,
+    prompt_override: Optional[str] = None,
+    reference_image: Optional[dict] = None,
 ) -> None:
     """Process a single shot: generate scene refs → generate video → download.
 
+    If reference_image is provided (key moment), skip scene ref generation and use it directly.
     Updates job.completed_shots and cost fields in-place.
     Safe in asyncio (single-threaded, no lock needed).
     """
@@ -606,20 +679,25 @@ async def process_single_shot(
     if director_script:
         print(f"Director: {director_script.shot_type}, {director_script.camera_movement}")
 
-    # STEP 1: Generate 3 scene-specific reference images via Nano Banana
-    print(f"[Shot {beat.number}] Generating 3 scene-specific reference images...")
-    scene_refs = await generate_scene_references(
-        beat=beat,
-        story=job.story,
-        approved_visuals=job.approved_visuals,
-        director_script=director_script,
-    )
-    job.cost_scene_refs += COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT
-    print(f"[Shot {beat.number}] Scene refs generated (cost: ${COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT:.2f})")
+    if reference_image:
+        # Use provided key moment image as single reference (no scene ref generation)
+        scene_refs = [reference_image]
+        print(f"[Shot {beat.number}] Using key moment image as reference (no scene ref generation)")
+    else:
+        # STEP 1: Generate 3 scene-specific reference images via Nano Banana
+        print(f"[Shot {beat.number}] Generating 3 scene-specific reference images...")
+        scene_refs = await generate_scene_references(
+            beat=beat,
+            story=job.story,
+            approved_visuals=job.approved_visuals,
+            director_script=director_script,
+        )
+        job.cost_scene_refs += COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT
+        print(f"[Shot {beat.number}] Scene refs generated (cost: ${COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT:.2f})")
 
-    # STEP 2: Generate video shot with director script + negative prompt
-    shot_prompt = build_veo_prompt(beat, job.story, director_script)
-    print(f"[Shot {beat.number}] Generating video with {len(scene_refs)} scene refs...")
+    # STEP 2: Generate video shot (use override prompt if provided, else build from scratch)
+    shot_prompt = prompt_override if prompt_override else build_veo_prompt(beat, job.story, director_script)
+    print(f"[Shot {beat.number}] Generating video with {len(scene_refs)} ref(s)...")
     video_result = await generate_shot_with_retry(
         beat=beat,
         prompt=shot_prompt,
@@ -644,11 +722,22 @@ async def process_single_shot(
         veo_prompt=shot_prompt,
     ))
     job.current_shot = len(job.completed_shots)
+    await persist_film_job(job)
     print(f"[Shot {beat.number}] Complete! ({job.current_shot}/{job.total_shots} done)")
 
 
-async def run_film_generation(film_id: str):
-    """Background task to generate all shots in parallel using per-scene reference generation."""
+async def run_film_generation(
+    film_id: str,
+    prompt_overrides: Optional[Dict[int, str]] = None,
+    shot_references: Optional[Dict[int, dict]] = None,
+):
+    """Background task to generate all shots in parallel.
+
+    Args:
+        film_id: The film job ID
+        prompt_overrides: Optional dict of beat_number -> veo_prompt for user-edited prompts
+        shot_references: Optional dict of beat_number -> {image_base64, mime_type} key moment refs
+    """
     job = film_jobs.get(film_id)
     if not job:
         return
@@ -659,12 +748,18 @@ async def run_film_generation(film_id: str):
         print(f"Total shots: {job.total_shots}")
         print(f"{'='*60}\n")
 
-        # Limit beats for testing if configured
-        beats_to_process = job.story.beats
-        if MAX_SHOTS_FOR_TESTING is not None:
+        # Determine which beats to process
+        if prompt_overrides:
+            # When user provided edited prompts, only process those beats
+            beats_to_process = [b for b in job.story.beats if b.number in prompt_overrides]
+            print(f"EDITED PROMPTS: Processing {len(beats_to_process)} beats with user-edited prompts")
+            job.total_shots = len(beats_to_process)
+        elif MAX_SHOTS_FOR_TESTING is not None:
             beats_to_process = job.story.beats[:MAX_SHOTS_FOR_TESTING]
             print(f"TESTING MODE: Limiting to {MAX_SHOTS_FOR_TESTING} shots")
             job.total_shots = len(beats_to_process)
+        else:
+            beats_to_process = job.story.beats
 
         # Generate director scripts (one Gemini call for all scenes)
         print("Generating director scripts...")
@@ -675,8 +770,13 @@ async def run_film_generation(film_id: str):
 
         # Launch all shots in parallel
         job.phase = "filming"
+        await persist_film_job(job)
         tasks = [
-            process_single_shot(i, beat, job, ds_map.get(beat.number))
+            process_single_shot(
+                i, beat, job, ds_map.get(beat.number),
+                prompt_override=prompt_overrides.get(beat.number) if prompt_overrides else None,
+                reference_image=shot_references.get(beat.number) if shot_references else None,
+            )
             for i, beat in enumerate(beats_to_process)
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -703,12 +803,14 @@ async def run_film_generation(film_id: str):
         print(f"{'='*60}\n")
 
         job.phase = "assembling"
+        await persist_film_job(job)
         video_paths = [shot.video_path for shot in job.completed_shots]
 
         assembly_result = await assemble_videos(video_paths, crossfade_duration=0.0)
 
         job.final_video_path = assembly_result["output_path"]
         job.status = "ready"
+        await persist_film_job(job)
 
         print(f"\n{'='*60}")
         print(f"Film generation complete!")
@@ -726,6 +828,127 @@ async def run_film_generation(film_id: str):
 
         job.status = "failed"
         job.error_message = str(e)
+        await persist_film_job(job)
+
+
+# ============================================================
+# Preview / Debug Endpoints
+# ============================================================
+
+class ShotPromptPreview(BaseModel):
+    beat_number: int
+    scene_heading: Optional[str] = None
+    veo_prompt: str
+    characters_in_scene: Optional[List[str]] = None
+    location_id: Optional[str] = None
+
+
+class PreviewPromptsResponse(BaseModel):
+    shots: List[ShotPromptPreview]
+    estimated_cost_usd: float
+
+
+class EditedShot(BaseModel):
+    beat_number: int
+    veo_prompt: str
+    reference_image: Optional[ReferenceImage] = None  # Key moment image for this shot
+
+
+class GenerateWithPromptsRequest(BaseModel):
+    story: Story
+    approved_visuals: ApprovedVisuals
+    key_moment_image: KeyMomentRef
+    edited_shots: List[EditedShot]
+    generation_id: Optional[str] = None  # Link to generation session
+
+
+@router.post("/preview-prompts", response_model=PreviewPromptsResponse)
+async def preview_prompts(request: GenerateFilmRequest):
+    """
+    Generate and return Veo prompts for first N beats WITHOUT generating video.
+    Calls generate_director_scripts (cheap Gemini Flash call) then build_veo_prompt (pure formatting).
+    User can review, edit, and copy these prompts before committing to generation.
+    """
+    story = request.story
+
+    # If beat_numbers provided (from key moments), use those; else first N
+    if request.beat_numbers:
+        beat_set = set(request.beat_numbers)
+        beats_to_process = [b for b in story.beats if b.number in beat_set]
+        # Sort by original order
+        beats_to_process.sort(key=lambda b: b.number)
+    else:
+        beats_to_process = story.beats[:MAX_SHOTS_FOR_TESTING] if MAX_SHOTS_FOR_TESTING else story.beats
+
+    # Generate director scripts (one Gemini Flash call, ~$0.001)
+    director_scripts = await generate_director_scripts(story, beats_to_process)
+    ds_map = {ds.scene_number: ds for ds in director_scripts}
+
+    shots = []
+    for beat in beats_to_process:
+        ds = ds_map.get(beat.number)
+        veo_prompt = build_veo_prompt(beat, story, ds)
+        shots.append(ShotPromptPreview(
+            beat_number=beat.number,
+            scene_heading=beat.scene_heading,
+            veo_prompt=veo_prompt,
+            characters_in_scene=beat.characters_in_scene,
+            location_id=beat.location_id,
+        ))
+
+    # Cost estimate: video generation only (key moments already serve as refs)
+    num_shots = len(shots)
+    estimated_cost = num_shots * COST_PER_VIDEO
+
+    return PreviewPromptsResponse(
+        shots=shots,
+        estimated_cost_usd=round(estimated_cost, 2),
+    )
+
+
+@router.post("/generate-with-prompts", response_model=GenerateFilmResponse)
+async def generate_film_with_prompts(request: GenerateWithPromptsRequest, background_tasks: BackgroundTasks):
+    """
+    Start film generation using user-edited Veo prompts.
+    Same as /generate but uses provided prompts instead of build_veo_prompt().
+    """
+    film_id = uuid.uuid4().hex[:12]
+
+    # Filter beats to only the ones we have prompts for
+    prompt_map = {s.beat_number: s.veo_prompt for s in request.edited_shots}
+    beats_to_process = [b for b in request.story.beats if b.number in prompt_map]
+
+    job = FilmJob(
+        film_id=film_id,
+        status="generating",
+        created_at=datetime.now(),
+        story=request.story,
+        approved_visuals=request.approved_visuals,
+        key_moment_image=request.key_moment_image,
+        total_shots=len(beats_to_process),
+        generation_id=request.generation_id,
+    )
+
+    film_jobs[film_id] = job
+    await persist_film_job(job)
+
+    # Build per-shot reference images from key moments (if provided)
+    shot_refs: Optional[Dict[int, dict]] = None
+    ref_map = {s.beat_number: s.reference_image for s in request.edited_shots if s.reference_image}
+    if ref_map:
+        shot_refs = {
+            bn: {"image_base64": ref.image_base64, "mime_type": ref.mime_type}
+            for bn, ref in ref_map.items()
+        }
+
+    # Start generation in background with prompt overrides + per-shot refs
+    background_tasks.add_task(run_film_generation, film_id, prompt_map, shot_refs)
+
+    return GenerateFilmResponse(
+        film_id=film_id,
+        status="generating",
+        total_shots=job.total_shots,
+    )
 
 
 # ============================================================
@@ -749,9 +972,11 @@ async def generate_film(request: GenerateFilmRequest, background_tasks: Backgrou
         approved_visuals=request.approved_visuals,
         key_moment_image=request.key_moment_image,
         total_shots=len(request.story.beats),
+        generation_id=request.generation_id,
     )
 
     film_jobs[film_id] = job
+    await persist_film_job(job)
 
     # Start generation in background
     background_tasks.add_task(run_film_generation, film_id)
@@ -766,57 +991,60 @@ async def generate_film(request: GenerateFilmRequest, background_tasks: Backgrou
 @router.get("/{film_id}", response_model=FilmStatusResponse)
 async def get_film_status(film_id: str):
     """
-    Poll film generation status.
+    Poll film generation status. Checks memory first, falls back to DB.
     """
     job = film_jobs.get(film_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Film not found")
 
-    completed_shots = [
-        CompletedShotInfo(
-            number=shot.number,
-            preview_url=f"/film/{film_id}/shot/{shot.number}",
-            veo_prompt=shot.veo_prompt,
+    if job:
+        # Serve from in-memory (active generation)
+        completed_shots = [
+            CompletedShotInfo(
+                number=shot.number,
+                preview_url=f"/film/{film_id}/shot/{shot.number}",
+                veo_prompt=shot.veo_prompt,
+            )
+            for shot in job.completed_shots
+        ]
+        return FilmStatusResponse(
+            film_id=job.film_id,
+            status=job.status,
+            current_shot=job.current_shot,
+            total_shots=job.total_shots,
+            phase=job.phase,
+            completed_shots=completed_shots,
+            final_video_url=f"/film/{film_id}/final" if job.final_video_path else None,
+            error_message=job.error_message,
+            cost=CostBreakdown(
+                scene_refs_usd=round(job.cost_scene_refs, 4),
+                videos_usd=round(job.cost_videos, 4),
+                total_usd=round(job.cost_total, 4),
+            ),
         )
-        for shot in job.completed_shots
-    ]
 
-    return FilmStatusResponse(
-        film_id=job.film_id,
-        status=job.status,
-        current_shot=job.current_shot,
-        total_shots=job.total_shots,
-        phase=job.phase,
-        completed_shots=completed_shots,
-        final_video_url=f"/film/{film_id}/final" if job.final_video_path else None,
-        error_message=job.error_message,
-        cost=CostBreakdown(
-            scene_refs_usd=round(job.cost_scene_refs, 4),
-            videos_usd=round(job.cost_videos, 4),
-            total_usd=round(job.cost_total, 4),
-        ),
-    )
+    # No DB fallback — persistence is on frontend (Supabase)
+    raise HTTPException(status_code=404, detail="Film not found")
 
 
 @router.get("/{film_id}/shot/{shot_number}")
 async def get_shot_preview(film_id: str, shot_number: int):
     """
-    Stream a completed shot video.
+    Stream a completed shot video. Checks memory first, falls back to DB.
     """
+    video_path = None
+
     job = film_jobs.get(film_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Film not found")
+    if job:
+        shot = next((s for s in job.completed_shots if s.number == shot_number), None)
+        if shot:
+            video_path = shot.video_path
 
-    # Find the shot
-    shot = next((s for s in job.completed_shots if s.number == shot_number), None)
-    if not shot:
+    if not video_path:
         raise HTTPException(status_code=404, detail="Shot not found")
-
-    if not os.path.exists(shot.video_path):
+    if not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail="Video file not found")
 
     return FileResponse(
-        shot.video_path,
+        video_path,
         media_type="video/mp4",
         filename=f"shot_{shot_number:02d}.mp4",
     )
@@ -825,24 +1053,27 @@ async def get_shot_preview(film_id: str, shot_number: int):
 @router.get("/{film_id}/final")
 async def get_final_video(film_id: str):
     """
-    Stream the final assembled video.
+    Stream the final assembled video. Checks memory first, falls back to DB.
     """
+    final_path = None
+    title = "film"
+
     job = film_jobs.get(film_id)
     if not job:
         raise HTTPException(status_code=404, detail="Film not found")
-
     if job.status != "ready" or not job.final_video_path:
         raise HTTPException(status_code=400, detail="Film not ready yet")
+    final_path = job.final_video_path
+    title = job.story.title
 
-    if not os.path.exists(job.final_video_path):
+    if not final_path or not os.path.exists(final_path):
         raise HTTPException(status_code=404, detail="Video file not found")
 
-    # Use story title for filename
-    safe_title = "".join(c for c in job.story.title if c.isalnum() or c in " -_").strip()
+    safe_title = "".join(c for c in title if c.isalnum() or c in " -_").strip()
     filename = f"{safe_title or 'film'}.mp4"
 
     return FileResponse(
-        job.final_video_path,
+        final_path,
         media_type="video/mp4",
         filename=filename,
     )
@@ -955,6 +1186,7 @@ async def run_shot_regeneration(job: FilmJob, beat: Beat, feedback: Optional[str
         assembly_result = await assemble_videos(video_paths, crossfade_duration=0.0)
         job.final_video_path = assembly_result["output_path"]
         job.status = "ready"
+        await persist_film_job(job)
 
         print(f"Shot {beat.number} regenerated successfully!")
 
@@ -963,3 +1195,4 @@ async def run_shot_regeneration(job: FilmJob, beat: Beat, feedback: Optional[str
         print(f"Shot regeneration failed: {e}")
         print(traceback.format_exc())
         job.error_message = f"Shot {beat.number} regeneration failed: {e}"
+        await persist_film_job(job)

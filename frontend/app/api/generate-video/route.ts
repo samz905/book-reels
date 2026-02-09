@@ -18,9 +18,14 @@ function getAI(): GoogleGenAI {
 const operations = new Map<string, GenerateVideosOperation>();
 
 // POST - Start video generation
+// Supports 3 mutually exclusive modes:
+//   1. Reference Images: { prompt, referenceImages: [{base64, mimeType}] }
+//   2. Image to Video:   { prompt, image: {base64, mimeType}, lastFrame?: {base64, mimeType} }
+//   3. Video Extend:     { prompt, video: {base64, mimeType} }
 export async function POST(request: NextRequest) {
   try {
-    const { prompt } = await request.json();
+    const body = await request.json();
+    const { prompt, referenceImages, image, lastFrame, video } = body;
 
     if (!prompt || typeof prompt !== "string") {
       return NextResponse.json(
@@ -29,12 +34,64 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log("Starting video generation with prompt:", prompt);
+    // Build config and top-level request params
+    const config: Record<string, unknown> = {
+      aspectRatio: "9:16",
+      durationSeconds: 8,
+    };
 
-    const operation = await getAI().models.generateVideos({
+    const requestParams: Record<string, unknown> = {
       model: "veo-3.1-generate-preview",
       prompt: prompt,
-    });
+    };
+
+    if (video) {
+      // Mode 3: Video Extend — `video` is a top-level param, 720p only
+      console.log("Starting video EXTEND generation");
+      requestParams.video = {
+        videoBytes: video.base64,
+        mimeType: video.mimeType || "video/mp4",
+      };
+      // Video extend requires 720p
+      config.aspectRatio = body.aspectRatio || "9:16";
+    } else if (image) {
+      // Mode 2: Image to Video — `image` is a top-level param (NOT in config)
+      console.log("Starting IMAGE-TO-VIDEO generation");
+      requestParams.image = {
+        imageBytes: image.base64,
+        mimeType: image.mimeType || "image/png",
+      };
+      if (lastFrame) {
+        // Optional ending frame goes in config
+        config.lastFrame = {
+          image: {
+            imageBytes: lastFrame.base64,
+            mimeType: lastFrame.mimeType || "image/png",
+          },
+        };
+        console.log("  With ending frame (interpolation mode)");
+      }
+    } else if (referenceImages && Array.isArray(referenceImages) && referenceImages.length > 0) {
+      // Mode 1: Reference Images — goes in config.referenceImages
+      console.log(`Starting video generation with ${referenceImages.length} reference image(s)`);
+      config.referenceImages = referenceImages.slice(0, 3).map(
+        (ref: { base64: string; mimeType: string }) => ({
+          image: {
+            imageBytes: ref.base64,
+            mimeType: ref.mimeType || "image/png",
+          },
+          referenceType: "ASSET",
+        })
+      );
+    } else {
+      console.log("Starting text-only video generation");
+    }
+
+    requestParams.config = config;
+    console.log("Prompt:", prompt.slice(0, 100) + "...");
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const operation = await getAI().models.generateVideos(requestParams as any);
 
     const operationId = operation.name || `op_${Date.now()}`;
     operations.set(operationId, operation);
@@ -71,7 +128,7 @@ export async function GET(request: NextRequest) {
     console.log("Checking status for operation:", operationName);
 
     // Get stored operation
-    let storedOperation = operations.get(operationName);
+    const storedOperation = operations.get(operationName);
 
     if (!storedOperation) {
       return NextResponse.json(

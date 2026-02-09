@@ -2,6 +2,7 @@
 Moodboard generation endpoints for AI video workflow.
 Step-by-step visual direction: Characters -> Setting -> Key Moment (SPIKE)
 """
+import asyncio
 import uuid
 from typing import Optional, Literal, List, Dict
 from fastapi import APIRouter, HTTPException
@@ -44,11 +45,13 @@ class ReferenceImage(BaseModel):
 # --- Protagonist (Style Anchor) ---
 class GenerateProtagonistRequest(BaseModel):
     story: Story
+    count: int = 1  # Number of images to generate (1-3)
 
 
 class GenerateProtagonistResponse(BaseModel):
     character_id: str
     image: MoodboardImage
+    images: List[MoodboardImage] = []  # All generated options (when count > 1)
     prompt_used: str
     cost_usd: float = 0.0
 
@@ -58,11 +61,13 @@ class GenerateCharacterRequest(BaseModel):
     story: Story
     character_id: str
     protagonist_image: Optional[ReferenceImage] = None  # Style anchor for consistency
+    count: int = 1  # Number of images to generate (1-3)
 
 
 class GenerateCharacterResponse(BaseModel):
     character_id: str
     image: MoodboardImage
+    images: List[MoodboardImage] = []  # All generated options (when count > 1)
     prompt_used: str
     cost_usd: float = 0.0
 
@@ -72,6 +77,7 @@ class RefineCharacterRequest(BaseModel):
     character_id: str
     feedback: str
     protagonist_image: Optional[ReferenceImage] = None  # Style anchor for consistency
+    reference_images: Optional[List[ReferenceImage]] = None  # User-uploaded refs (up to 5)
 
 
 class RefineCharacterResponse(BaseModel):
@@ -110,11 +116,13 @@ class GenerateLocationRequest(BaseModel):
     story: Story
     location_id: str
     protagonist_image: Optional[ReferenceImage] = None  # Style anchor for consistency
+    count: int = 1  # Number of images to generate (1-3)
 
 
 class GenerateLocationResponse(BaseModel):
     location_id: str
     image: MoodboardImage
+    images: List[MoodboardImage] = []  # All generated options (when count > 1)
     prompt_used: str
     cost_usd: float = 0.0
 
@@ -124,6 +132,7 @@ class RefineLocationRequest(BaseModel):
     location_id: str
     feedback: str
     protagonist_image: Optional[ReferenceImage] = None  # Style anchor for consistency
+    reference_images: Optional[List[ReferenceImage]] = None  # User-uploaded refs (up to 5)
 
 
 class RefineLocationResponse(BaseModel):
@@ -159,7 +168,8 @@ class GenerateKeyMomentRequest(BaseModel):
 
 
 class GenerateKeyMomentResponse(BaseModel):
-    key_moment: KeyMomentImage
+    key_moment: KeyMomentImage  # Primary (spike) — backward compat
+    key_moments: List[KeyMomentImage] = []  # All 3 distinct scenes
     cost_usd: float = 0.0
 
 
@@ -201,6 +211,68 @@ def get_spike_beat(story: Story) -> Beat:
         # Very short story, return middle beat
         mid_idx = len(story.beats) // 2
         return story.beats[mid_idx]
+
+
+def get_key_beats(story: Story, count: int = 3) -> List[Beat]:
+    """Pick `count` distinct, visually interesting beats spread across the story arc.
+    Prefers spike first, then beats from different locations/scene changes for visual variety."""
+    if len(story.beats) <= count:
+        return list(story.beats)
+
+    selected: List[Beat] = []
+    used_indices: set = set()
+
+    # 1. Always include the spike beat
+    spike = get_spike_beat(story)
+    spike_idx = next((i for i, b in enumerate(story.beats) if b.number == spike.number), 0)
+    selected.append(spike)
+    used_indices.add(spike_idx)
+
+    # 2. Pick remaining beats that maximize visual variety (different locations, spread out)
+    # Priority: beat_type order, prefer scene_change, prefer different location_id
+    used_locations = {spike.location_id} if spike.location_id else set()
+    candidates = []
+    for i, beat in enumerate(story.beats):
+        if i in used_indices:
+            continue
+        # Score: different location = +3, scene_change = +2, distance from selected = +1
+        loc_bonus = 3 if (beat.location_id and beat.location_id not in used_locations) else 0
+        change_bonus = 2 if beat.scene_change else 0
+        # Prefer beats spread across the story (early vs late)
+        dist = min(abs(i - idx) for idx in used_indices)
+        candidates.append((i, beat, loc_bonus + change_bonus + dist))
+
+    # Sort by score descending
+    candidates.sort(key=lambda x: x[2], reverse=True)
+
+    for idx, beat, _ in candidates:
+        if len(selected) >= count:
+            break
+        selected.append(beat)
+        used_indices.add(idx)
+        if beat.location_id:
+            used_locations.add(beat.location_id)
+
+    # Sort by beat number for chronological order
+    selected.sort(key=lambda b: b.number)
+    return selected
+
+
+# ============================================================
+# Shot Variations for Batch Generation
+# ============================================================
+
+CHARACTER_SHOT_VARIATIONS = [
+    "Medium close-up, front-facing, neutral expression. Character fills most of the frame, clearly visible from head to mid-torso.",
+    "Three-quarter view, slight tilt, showing personality through posture. Shoulders and upper body visible, environmental hints in background.",
+    "Full body shot from mid-distance, dynamic pose showing their physicality. Full silhouette visible with room to breathe.",
+]
+
+LOCATION_SHOT_VARIATIONS = [
+    "Wide establishing shot showing the full environment. Dramatic composition with depth.",
+    "Medium shot focusing on the atmosphere and key details. Slightly lower angle to emphasize scale.",
+    "Close-up of the most distinctive architectural or environmental feature. Moody, textured.",
+]
 
 
 # ============================================================
@@ -344,17 +416,36 @@ Same rendering approach, same color treatment, same texture quality."""
     return prompt
 
 
+BEAT_TYPE_DESCRIPTIONS = {
+    "hook": "OPENING HOOK — The moment that grabs the audience. First impression, intrigue, a world revealed.",
+    "rise": "RISING TENSION — Stakes are climbing. Characters commit, obstacles emerge, momentum builds.",
+    "spike": "EMOTIONAL PEAK — The highest emotional payoff. Reveal, betrayal, kiss, power move, or discovery. Maximum dramatic tension.",
+    "drop": "AFTERMATH — The dust settles. Characters process what just happened. Quiet intensity.",
+    "cliff": "CLIFFHANGER — The final image that leaves audiences wanting more. Unanswered questions, new threats, or bittersweet endings.",
+}
+
+
 def build_key_moment_prompt(
     story: Story,
     beat: Beat,
     approved_visuals: ApprovedVisuals,
     feedback: Optional[str] = None
 ) -> str:
-    """Build the prompt for the SPIKE key moment image (emotional peak) with character/setting consistency."""
+    """Build the prompt for a key moment image with character/setting consistency."""
     style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
 
-    # Build character appearance list
-    chars_description = "\n".join([f"- {desc}" for desc in approved_visuals.character_descriptions])
+    # Build character appearance list — prefer only chars in scene
+    if beat.characters_in_scene:
+        chars_in_scene = []
+        for desc in approved_visuals.character_descriptions:
+            for cid in beat.characters_in_scene:
+                # desc format: "Name (age gender): appearance"
+                char = next((c for c in story.characters if c.id == cid), None)
+                if char and desc.startswith(char.name):
+                    chars_in_scene.append(f"- {desc}")
+        chars_description = "\n".join(chars_in_scene) if chars_in_scene else "\n".join([f"- {d}" for d in approved_visuals.character_descriptions])
+    else:
+        chars_description = "\n".join([f"- {desc}" for desc in approved_visuals.character_descriptions])
 
     # Get location description for this beat
     setting_desc = ""
@@ -363,20 +454,30 @@ def build_key_moment_prompt(
     if not setting_desc:
         setting_desc = approved_visuals.setting_description or ""
 
+    # Scene description — prefer blocks, fallback to legacy
+    scene_desc = beat.description or " ".join(
+        b.text for b in (beat.blocks or []) if b.type in ("description", "action")
+    ) or "Scene moment"
+
+    # Beat type description
+    moment_type = BEAT_TYPE_DESCRIPTIONS.get(beat.beat_type or "spike", BEAT_TYPE_DESCRIPTIONS["spike"])
+
+    atmosphere = story.setting.atmosphere if story.setting else "intense"
+
     prompt = f"""{style_prefix}
 
-SCENE: {beat.description}
+SCENE {beat.number}: {scene_desc}
+
+{beat.scene_heading or ""}
 
 SETTING: {setting_desc}
 
 CHARACTERS IN SCENE:
 {chars_description}
 
-MOMENT TYPE: EMOTIONAL PEAK - The highest emotional payoff.
-This is the moment viewers came for - reveal, betrayal, kiss, power move, or discovery.
-Maximum dramatic tension.
+MOMENT TYPE: {moment_type}
 
-Mood: {story.setting.atmosphere}
+Mood: {atmosphere}
 
 Show the full scene with characters in action, not a close-up portrait.
 Medium or wide shot showing body language and environment context.
@@ -397,16 +498,17 @@ Portrait orientation, 9:16 aspect ratio."""
 @router.post("/generate-protagonist", response_model=GenerateProtagonistResponse)
 async def generate_protagonist(request: GenerateProtagonistRequest):
     """
-    Generate protagonist image WITHOUT reference images (style anchor).
+    Generate protagonist image(s) WITHOUT reference images (style anchor).
 
     The protagonist is generated first and defines the visual style for the entire film.
-    All other characters and setting will use this image as reference.
+    Set count=3 to generate 3 diverse scene options in parallel.
 
-    Input: { "story": {...} }
-    Output: { "character_id": "...", "image": {...}, "prompt_used": "..." }
+    Input: { "story": {...}, "count": 3 }
+    Output: { "character_id": "...", "image": {...}, "images": [...], "prompt_used": "..." }
     """
     try:
         story = request.story
+        count = min(max(request.count, 1), 3)
 
         # Find protagonist (role == "protagonist"), fallback to first character
         protagonist = next(
@@ -417,23 +519,61 @@ async def generate_protagonist(request: GenerateProtagonistRequest):
         if not protagonist:
             raise ValueError("No characters found in story")
 
-        prompt = build_protagonist_prompt(story, protagonist)
-        print(f"Generating protagonist '{protagonist.name}' as style anchor...")
-        print(f"Prompt: {prompt[:200]}...")
+        base_prompt = build_protagonist_prompt(story, protagonist)
+        print(f"Generating {count} protagonist image(s) for '{protagonist.name}' as style anchor...")
 
-        # NO reference_images - this is the style anchor
-        result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+        if count == 1:
+            result = await generate_image(prompt=base_prompt, aspect_ratio="9:16")
+            img = MoodboardImage(
+                type="character",
+                image_base64=result["image_base64"],
+                mime_type=result["mime_type"],
+                prompt_used=base_prompt
+            )
+            return GenerateProtagonistResponse(
+                character_id=protagonist.id,
+                image=img,
+                images=[img],
+                prompt_used=base_prompt,
+                cost_usd=COST_IMAGE_GENERATION
+            )
 
-        return GenerateProtagonistResponse(
-            character_id=protagonist.id,
-            image=MoodboardImage(
+        # Batch: generate diverse shots in parallel
+        async def gen_variant(i: int):
+            variation = CHARACTER_SHOT_VARIATIONS[i % len(CHARACTER_SHOT_VARIATIONS)]
+            # Replace the generic framing line with the variation
+            prompt = base_prompt.replace(
+                "Character clearly visible, head to mid-torso.\nShow the tension in their posture and expression.",
+                variation
+            )
+            return await generate_image(prompt=prompt, aspect_ratio="9:16"), prompt
+
+        results = await asyncio.gather(*[gen_variant(i) for i in range(count)], return_exceptions=True)
+        images = []
+        first_prompt = base_prompt
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                print(f"Warning: Protagonist variant {i} failed: {r}")
+                continue
+            result, prompt = r
+            images.append(MoodboardImage(
                 type="character",
                 image_base64=result["image_base64"],
                 mime_type=result["mime_type"],
                 prompt_used=prompt
-            ),
-            prompt_used=prompt,
-            cost_usd=COST_IMAGE_GENERATION
+            ))
+            if i == 0:
+                first_prompt = prompt
+
+        if not images:
+            raise ValueError("All image generation attempts failed")
+
+        return GenerateProtagonistResponse(
+            character_id=protagonist.id,
+            image=images[0],
+            images=images,
+            prompt_used=first_prompt,
+            cost_usd=COST_IMAGE_GENERATION * len(images)
         )
 
     except ValueError as e:
@@ -451,46 +591,65 @@ async def generate_protagonist(request: GenerateProtagonistRequest):
 @router.post("/generate-character", response_model=GenerateCharacterResponse)
 async def generate_character(request: GenerateCharacterRequest):
     """
-    Generate a reference image for a specific character.
+    Generate reference image(s) for a specific character.
 
     If protagonist_image is provided, uses it as style reference for consistency.
+    Set count=3 to generate 3 diverse scene options in parallel.
 
-    Input: { "story": {...}, "character_id": "abc123", "protagonist_image": {...} }
-    Output: { "character_id": "abc123", "image": {...}, "prompt_used": "..." }
+    Input: { "story": {...}, "character_id": "abc123", "protagonist_image": {...}, "count": 3 }
+    Output: { "character_id": "abc123", "image": {...}, "images": [...], "prompt_used": "..." }
     """
     try:
         story = request.story
+        count = min(max(request.count, 1), 3)
         character = get_character_by_id(story, request.character_id)
 
         use_reference = request.protagonist_image is not None
-        prompt = build_character_prompt(story, character, use_reference=use_reference)
-        print(f"Generating character reference for '{character.name}'...")
+        base_prompt = build_character_prompt(story, character, use_reference=use_reference)
+        print(f"Generating {count} character reference(s) for '{character.name}'...")
         print(f"Using protagonist as style reference: {use_reference}")
-        print(f"Prompt: {prompt[:200]}...")
 
+        refs = []
         if request.protagonist_image:
-            # Use protagonist as style reference
-            result = await generate_image_with_references(
-                prompt=prompt,
-                reference_images=[{
-                    "image_base64": request.protagonist_image.image_base64,
-                    "mime_type": request.protagonist_image.mime_type,
-                }],
-                aspect_ratio="9:16",
+            refs = [{"image_base64": request.protagonist_image.image_base64, "mime_type": request.protagonist_image.mime_type}]
+
+        async def gen_variant(i: int):
+            variation = CHARACTER_SHOT_VARIATIONS[i % len(CHARACTER_SHOT_VARIATIONS)]
+            prompt = base_prompt.replace(
+                "Character fills most of the frame, clearly visible from head to mid-torso.\nShow enough detail to establish their complete look.",
+                variation
             )
-        else:
-            result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+            if refs:
+                return await generate_image_with_references(prompt=prompt, reference_images=refs, aspect_ratio="9:16"), prompt
+            else:
+                return await generate_image(prompt=prompt, aspect_ratio="9:16"), prompt
+
+        if count == 1:
+            result, prompt = await gen_variant(0)
+            img = MoodboardImage(type="character", image_base64=result["image_base64"], mime_type=result["mime_type"], prompt_used=prompt)
+            return GenerateCharacterResponse(
+                character_id=request.character_id, image=img, images=[img],
+                prompt_used=prompt, cost_usd=COST_IMAGE_GENERATION
+            )
+
+        results = await asyncio.gather(*[gen_variant(i) for i in range(count)], return_exceptions=True)
+        images = []
+        first_prompt = base_prompt
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                print(f"Warning: Character variant {i} failed: {r}")
+                continue
+            result, prompt = r
+            images.append(MoodboardImage(type="character", image_base64=result["image_base64"], mime_type=result["mime_type"], prompt_used=prompt))
+            if i == 0:
+                first_prompt = prompt
+
+        if not images:
+            raise ValueError("All image generation attempts failed")
 
         return GenerateCharacterResponse(
-            character_id=request.character_id,
-            image=MoodboardImage(
-                type="character",
-                image_base64=result["image_base64"],
-                mime_type=result["mime_type"],
-                prompt_used=prompt
-            ),
-            prompt_used=prompt,
-            cost_usd=COST_IMAGE_GENERATION
+            character_id=request.character_id, image=images[0], images=images,
+            prompt_used=first_prompt, cost_usd=COST_IMAGE_GENERATION * len(images)
         )
 
     except ValueError as e:
@@ -504,31 +663,36 @@ async def generate_character(request: GenerateCharacterRequest):
 @router.post("/refine-character", response_model=RefineCharacterResponse)
 async def refine_character(request: RefineCharacterRequest):
     """
-    Refine a character image with feedback.
+    Refine a character image with feedback and optional reference images.
 
-    If protagonist_image is provided, uses it as style reference for consistency.
+    Accepts protagonist_image for style consistency + up to 5 user-uploaded reference_images.
 
-    Input: { "story": {...}, "character_id": "abc123", "feedback": "make them older", "protagonist_image": {...} }
+    Input: { "story": {...}, "character_id": "abc123", "feedback": "make them older",
+             "protagonist_image": {...}, "reference_images": [{...}] }
     Output: { "character_id": "abc123", "image": {...}, "prompt_used": "..." }
     """
     try:
         story = request.story
         character = get_character_by_id(story, request.character_id)
 
-        use_reference = request.protagonist_image is not None
+        # Build reference list: protagonist + user-uploaded refs
+        refs = []
+        if request.protagonist_image:
+            refs.append({"image_base64": request.protagonist_image.image_base64, "mime_type": request.protagonist_image.mime_type})
+        if request.reference_images:
+            for ref in request.reference_images[:5]:
+                refs.append({"image_base64": ref.image_base64, "mime_type": ref.mime_type})
+
+        use_reference = len(refs) > 0
         prompt = build_character_prompt(story, character, request.feedback, use_reference=use_reference)
         print(f"Refining character '{character.name}' with feedback: {request.feedback}")
-        print(f"Using protagonist as style reference: {use_reference}")
+        print(f"Reference images: {len(refs)} (protagonist + {len(refs) - (1 if request.protagonist_image else 0)} user-uploaded)")
         print(f"Prompt: {prompt[:200]}...")
 
-        if request.protagonist_image:
-            # Use protagonist as style reference
+        if refs:
             result = await generate_image_with_references(
                 prompt=prompt,
-                reference_images=[{
-                    "image_base64": request.protagonist_image.image_base64,
-                    "mime_type": request.protagonist_image.mime_type,
-                }],
+                reference_images=refs,
                 aspect_ratio="9:16",
             )
         else:
@@ -671,45 +835,64 @@ def _get_location_by_id(story: Story, location_id: str) -> Location:
 @router.post("/generate-location", response_model=GenerateLocationResponse)
 async def generate_location(request: GenerateLocationRequest):
     """
-    Generate a reference image for a specific location.
+    Generate reference image(s) for a specific location.
 
     If protagonist_image is provided, uses it as style reference for consistency.
+    Set count=3 to generate 3 diverse scene options in parallel.
 
-    Input: { "story": {...}, "location_id": "loc_1", "protagonist_image": {...} }
-    Output: { "location_id": "loc_1", "image": {...}, "prompt_used": "..." }
+    Input: { "story": {...}, "location_id": "loc_1", "protagonist_image": {...}, "count": 3 }
+    Output: { "location_id": "loc_1", "image": {...}, "images": [...], "prompt_used": "..." }
     """
     try:
         story = request.story
+        count = min(max(request.count, 1), 3)
         location = _get_location_by_id(story, request.location_id)
 
         use_reference = request.protagonist_image is not None
-        prompt = build_location_prompt(story, location, use_reference=use_reference)
-        print(f"Generating location reference for '{location.id}'...")
-        print(f"Using protagonist as style reference: {use_reference}")
-        print(f"Prompt: {prompt[:200]}...")
+        base_prompt = build_location_prompt(story, location, use_reference=use_reference)
+        print(f"Generating {count} location reference(s) for '{location.id}'...")
 
+        refs = []
         if request.protagonist_image:
-            result = await generate_image_with_references(
-                prompt=prompt,
-                reference_images=[{
-                    "image_base64": request.protagonist_image.image_base64,
-                    "mime_type": request.protagonist_image.mime_type,
-                }],
-                aspect_ratio="9:16",
+            refs = [{"image_base64": request.protagonist_image.image_base64, "mime_type": request.protagonist_image.mime_type}]
+
+        async def gen_variant(i: int):
+            variation = LOCATION_SHOT_VARIATIONS[i % len(LOCATION_SHOT_VARIATIONS)]
+            prompt = base_prompt.replace(
+                "The space should feel charged and atmospheric.\nWide establishing shot showing the environment.",
+                variation
             )
-        else:
-            result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+            if refs:
+                return await generate_image_with_references(prompt=prompt, reference_images=refs, aspect_ratio="9:16"), prompt
+            else:
+                return await generate_image(prompt=prompt, aspect_ratio="9:16"), prompt
+
+        if count == 1:
+            result, prompt = await gen_variant(0)
+            img = MoodboardImage(type="location", image_base64=result["image_base64"], mime_type=result["mime_type"], prompt_used=prompt)
+            return GenerateLocationResponse(
+                location_id=request.location_id, image=img, images=[img],
+                prompt_used=prompt, cost_usd=COST_IMAGE_GENERATION
+            )
+
+        results = await asyncio.gather(*[gen_variant(i) for i in range(count)], return_exceptions=True)
+        images = []
+        first_prompt = base_prompt
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                print(f"Warning: Location variant {i} failed: {r}")
+                continue
+            result, prompt = r
+            images.append(MoodboardImage(type="location", image_base64=result["image_base64"], mime_type=result["mime_type"], prompt_used=prompt))
+            if i == 0:
+                first_prompt = prompt
+
+        if not images:
+            raise ValueError("All image generation attempts failed")
 
         return GenerateLocationResponse(
-            location_id=request.location_id,
-            image=MoodboardImage(
-                type="location",
-                image_base64=result["image_base64"],
-                mime_type=result["mime_type"],
-                prompt_used=prompt
-            ),
-            prompt_used=prompt,
-            cost_usd=COST_IMAGE_GENERATION
+            location_id=request.location_id, image=images[0], images=images,
+            prompt_used=first_prompt, cost_usd=COST_IMAGE_GENERATION * len(images)
         )
 
     except ValueError as e:
@@ -723,28 +906,36 @@ async def generate_location(request: GenerateLocationRequest):
 @router.post("/refine-location", response_model=RefineLocationResponse)
 async def refine_location(request: RefineLocationRequest):
     """
-    Refine a location image with feedback.
+    Refine a location image with feedback and optional reference images.
 
-    Input: { "story": {...}, "location_id": "loc_1", "feedback": "make it darker", "protagonist_image": {...} }
+    Accepts protagonist_image for style consistency + up to 5 user-uploaded reference_images.
+
+    Input: { "story": {...}, "location_id": "loc_1", "feedback": "make it darker",
+             "protagonist_image": {...}, "reference_images": [{...}] }
     Output: { "location_id": "loc_1", "image": {...}, "prompt_used": "..." }
     """
     try:
         story = request.story
         location = _get_location_by_id(story, request.location_id)
 
-        use_reference = request.protagonist_image is not None
+        # Build reference list: protagonist + user-uploaded refs
+        refs = []
+        if request.protagonist_image:
+            refs.append({"image_base64": request.protagonist_image.image_base64, "mime_type": request.protagonist_image.mime_type})
+        if request.reference_images:
+            for ref in request.reference_images[:5]:
+                refs.append({"image_base64": ref.image_base64, "mime_type": ref.mime_type})
+
+        use_reference = len(refs) > 0
         prompt = build_location_prompt(story, location, request.feedback, use_reference=use_reference)
         print(f"Refining location '{location.id}' with feedback: {request.feedback}")
-        print(f"Using protagonist as style reference: {use_reference}")
+        print(f"Reference images: {len(refs)}")
         print(f"Prompt: {prompt[:200]}...")
 
-        if request.protagonist_image:
+        if refs:
             result = await generate_image_with_references(
                 prompt=prompt,
-                reference_images=[{
-                    "image_base64": request.protagonist_image.image_base64,
-                    "mime_type": request.protagonist_image.mime_type,
-                }],
+                reference_images=refs,
                 aspect_ratio="9:16",
             )
         else:
@@ -777,85 +968,109 @@ async def refine_location(request: RefineLocationRequest):
 @router.post("/generate-key-moment", response_model=GenerateKeyMomentResponse)
 async def generate_key_moment(request: GenerateKeyMomentRequest):
     """
-    Generate 1 key moment reference image (SPIKE - emotional peak).
+    Generate 3 key moment reference images from distinct scenes.
     Uses approved character and setting IMAGES for visual consistency.
+
+    Each key moment uses the relevant characters and location for its beat.
 
     Input: {
         "story": {...},
         "approved_visuals": {
             "character_images": [{"image_base64": "...", "mime_type": "image/png"}, ...],
+            "character_image_map": {"char_id": {"image_base64": "...", ...}},
             "setting_image": {"image_base64": "...", "mime_type": "image/png"},
+            "location_images": {"loc_id": {"image_base64": "...", ...}},
             "character_descriptions": ["tall man with...", ...],
             "setting_description": "Ancient dojo..."
         }
     }
-    Output: { "key_moment": { "beat_number": 4, "image": {...}, ... } }
+    Output: { "key_moment": {...}, "key_moments": [{...}, {...}, {...}] }
     """
     try:
         story = request.story
         approved = request.approved_visuals
 
-        # Build reference images list (characters + location/setting)
-        reference_images: List[dict] = []
+        # Pick 3 distinct beats across the story arc
+        key_beats = get_key_beats(story, count=3)
+        print(f"Generating {len(key_beats)} key moment images from beats: {[b.number for b in key_beats]}")
 
-        # Add character images (up to 5 for human consistency)
-        for char_img in approved.character_images[:5]:
-            reference_images.append({
-                "image_base64": char_img.image_base64,
-                "mime_type": char_img.mime_type,
-            })
+        async def generate_one_key_moment(beat: Beat) -> KeyMomentImage:
+            """Generate a single key moment image for one beat."""
+            # Build per-beat reference images (characters in scene + scene location)
+            refs: List[dict] = []
 
-        # Add location image (prefer beat's location, fallback to first location, then setting)
-        beat = get_spike_beat(story)
-        location_img = None
-        if beat.location_id and beat.location_id in approved.location_images:
-            location_img = approved.location_images[beat.location_id]
-        elif approved.location_images:
-            location_img = next(iter(approved.location_images.values()))
-        elif approved.setting_image:
-            location_img = approved.setting_image
+            # Add character refs relevant to this beat
+            if beat.characters_in_scene and approved.character_image_map:
+                for char_id in beat.characters_in_scene:
+                    if char_id in approved.character_image_map:
+                        char_ref = approved.character_image_map[char_id]
+                        refs.append({"image_base64": char_ref.image_base64, "mime_type": char_ref.mime_type})
+            # Fallback: use all character images if no per-beat info
+            if not refs:
+                for char_img in approved.character_images[:5]:
+                    refs.append({"image_base64": char_img.image_base64, "mime_type": char_img.mime_type})
 
-        if location_img:
-            reference_images.append({
-                "image_base64": location_img.image_base64,
-                "mime_type": location_img.mime_type,
-            })
+            # Add location image for this beat
+            location_img = None
+            if beat.location_id and beat.location_id in approved.location_images:
+                location_img = approved.location_images[beat.location_id]
+            elif approved.location_images:
+                location_img = next(iter(approved.location_images.values()))
+            elif approved.setting_image:
+                location_img = approved.setting_image
 
-        print(f"Using {len(reference_images)} reference images for consistency")
+            if location_img:
+                refs.append({"image_base64": location_img.image_base64, "mime_type": location_img.mime_type})
 
-        # Get the SPIKE beat (emotional peak)
-        beat = get_spike_beat(story)
-        prompt = build_key_moment_prompt(story, beat, approved)
+            prompt = build_key_moment_prompt(story, beat, approved)
+            print(f"  Beat {beat.number}: {len(refs)} refs, prompt: {prompt[:150]}...")
 
-        print(f"Generating SPIKE key moment with reference images...")
-        print(f"Prompt: {prompt[:300]}...")
+            result = await generate_image_with_references(
+                prompt=prompt,
+                reference_images=refs,
+                aspect_ratio="9:16",
+                resolution="2K"
+            )
 
-        # Use generate_image_with_references for consistency
-        result = await generate_image_with_references(
-            prompt=prompt,
-            reference_images=reference_images,
-            aspect_ratio="9:16",
-            resolution="2K"
-        )
+            beat_desc = beat.description or " ".join(
+                b.text for b in (beat.blocks or []) if b.type in ("description", "action")
+            ) or "Scene moment"
 
-        # Derive description from blocks if legacy field is None
-        beat_desc = beat.description or " ".join(
-            b.text for b in (beat.blocks or []) if b.type in ("description", "action")
-        ) or "Scene moment"
-
-        key_moment = KeyMomentImage(
-            beat_number=beat.number,
-            beat_description=beat_desc,
-            image=MoodboardImage(
-                type="key_moment",
-                image_base64=result["image_base64"],
-                mime_type=result["mime_type"],
+            return KeyMomentImage(
+                beat_number=beat.number,
+                beat_description=beat_desc,
+                image=MoodboardImage(
+                    type="key_moment",
+                    image_base64=result["image_base64"],
+                    mime_type=result["mime_type"],
+                    prompt_used=prompt
+                ),
                 prompt_used=prompt
-            ),
-            prompt_used=prompt
+            )
+
+        # Generate all key moments in parallel
+        results = await asyncio.gather(
+            *[generate_one_key_moment(beat) for beat in key_beats],
+            return_exceptions=True
         )
 
-        return GenerateKeyMomentResponse(key_moment=key_moment, cost_usd=COST_IMAGE_GENERATION)
+        # Filter out failures
+        key_moments: List[KeyMomentImage] = []
+        for r in results:
+            if isinstance(r, KeyMomentImage):
+                key_moments.append(r)
+            else:
+                print(f"  Key moment generation failed: {r}")
+
+        if not key_moments:
+            raise ValueError("All key moment generations failed")
+
+        total_cost = len(key_moments) * COST_IMAGE_GENERATION
+        return GenerateKeyMomentResponse(
+            key_moment=key_moments[0],  # backward compat
+            key_moments=key_moments,
+            cost_usd=total_cost,
+        )
 
     except Exception as e:
         import traceback

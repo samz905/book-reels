@@ -90,7 +90,18 @@
       "WebFetch(domain:dylancastillo.co)",
       "Bash(python \"c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\\\\backend\\\\-c\" \"from app.routers.story import build_story_prompt; print\\(''ok''\\)\")",
       "Bash(cmd /c \"cd /d c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\\\\backend && python -c \"\"from app.routers.story import build_story_prompt; print\\(''story OK''\\)\"\" && python -c \"\"from app.routers.film import generate_shot_with_retry; print\\(''film OK''\\)\"\"\")",
-      "Bash(cmd /c 'cd /d c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\\\\backend && python -c \"\"from app.routers.story import build_story_prompt; print\\(\\\\\"\"story OK\\\\\"\"\\)\"\"')"
+      "Bash(cmd /c 'cd /d c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\\\\backend && python -c \"\"from app.routers.story import build_story_prompt; print\\(\\\\\"\"story OK\\\\\"\"\\)\"\"')",
+      "WebFetch(domain:blog.google)",
+      "WebFetch(domain:www.atlabs.ai)",
+      "WebFetch(domain:www.veo3gen.app)",
+      "WebFetch(domain:developer.tenten.co)",
+      "WebFetch(domain:help.scenario.com)",
+      "WebFetch(domain:help.apiyi.com)",
+      "WebFetch(domain:getimg.ai)",
+      "WebFetch(domain:www.veo3ai.io)",
+      "WebFetch(domain:n8n.io)",
+      "WebFetch(domain:prompt-helper.com)",
+      "WebFetch(domain:ulazai.com)"
     ]
   },
   "enableAllProjectMcpServers": true,

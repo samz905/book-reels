@@ -220,6 +220,80 @@ export interface Database {
         };
         Update: never;
       };
+      ai_generations: {
+        Row: {
+          id: string;
+          title: string;
+          style: string;
+          status: string;
+          film_id: string | null;
+          thumbnail_base64: string | null;
+          state: Record<string, unknown>;
+          cost_total: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id: string;
+          title?: string;
+          style?: string;
+          status?: string;
+          film_id?: string | null;
+          thumbnail_base64?: string | null;
+          state?: Record<string, unknown>;
+          cost_total?: number;
+        };
+        Update: {
+          title?: string;
+          style?: string;
+          status?: string;
+          film_id?: string | null;
+          thumbnail_base64?: string | null;
+          state?: Record<string, unknown>;
+          cost_total?: number;
+        };
+      };
+      ai_film_jobs: {
+        Row: {
+          film_id: string;
+          generation_id: string | null;
+          status: string;
+          total_shots: number;
+          current_shot: number;
+          phase: string;
+          completed_shots: Array<{ number: number; preview_url: string; veo_prompt?: string }>;
+          final_video_url: string | null;
+          error_message: string | null;
+          cost_scene_refs: number;
+          cost_videos: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          film_id: string;
+          generation_id?: string | null;
+          status: string;
+          total_shots: number;
+          current_shot?: number;
+          phase?: string;
+          completed_shots?: Array<{ number: number; preview_url: string; veo_prompt?: string }>;
+          final_video_url?: string | null;
+          error_message?: string | null;
+          cost_scene_refs?: number;
+          cost_videos?: number;
+        };
+        Update: {
+          status?: string;
+          total_shots?: number;
+          current_shot?: number;
+          phase?: string;
+          completed_shots?: Array<{ number: number; preview_url: string; veo_prompt?: string }>;
+          final_video_url?: string | null;
+          error_message?: string | null;
+          cost_scene_refs?: number;
+          cost_videos?: number;
+        };
+      };
       cart_items: {
         Row: {
           id: string;

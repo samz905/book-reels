@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import HOST, PORT
 from .routers import test, story, moodboard, film
 
+
 # Create FastAPI app
 app = FastAPI(
     title="Book Reels AI Backend",

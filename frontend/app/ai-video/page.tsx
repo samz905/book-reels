@@ -3,6 +3,14 @@
 import { useState, useEffect, useRef } from "react";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
+import {
+  createGeneration as supaCreateGeneration,
+  updateGeneration as supaUpdateGeneration,
+  getGeneration as supaGetGeneration,
+  listGenerations as supaListGenerations,
+  upsertFilmJob as supaUpsertFilmJob,
+  AIGenerationSummary,
+} from "@/lib/supabase/ai-generations";
 
 // ============================================================
 // Types
@@ -107,27 +115,52 @@ interface MoodboardImage {
   prompt_used: string;
 }
 
+interface RefImageUpload {
+  base64: string;
+  mimeType: string;
+  name: string;
+}
+
 interface LocationImageState {
   image: MoodboardImage | null;
+  images: MoodboardImage[];  // All generated options (when count > 1)
+  selectedIndex: number;
   approved: boolean;
   isGenerating: boolean;
   feedback: string;
   promptUsed: string;
+  error: string;
+  refImages: RefImageUpload[];  // User-uploaded reference images for refinement
 }
 
 interface CharacterImageState {
   image: MoodboardImage | null;
+  images: MoodboardImage[];  // All generated options (when count > 1)
+  selectedIndex: number;
   approved: boolean;
   isGenerating: boolean;
   feedback: string;
   promptUsed: string;
+  error: string;
+  refImages: RefImageUpload[];  // User-uploaded reference images for refinement
 }
 
 interface SettingImageState {
   image: MoodboardImage | null;
+  images: MoodboardImage[];
+  selectedIndex: number;
   approved: boolean;
   isGenerating: boolean;
   feedback: string;
+  promptUsed: string;
+  error: string;
+  refImages: RefImageUpload[];
+}
+
+interface KeyMomentEntry {
+  beat_number: number;
+  beat_description: string;
+  image: MoodboardImage;
   promptUsed: string;
 }
 
@@ -138,6 +171,9 @@ interface KeyMomentImageState {
   isGenerating: boolean;
   feedback: string;
   promptUsed: string;
+  // Multi-scene support (3 distinct key moments)
+  entries: KeyMomentEntry[];
+  selectedIndex: number;
 }
 
 // Phase 4: Film Generation
@@ -165,6 +201,22 @@ interface FilmState {
   cost: FilmCost;
 }
 
+// Prompt Preview (Pre-Flight Check)
+interface ShotPromptPreview {
+  beat_number: number;
+  scene_heading: string | null;
+  veo_prompt: string;
+  characters_in_scene: string[] | null;
+  location_id: string | null;
+}
+
+interface PromptPreviewState {
+  shots: ShotPromptPreview[];
+  editedPrompts: Record<number, string>;
+  estimatedCostUsd: number;
+  isLoading: boolean;
+}
+
 // Cost tracking across all phases
 interface TotalCost {
   story: number;
@@ -173,6 +225,8 @@ interface TotalCost {
   keyMoments: number;
   film: number;
 }
+
+// Generation persistence (uses AIGenerationSummary from Supabase helper)
 
 // ============================================================
 // Constants
@@ -239,9 +293,14 @@ export default function AIVideoPage() {
     character_id: string;
     character_name: string;
     image: MoodboardImage;
+    images: MoodboardImage[];
+    selectedIndex: number;
+    refImages: RefImageUpload[];
   } | null>(null);
   const [protagonistLocked, setProtagonistLocked] = useState(false);
   const [isGeneratingProtagonist, setIsGeneratingProtagonist] = useState(false);
+  const [protagonistFeedback, setProtagonistFeedback] = useState("");
+  const [protagonistError, setProtagonistError] = useState("");
 
   // Phase 4: Film Generation state
   const [film, setFilm] = useState<FilmState>({
@@ -262,6 +321,14 @@ export default function AIVideoPage() {
   const [regeneratingShotNum, setRegeneratingShotNum] = useState<number | null>(null);
   const [shotFeedback, setShotFeedback] = useState<Record<number, string>>({});
 
+  // Prompt preview (pre-flight check)
+  const [promptPreview, setPromptPreview] = useState<PromptPreviewState>({
+    shots: [],
+    editedPrompts: {},
+    estimatedCostUsd: 0,
+    isLoading: false,
+  });
+
   // Cost tracking across all phases
   const [totalCost, setTotalCost] = useState<TotalCost>({
     story: 0,
@@ -269,6 +336,51 @@ export default function AIVideoPage() {
     locations: 0,
     keyMoments: 0,
     film: 0,
+  });
+
+  // Generation persistence
+  const [generationId, setGenerationId] = useState<string | null>(null);
+  const generationIdRef = useRef<string | null>(null);
+  const isRestoringRef = useRef(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pastGenerations, setPastGenerations] = useState<AIGenerationSummary[]>([]);
+  const [isRestoringState, setIsRestoringState] = useState(false);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    generationIdRef.current = generationId;
+  }, [generationId]);
+
+  // URL helper — generation ID in URL as ?g=xxx
+  const setGenerationUrl = (id: string | null) => {
+    const url = new URL(window.location.href);
+    if (id) {
+      url.searchParams.set("g", id);
+    } else {
+      url.searchParams.delete("g");
+    }
+    window.history.replaceState({}, "", url.toString());
+  };
+
+  // Save on page unload via sendBeacon (POST — no CORS preflight)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const gid = generationIdRef.current;
+      if (!gid) return;
+      const payload = JSON.stringify({
+        title: story?.title || "Untitled",
+        state: buildSnapshot(),
+        film_id: film.filmId,
+        thumbnail_base64: protagonistImage?.image?.image_base64?.slice(0, 2000) || null,
+        cost_total: totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film,
+      });
+      navigator.sendBeacon(
+        `/api/ai-generations/${gid}/save`,
+        new Blob([payload], { type: "application/json" })
+      );
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   });
 
   // ============================================================
@@ -286,6 +398,17 @@ export default function AIVideoPage() {
     setStory(null);
     resetVisualDirection();
     setSelectedBeatIndex(null);
+
+    // Ensure we have a generation session — MUST complete before proceeding
+    let activeGenId = generationIdRef.current;
+    if (!activeGenId) {
+      activeGenId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+      generationIdRef.current = activeGenId;
+      setGenerationId(activeGenId);
+      setGenerationUrl(activeGenId);
+      // Await creation so the row exists before any saves or sendBeacon can fire
+      await supaCreateGeneration(activeGenId, "Untitled", style, { idea, style, isGenerating: true });
+    }
 
     try {
       const response = await fetch(`${BACKEND_URL}/story/generate`, {
@@ -305,6 +428,8 @@ export default function AIVideoPage() {
       if (data.cost_usd) {
         setTotalCost((prev) => ({ ...prev, story: prev.story + data.cost_usd }));
       }
+      // Save immediately with actual story data
+      saveNow({ story: data.story }, "drafting");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate story");
     } finally {
@@ -337,6 +462,7 @@ export default function AIVideoPage() {
       const data = await response.json();
       setStory(data.story);
       setGlobalFeedback("");
+      saveNow({ story: data.story }, "drafting");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to regenerate story");
     } finally {
@@ -382,6 +508,453 @@ export default function AIVideoPage() {
   };
 
   // ============================================================
+  // Generation Persistence
+  // ============================================================
+
+  const buildSnapshot = () => ({
+    idea,
+    style,
+    story,
+    isGenerating,
+    visualStep,
+    moodboardStep,
+    protagonistImage,
+    protagonistLocked,
+    isGeneratingProtagonist,
+    characterImages,
+    locationImages,
+    keyMoment,
+    promptPreview: {
+      shots: promptPreview.shots,
+      editedPrompts: promptPreview.editedPrompts,
+      estimatedCostUsd: promptPreview.estimatedCostUsd,
+    },
+    filmId: film.filmId,
+    filmStatus: film.status,
+    film,
+    clipsApproved,
+    shotFeedback,
+    totalCost,
+  });
+
+  // Save with current React state (for debounced/beforeunload saves)
+  const saveGeneration = async (statusOverride?: string, explicitId?: string) => {
+    const gid = explicitId || generationIdRef.current;
+    if (!gid) return;
+    const snapshot = buildSnapshot();
+    const currentStatus = statusOverride || (
+      film.status === "generating" || film.status === "assembling" ? "filming" :
+      film.status === "ready" ? "ready" :
+      film.status === "failed" ? "failed" :
+      promptPreview.shots.length > 0 ? "preflight" :
+      keyMoment?.entries.length ? "key_moments" :
+      protagonistLocked ? "moodboard" :
+      story ? "drafting" : "drafting"
+    );
+    supaUpdateGeneration(gid, {
+      title: story?.title || "Untitled",
+      status: currentStatus,
+      state: snapshot,
+      film_id: film.filmId,
+      thumbnail_base64: protagonistImage?.image?.image_base64?.slice(0, 2000) || null,
+      cost_total: totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film,
+    }).catch(console.error);
+  };
+
+  // Save immediately with actual data (bypasses stale closures)
+  // Pass overrides for fields that were just set via setState but aren't in closure yet
+  const saveNow = (overrides: Record<string, unknown> = {}, statusOverride?: string) => {
+    const gid = generationIdRef.current;
+    if (!gid) return;
+    const snapshot = { ...buildSnapshot(), ...overrides };
+    const storyData = (overrides.story as Story | undefined) || story;
+    const protImg = (overrides.protagonistImage as typeof protagonistImage) || protagonistImage;
+    supaUpdateGeneration(gid, {
+      title: storyData?.title || "Untitled",
+      status: statusOverride || "drafting",
+      state: snapshot,
+      film_id: film.filmId,
+      thumbnail_base64: protImg?.image?.image_base64?.slice(0, 2000) || null,
+      cost_total: totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film,
+    }).catch(console.error);
+  };
+
+  const fetchGenerationsList = async () => {
+    try {
+      const gens = await supaListGenerations();
+      setPastGenerations(gens);
+      return gens;
+    } catch { /* supabase may not be configured */ }
+    return [];
+  };
+
+  const restoreGeneration = async (genId: string) => {
+    setIsRestoringState(true);
+    isRestoringRef.current = true;
+    try {
+      const data = await supaGetGeneration(genId);
+      if (!data) return;
+      const s = (data.state || {}) as Record<string, unknown>;
+
+      // CRITICAL: Reset ALL state first to prevent leakage between generations
+      // Without this, switching from Gen A (with moodboard) to Gen B (no moodboard)
+      // would leave Gen A's images visible in Gen B
+      resetAllState();
+
+      generationIdRef.current = genId;
+      setGenerationId(genId);
+      setGenerationUrl(genId);
+      if (s.idea !== undefined) setIdea(s.idea as string);
+      if (s.style) setStyle(s.style as Style);
+      if (s.story !== undefined) setStory(s.story as Story | null);
+      if (s.visualStep !== undefined) setVisualStep(s.visualStep as VisualStep | null);
+      if (s.moodboardStep) setMoodboardStep(s.moodboardStep as MoodboardStep);
+      // Only restore protagonist if it has actual image data (not mid-generation)
+      if ((s.protagonistImage as Record<string, unknown>)?.image) {
+        setProtagonistImage(s.protagonistImage as typeof protagonistImage);
+      }
+      if (s.protagonistLocked !== undefined) setProtagonistLocked(s.protagonistLocked as boolean);
+
+      // Clean character images: keep entries with image/error, mark mid-gen for retry
+      const cleanedChars: Record<string, CharacterImageState> = {};
+      const retryCharIds: string[] = [];
+      if (s.characterImages) {
+        const raw = s.characterImages as Record<string, CharacterImageState>;
+        for (const key in raw) {
+          const ci = raw[key];
+          if (ci.image) {
+            cleanedChars[key] = { ...ci, isGenerating: false };
+          } else if (ci.error) {
+            cleanedChars[key] = { ...ci, isGenerating: false };
+          } else {
+            // Was mid-generation — keep as loading for retry
+            retryCharIds.push(key);
+            cleanedChars[key] = { ...ci, isGenerating: true };
+          }
+        }
+      }
+      setCharacterImages(cleanedChars);
+
+      // Same for location images
+      const cleanedLocs: Record<string, LocationImageState> = {};
+      const retryLocIds: string[] = [];
+      if (s.locationImages) {
+        const raw = s.locationImages as Record<string, LocationImageState>;
+        for (const key in raw) {
+          const li = raw[key];
+          if (li.image) {
+            cleanedLocs[key] = { ...li, isGenerating: false };
+          } else if (li.error) {
+            cleanedLocs[key] = { ...li, isGenerating: false };
+          } else {
+            // Was mid-generation — keep as loading for retry
+            retryLocIds.push(key);
+            cleanedLocs[key] = { ...li, isGenerating: true };
+          }
+        }
+      }
+      setLocationImages(cleanedLocs);
+
+      // Key moment: restore if it has actual entries; mark mid-gen for retry
+      const km = s.keyMoment as KeyMomentImageState | null;
+      let retryKeyMoment = false;
+      if (km && km.entries && km.entries.length > 0) {
+        setKeyMoment({ ...km, isGenerating: false });
+      } else if (km && km.isGenerating) {
+        // Was mid-generation — keep loading state for retry
+        setKeyMoment({ ...km, isGenerating: true });
+        retryKeyMoment = true;
+      }
+      if (s.promptPreview) setPromptPreview({ ...(s.promptPreview as PromptPreviewState), isLoading: false });
+      if (s.clipsApproved !== undefined) setClipsApproved(s.clipsApproved as boolean);
+      if (s.shotFeedback) setShotFeedback(s.shotFeedback as Record<number, string>);
+      if (s.totalCost) setTotalCost(s.totalCost as TotalCost);
+
+      // Restore film state — film_job from Supabase is source of truth; fallback to snapshot
+      if (data.film_job) {
+        const fj = data.film_job;
+        setFilm({
+          filmId: fj.film_id,
+          status: fj.status === "interrupted" ? "failed" : fj.status as FilmState["status"],
+          currentShot: fj.current_shot || 0,
+          totalShots: fj.total_shots || 0,
+          phase: (fj.phase || "filming") as FilmState["phase"],
+          completedShots: (fj.completed_shots || []).map((cs) => ({
+            number: cs.number,
+            preview_url: `${BACKEND_URL}/film/${fj.film_id}/shot/${cs.number}`,
+            veo_prompt: cs.veo_prompt || "",
+          })),
+          finalVideoUrl: fj.final_video_url ? `${BACKEND_URL}/film/${fj.film_id}/final` : null,
+          error: fj.status === "interrupted" ? "Generation was interrupted by server restart" : fj.error_message,
+          cost: {
+            scene_refs_usd: fj.cost_scene_refs || 0,
+            videos_usd: fj.cost_videos || 0,
+            total_usd: (fj.cost_scene_refs || 0) + (fj.cost_videos || 0),
+          },
+        });
+      } else if (s.film && (s.film as FilmState).status === "ready") {
+        setFilm(s.film as FilmState);
+      }
+
+      // Resume polling if film is actively generating
+      if (data.film_job && ["generating", "assembling"].includes(data.film_job.status)) {
+        startPolling(data.film_job.film_id);
+      }
+
+      // ---- Auto-retry interrupted operations ----
+      // Uses captured snapshot values to avoid stale React closures
+      const storyData = s.story as Story | null;
+      const protImg = s.protagonistImage as typeof protagonistImage;
+
+      // 1. Interrupted story generation
+      if (s.isGenerating && !storyData && s.idea) {
+        const retryIdea = s.idea as string;
+        const retryStyle = (s.style || "cinematic") as string;
+        setIsGenerating(true);
+        (async () => {
+          try {
+            const response = await fetch(`${BACKEND_URL}/story/generate`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ idea: retryIdea, style: retryStyle }),
+            });
+            if (!response.ok) throw new Error("Failed to generate story");
+            const retryData = await response.json();
+            setStory(retryData.story);
+            if (retryData.cost_usd) {
+              setTotalCost((prev) => ({ ...prev, story: prev.story + retryData.cost_usd }));
+            }
+            saveNow({ story: retryData.story, isGenerating: false }, "drafting");
+          } catch (retryErr) {
+            setError(retryErr instanceof Error ? retryErr.message : "Failed to generate story");
+          } finally {
+            setIsGenerating(false);
+          }
+        })();
+      }
+
+      // 2. Interrupted protagonist generation
+      if (s.isGeneratingProtagonist && !protImg?.image && storyData) {
+        setIsGeneratingProtagonist(true);
+        (async () => {
+          try {
+            const response = await fetch(`${BACKEND_URL}/moodboard/generate-protagonist`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ story: storyData }),
+            });
+            if (!response.ok) throw new Error("Failed to generate protagonist");
+            const pd = await response.json();
+            const protagonist = storyData.characters.find((c) => c.id === pd.character_id);
+            const newProt = {
+              character_id: pd.character_id,
+              character_name: protagonist?.name || "Protagonist",
+              image: pd.image,
+              images: [],
+              selectedIndex: 0,
+              refImages: [],
+            };
+            setProtagonistImage(newProt);
+            if (pd.cost_usd) setTotalCost((prev) => ({ ...prev, characters: prev.characters + pd.cost_usd }));
+            saveNow({ protagonistImage: newProt, isGeneratingProtagonist: false }, "moodboard");
+          } catch (err) {
+            setProtagonistError(err instanceof Error ? err.message : "Failed to generate protagonist");
+          } finally {
+            setIsGeneratingProtagonist(false);
+          }
+        })();
+      }
+
+      // 3. Interrupted character/location generation (moodboard parallel gen)
+      if (protImg?.image && storyData && (retryCharIds.length > 0 || retryLocIds.length > 0)) {
+        const protagonistRef = {
+          image_base64: protImg.image.image_base64,
+          mime_type: protImg.image.mime_type,
+        };
+
+        // Retry missing characters
+        for (const charId of retryCharIds) {
+          (async () => {
+            try {
+              const response = await fetch(`${BACKEND_URL}/moodboard/generate-character`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ story: storyData, character_id: charId, protagonist_image: protagonistRef }),
+              });
+              if (!response.ok) throw new Error("Failed to generate character image");
+              const cd = await response.json();
+              setCharacterImages((prev) => ({
+                ...prev,
+                [charId]: { ...prev[charId], image: cd.image, promptUsed: cd.prompt_used, isGenerating: false },
+              }));
+              if (cd.cost_usd) setTotalCost((prev) => ({ ...prev, characters: prev.characters + cd.cost_usd }));
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : "Failed to generate character image";
+              setCharacterImages((prev) => ({
+                ...prev,
+                [charId]: { ...prev[charId], isGenerating: false, error: msg },
+              }));
+            }
+          })();
+        }
+
+        // Retry missing locations
+        for (const locId of retryLocIds) {
+          (async () => {
+            try {
+              const response = await fetch(`${BACKEND_URL}/moodboard/generate-location`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ story: storyData, location_id: locId, protagonist_image: protagonistRef }),
+              });
+              if (!response.ok) throw new Error("Failed to generate location image");
+              const ld = await response.json();
+              setLocationImages((prev) => ({
+                ...prev,
+                [locId]: { ...prev[locId], image: ld.image, promptUsed: ld.prompt_used, isGenerating: false },
+              }));
+              if (ld.cost_usd) setTotalCost((prev) => ({ ...prev, locations: prev.locations + ld.cost_usd }));
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : "Failed to generate location image";
+              setLocationImages((prev) => ({
+                ...prev,
+                [locId]: { ...prev[locId], isGenerating: false, error: msg },
+              }));
+            }
+          })();
+        }
+      }
+
+      // 4. Interrupted key moment generation
+      if (retryKeyMoment && protImg?.image && storyData) {
+        (async () => {
+          try {
+            // Build approved visuals from captured snapshot data
+            const characterImageMap: Record<string, { image_base64: string; mime_type: string }> = {};
+            if (protImg) characterImageMap[protImg.character_id] = { image_base64: protImg.image.image_base64, mime_type: protImg.image.mime_type };
+            for (const key in cleanedChars) {
+              if (cleanedChars[key].image) {
+                characterImageMap[key] = { image_base64: cleanedChars[key].image!.image_base64, mime_type: cleanedChars[key].image!.mime_type };
+              }
+            }
+            const locImgs: Record<string, { image_base64: string; mime_type: string }> = {};
+            const locDescs: Record<string, string> = {};
+            for (const loc of storyData.locations || []) {
+              if (cleanedLocs[loc.id]?.image) {
+                locImgs[loc.id] = { image_base64: cleanedLocs[loc.id].image!.image_base64, mime_type: cleanedLocs[loc.id].image!.mime_type };
+              }
+              locDescs[loc.id] = `${loc.description}. ${loc.atmosphere}`;
+            }
+            const approvedVisuals = {
+              character_images: Object.values(characterImageMap),
+              character_image_map: characterImageMap,
+              setting_image: Object.values(locImgs)[0] || undefined,
+              location_images: locImgs,
+              character_descriptions: storyData.characters.map((c) => `${c.name} (${c.age} ${c.gender}): ${c.appearance}`),
+              setting_description: Object.values(locDescs)[0] || "",
+              location_descriptions: locDescs,
+            };
+            const response = await fetch(`${BACKEND_URL}/moodboard/generate-key-moment`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ story: storyData, approved_visuals: approvedVisuals }),
+            });
+            if (!response.ok) throw new Error("Failed to generate key moment");
+            const kd = await response.json();
+            const entries = (kd.key_moments || [kd.key_moment]).map(
+              (kmItem: { beat_number: number; beat_description: string; image: MoodboardImage; prompt_used: string }) => ({
+                beat_number: kmItem.beat_number,
+                beat_description: kmItem.beat_description,
+                image: kmItem.image,
+                promptUsed: kmItem.prompt_used,
+              })
+            );
+            const primary = entries[0];
+            setKeyMoment({
+              image: primary.image,
+              beat_number: primary.beat_number,
+              beat_description: primary.beat_description,
+              isGenerating: false,
+              feedback: "",
+              promptUsed: primary.promptUsed,
+              entries,
+              selectedIndex: 0,
+            });
+            if (kd.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + kd.cost_usd }));
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to generate key moment");
+            setKeyMoment((prev) => prev ? { ...prev, isGenerating: false } : null);
+          }
+        })();
+      }
+    } catch (err) {
+      console.error("Failed to restore generation:", err);
+    } finally {
+      setIsRestoringState(false);
+      isRestoringRef.current = false;
+    }
+  };
+
+  const resetAllState = () => {
+    generationIdRef.current = null;
+    setGenerationId(null);
+    setGenerationUrl(null);
+    setIdea("");
+    setStyle("cinematic");
+    setStory(null);
+    setIsGenerating(false);
+    setError(null);
+    setSelectedBeatIndex(null);
+    setFeedback("");
+    setIsRefining(false);
+    setGlobalFeedback("");
+    setEditingBeatIndex(null);
+    setEditBeatDraft(null);
+    setEditingTitle(false);
+    setExpandedCharacters(false);
+    setEditingCharIndex(null);
+    setEditCharDraft(null);
+    setExpandedLocations(false);
+    setEditingLocIndex(null);
+    setEditLocDraft(null);
+    resetVisualDirection();
+    setProtagonistFeedback("");
+    setProtagonistError("");
+    setFilm({
+      filmId: null, status: "idle", currentShot: 0, totalShots: 0,
+      phase: "filming", completedShots: [], finalVideoUrl: null, error: null,
+      cost: { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
+    });
+    setClipsApproved(false);
+    setRegeneratingShotNum(null);
+    setShotFeedback({});
+    setPromptPreview({ shots: [], editedPrompts: {}, estimatedCostUsd: 0, isLoading: false });
+    setTotalCost({ story: 0, characters: 0, locations: 0, keyMoments: 0, film: 0 });
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+  };
+
+  const startNewGeneration = async () => {
+    // Save current generation if one exists
+    if (generationIdRef.current) await saveGeneration();
+
+    // Create new generation in Supabase
+    try {
+      const newId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+      await supaCreateGeneration(newId, "Untitled", "cinematic");
+      resetAllState();
+      generationIdRef.current = newId;
+      setGenerationId(newId);
+      setGenerationUrl(newId);
+      fetchGenerationsList();
+    } catch (err) {
+      console.error("Failed to create generation:", err);
+    }
+  };
+
+  // ============================================================
   // Visual Direction (Phase 3) Functions
   // ============================================================
 
@@ -413,6 +986,7 @@ export default function AIVideoPage() {
     if (!story) return;
 
     setIsGeneratingProtagonist(true);
+    setProtagonistError("");
 
     try {
       const response = await fetch(`${BACKEND_URL}/moodboard/generate-protagonist`, {
@@ -431,18 +1005,81 @@ export default function AIVideoPage() {
       // Find protagonist name
       const protagonist = story.characters.find((c) => c.id === data.character_id);
 
-      setProtagonistImage({
+      const newProtImg = {
         character_id: data.character_id,
         character_name: protagonist?.name || "Protagonist",
         image: data.image,
-      });
+        images: [],
+        selectedIndex: 0,
+        refImages: [],
+      };
+      setProtagonistImage(newProtImg);
 
       // Track cost
       if (data.cost_usd) {
         setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
       }
+      saveNow({ protagonistImage: newProtImg, isGeneratingProtagonist: false }, "moodboard");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate protagonist image");
+      setProtagonistError(err instanceof Error ? err.message : "Failed to generate protagonist image");
+    } finally {
+      setIsGeneratingProtagonist(false);
+    }
+  };
+
+  const refineProtagonistImage = async () => {
+    if (!story || !protagonistImage || !protagonistFeedback.trim()) return;
+
+    setIsGeneratingProtagonist(true);
+    setProtagonistError("");
+
+    try {
+      const requestBody: Record<string, unknown> = {
+        story,
+        character_id: protagonistImage.character_id,
+        feedback: protagonistFeedback,
+        protagonist_image: {
+          image_base64: protagonistImage.image.image_base64,
+          mime_type: protagonistImage.image.mime_type,
+        },
+      };
+
+      // Include user-uploaded reference images if any
+      if (protagonistImage.refImages.length > 0) {
+        requestBody.reference_images = protagonistImage.refImages.map((r) => ({
+          image_base64: r.base64,
+          mime_type: r.mimeType,
+        }));
+      }
+
+      const response = await fetch(`${BACKEND_URL}/moodboard/refine-character`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to refine protagonist image");
+      }
+
+      const data = await response.json();
+
+      const refinedProt = {
+        ...protagonistImage,
+        image: data.image,
+        images: [data.image],
+        selectedIndex: 0,
+      };
+      setProtagonistImage(refinedProt);
+      setProtagonistFeedback("");
+
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
+      }
+      saveNow({ protagonistImage: refinedProt, isGeneratingProtagonist: false }, "moodboard");
+    } catch (err) {
+      setProtagonistError(err instanceof Error ? err.message : "Failed to refine protagonist image");
     } finally {
       setIsGeneratingProtagonist(false);
     }
@@ -462,10 +1099,14 @@ export default function AIVideoPage() {
       .forEach((char) => {
         initialStates[char.id] = {
           image: null,
+          images: [],
+          selectedIndex: 0,
           approved: false,
           isGenerating: true,
           feedback: "",
           promptUsed: "",
+          error: "",
+          refImages: [],
         };
       });
     setCharacterImages(initialStates);
@@ -476,10 +1117,14 @@ export default function AIVideoPage() {
       story.locations.forEach((loc) => {
         initialLocationStates[loc.id] = {
           image: null,
+          images: [],
+          selectedIndex: 0,
           approved: false,
           isGenerating: true,
           feedback: "",
           promptUsed: "",
+          error: "",
+          refImages: [],
         };
       });
       setLocationImages(initialLocationStates);
@@ -487,10 +1132,14 @@ export default function AIVideoPage() {
       // Backward compat: no locations, use single setting
       setSettingImage({
         image: null,
+        images: [],
+        selectedIndex: 0,
         approved: false,
         isGenerating: true,
         feedback: "",
         promptUsed: "",
+        error: "",
+        refImages: [],
       });
     }
 
@@ -534,7 +1183,7 @@ export default function AIVideoPage() {
 
     setCharacterImages((prev) => ({
       ...prev,
-      [characterId]: { ...prev[characterId], isGenerating: true },
+      [characterId]: { ...prev[characterId], isGenerating: true, error: "" },
     }));
 
     try {
@@ -565,10 +1214,10 @@ export default function AIVideoPage() {
         setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate character image");
+      const msg = err instanceof Error ? err.message : "Failed to generate character image";
       setCharacterImages((prev) => ({
         ...prev,
-        [characterId]: { ...prev[characterId], isGenerating: false },
+        [characterId]: { ...prev[characterId], isGenerating: false, error: msg },
       }));
     }
   };
@@ -579,7 +1228,7 @@ export default function AIVideoPage() {
 
     setCharacterImages((prev) => ({
       ...prev,
-      [characterId]: { ...prev[characterId], isGenerating: true },
+      [characterId]: { ...prev[characterId], isGenerating: true, error: "" },
     }));
 
     try {
@@ -613,10 +1262,10 @@ export default function AIVideoPage() {
         setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate character image");
+      const msg = err instanceof Error ? err.message : "Failed to generate character image";
       setCharacterImages((prev) => ({
         ...prev,
-        [characterId]: { ...prev[characterId], isGenerating: false },
+        [characterId]: { ...prev[characterId], isGenerating: false, error: msg },
       }));
     }
   };
@@ -625,12 +1274,16 @@ export default function AIVideoPage() {
   const generateSettingWithRef = async (protagonistRef: { image_base64: string; mime_type: string }) => {
     if (!story) return;
 
-    setSettingImage((prev) => prev ? { ...prev, isGenerating: true } : {
+    setSettingImage((prev) => prev ? { ...prev, isGenerating: true, error: "" } : {
       image: null,
+      images: [],
+      selectedIndex: 0,
       approved: false,
       isGenerating: true,
       feedback: "",
       promptUsed: "",
+      error: "",
+      refImages: [],
     });
 
     try {
@@ -652,17 +1305,21 @@ export default function AIVideoPage() {
 
       setSettingImage({
         image: data.image,
+        images: [data.image],
+        selectedIndex: 0,
         approved: false,
         isGenerating: false,
         feedback: "",
         promptUsed: data.prompt_used,
+        error: "",
+        refImages: [],
       });
       if (data.cost_usd) {
         setTotalCost((prev) => ({ ...prev, locations: prev.locations + data.cost_usd }));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate setting image");
-      setSettingImage((prev) => prev ? { ...prev, isGenerating: false } : null);
+      const msg = err instanceof Error ? err.message : "Failed to generate setting image";
+      setSettingImage((prev) => prev ? { ...prev, isGenerating: false, error: msg } : null);
     }
   };
 
@@ -676,8 +1333,9 @@ export default function AIVideoPage() {
     setLocationImages((prev) => ({
       ...prev,
       [locationId]: {
-        ...(prev[locationId] || { image: null, approved: false, feedback: "", promptUsed: "" }),
+        ...(prev[locationId] || { image: null, images: [], selectedIndex: 0, approved: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
         isGenerating: true,
+        error: "",
       },
     }));
 
@@ -711,10 +1369,10 @@ export default function AIVideoPage() {
         setTotalCost((prev) => ({ ...prev, locations: prev.locations + data.cost_usd }));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate location image");
+      const msg = err instanceof Error ? err.message : "Failed to generate location image";
       setLocationImages((prev) => ({
         ...prev,
-        [locationId]: { ...prev[locationId], isGenerating: false },
+        [locationId]: { ...prev[locationId], isGenerating: false, error: msg },
       }));
     }
   };
@@ -726,7 +1384,7 @@ export default function AIVideoPage() {
 
     setCharacterImages((prev) => ({
       ...prev,
-      [characterId]: { ...prev[characterId], isGenerating: true },
+      [characterId]: { ...prev[characterId], isGenerating: true, error: "" },
     }));
 
     try {
@@ -742,6 +1400,14 @@ export default function AIVideoPage() {
           image_base64: protagonistImage.image.image_base64,
           mime_type: protagonistImage.image.mime_type,
         };
+      }
+
+      // Include user-uploaded reference images if any
+      if (charState.refImages && charState.refImages.length > 0) {
+        requestBody.reference_images = charState.refImages.map((r) => ({
+          image_base64: r.base64,
+          mime_type: r.mimeType,
+        }));
       }
 
       const response = await fetch(`${BACKEND_URL}/moodboard/refine-character`, {
@@ -772,10 +1438,10 @@ export default function AIVideoPage() {
         setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to refine character image");
+      const msg = err instanceof Error ? err.message : "Failed to refine character image";
       setCharacterImages((prev) => ({
         ...prev,
-        [characterId]: { ...prev[characterId], isGenerating: false },
+        [characterId]: { ...prev[characterId], isGenerating: false, error: msg },
       }));
     }
   };
@@ -815,7 +1481,7 @@ export default function AIVideoPage() {
   const refineSettingImage = async () => {
     if (!story || !settingImage?.feedback.trim()) return;
 
-    setSettingImage((prev) => prev ? { ...prev, isGenerating: true } : null);
+    setSettingImage((prev) => prev ? { ...prev, isGenerating: true, error: "" } : null);
 
     try {
       // Include protagonist reference if available
@@ -844,20 +1510,91 @@ export default function AIVideoPage() {
 
       const data = await response.json();
 
-      setSettingImage({
+      setSettingImage((prev) => ({
         image: data.image,
+        images: [data.image],
+        selectedIndex: 0,
         approved: false,
         isGenerating: false,
         feedback: "",
         promptUsed: data.prompt_used,
-      });
+        error: "",
+        refImages: prev?.refImages || [],
+      }));
       // Track setting refinement cost
       if (data.cost_usd) {
         setTotalCost((prev) => ({ ...prev, locations: prev.locations + data.cost_usd }));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to refine setting image");
-      setSettingImage((prev) => prev ? { ...prev, isGenerating: false } : null);
+      const msg = err instanceof Error ? err.message : "Failed to refine setting image";
+      setSettingImage((prev) => prev ? { ...prev, isGenerating: false, error: msg } : null);
+    }
+  };
+
+  const refineLocationImage = async (locationId: string) => {
+    if (!story) return;
+    const locState = locationImages[locationId];
+    if (!locState?.feedback.trim()) return;
+
+    setLocationImages((prev) => ({
+      ...prev,
+      [locationId]: { ...prev[locationId], isGenerating: true, error: "" },
+    }));
+
+    try {
+      const requestBody: Record<string, unknown> = {
+        story,
+        location_id: locationId,
+        feedback: locState.feedback,
+      };
+
+      if (protagonistImage) {
+        requestBody.protagonist_image = {
+          image_base64: protagonistImage.image.image_base64,
+          mime_type: protagonistImage.image.mime_type,
+        };
+      }
+
+      // Include user-uploaded reference images if any
+      if (locState.refImages && locState.refImages.length > 0) {
+        requestBody.reference_images = locState.refImages.map((r) => ({
+          image_base64: r.base64,
+          mime_type: r.mimeType,
+        }));
+      }
+
+      const response = await fetch(`${BACKEND_URL}/moodboard/refine-location`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to refine location image");
+      }
+
+      const data = await response.json();
+
+      setLocationImages((prev) => ({
+        ...prev,
+        [locationId]: {
+          ...prev[locationId],
+          image: data.image,
+          promptUsed: data.prompt_used,
+          isGenerating: false,
+          feedback: "",
+        },
+      }));
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, locations: prev.locations + data.cost_usd }));
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to refine location image";
+      setLocationImages((prev) => ({
+        ...prev,
+        [locationId]: { ...prev[locationId], isGenerating: false, error: msg },
+      }));
     }
   };
 
@@ -964,6 +1701,8 @@ export default function AIVideoPage() {
       isGenerating: true,
       feedback: "",
       promptUsed: "",
+      entries: [],
+      selectedIndex: 0,
     });
 
     const approvedVisuals = buildApprovedVisuals();
@@ -983,18 +1722,32 @@ export default function AIVideoPage() {
 
       const data = await response.json();
 
-      setKeyMoment({
-        image: data.key_moment.image,
-        beat_number: data.key_moment.beat_number,
-        beat_description: data.key_moment.beat_description,
+      // Build entries from the key_moments array (3 distinct scenes)
+      const entries: KeyMomentEntry[] = (data.key_moments || [data.key_moment]).map(
+        (km: { beat_number: number; beat_description: string; image: MoodboardImage; prompt_used: string }) => ({
+          beat_number: km.beat_number,
+          beat_description: km.beat_description,
+          image: km.image,
+          promptUsed: km.prompt_used,
+        })
+      );
+
+      const primary = entries[0];
+      const newKeyMoment = {
+        image: primary.image,
+        beat_number: primary.beat_number,
+        beat_description: primary.beat_description,
         isGenerating: false,
         feedback: "",
-        promptUsed: data.key_moment.prompt_used,
-      });
-      // Track key moment cost (1 image)
+        promptUsed: primary.promptUsed,
+        entries,
+        selectedIndex: 0,
+      };
+      setKeyMoment(newKeyMoment);
       if (data.cost_usd) {
         setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + data.cost_usd }));
       }
+      saveNow({ keyMoment: newKeyMoment }, "key_moments");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate key moment");
       setKeyMoment((prev) => prev ? { ...prev, isGenerating: false } : null);
@@ -1027,13 +1780,31 @@ export default function AIVideoPage() {
 
       const data = await response.json();
 
-      setKeyMoment({
-        image: data.key_moment.image,
-        beat_number: data.key_moment.beat_number,
-        beat_description: data.key_moment.beat_description,
-        isGenerating: false,
-        feedback: "",
-        promptUsed: data.key_moment.prompt_used,
+      setKeyMoment((prev) => {
+        // Replace the currently selected entry with the refined version
+        const newEntry: KeyMomentEntry = {
+          beat_number: data.key_moment.beat_number,
+          beat_description: data.key_moment.beat_description,
+          image: data.key_moment.image,
+          promptUsed: data.key_moment.prompt_used,
+        };
+        const entries = [...(prev?.entries || [])];
+        const idx = prev?.selectedIndex || 0;
+        if (entries.length > idx) {
+          entries[idx] = newEntry;
+        } else {
+          entries.push(newEntry);
+        }
+        return {
+          image: data.key_moment.image,
+          beat_number: data.key_moment.beat_number,
+          beat_description: data.key_moment.beat_description,
+          isGenerating: false,
+          feedback: "",
+          promptUsed: data.key_moment.prompt_used,
+          entries,
+          selectedIndex: idx,
+        };
       });
       // Track key moment refinement cost
       if (data.cost_usd) {
@@ -1057,6 +1828,55 @@ export default function AIVideoPage() {
         clearInterval(pollingIntervalRef.current);
       }
     };
+  }, []);
+
+  // Auto-save generation state when key milestones change
+  // Debounced to avoid spamming on rapid state changes
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => {
+    // Use refs to avoid stale closure issues
+    if (!generationIdRef.current || isRestoringRef.current) return;
+    // Only save if we have meaningful state
+    if (!story && !protagonistImage) return;
+
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      saveGeneration();
+    }, 500); // 500ms debounce — fast enough to catch before refresh
+    return () => { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    generationId, story, protagonistImage, protagonistLocked,
+    characterImages, locationImages,
+    visualStep, film.status, film.filmId,
+    keyMoment?.entries.length, promptPreview.shots.length, clipsApproved,
+    totalCost.film,
+  ]);
+
+  // On mount: check URL ?g= param first, then fallback to most recent active
+  useEffect(() => {
+    const init = async () => {
+      const gens = await fetchGenerationsList();
+
+      // 1. URL param takes priority
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlGenId = urlParams.get("g");
+      if (urlGenId) {
+        await restoreGeneration(urlGenId);
+        return;
+      }
+
+      // 2. Fallback: restore most recent in-progress generation
+      const active = gens.find((g: AIGenerationSummary) =>
+        ["drafting", "moodboard", "key_moments", "preflight", "filming"].includes(g.status)
+      );
+      if (active) {
+        await restoreGeneration(active.id);
+      }
+      // No auto-create on first visit — generation is created when user clicks "Generate Story Beats"
+    };
+    init().catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const startFilmGeneration = async () => {
@@ -1091,6 +1911,7 @@ export default function AIVideoPage() {
           story,
           approved_visuals: approvedVisuals,
           key_moment_image: keyMomentImage,
+          generation_id: generationIdRef.current,
         }),
       });
 
@@ -1107,7 +1928,145 @@ export default function AIVideoPage() {
         totalShots: data.total_shots,
       }));
 
+      // Save film_id to Supabase generation
+      const gid = generationIdRef.current;
+      if (gid) {
+        supaUpdateGeneration(gid, { film_id: data.film_id, status: "filming" }).catch(console.error);
+      }
+
       // Start polling
+      startPolling(data.film_id);
+    } catch (err) {
+      setFilm((prev) => ({
+        ...prev,
+        status: "failed",
+        error: err instanceof Error ? err.message : "Failed to start film generation",
+      }));
+    }
+  };
+
+  // --- Prompt Preview (Pre-Flight Check) ---
+
+  const fetchPromptPreviews = async () => {
+    if (!story || !protagonistImage) return;
+
+    const approvedVisuals = buildApprovedVisuals();
+    if (!approvedVisuals) return;
+
+    setPromptPreview((prev) => ({ ...prev, isLoading: true }));
+
+    try {
+      const selectedEntry = keyMoment?.entries[keyMoment.selectedIndex];
+      const response = await fetch(`${BACKEND_URL}/film/preview-prompts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          story,
+          approved_visuals: approvedVisuals,
+          key_moment_image: selectedEntry?.image
+            ? { image_base64: selectedEntry.image.image_base64, mime_type: selectedEntry.image.mime_type }
+            : { image_base64: "", mime_type: "image/png" },
+          beat_numbers: keyMoment?.entries.map((e) => e.beat_number) || [],
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to preview prompts");
+      }
+
+      const data = await response.json();
+
+      const editedPrompts: Record<number, string> = {};
+      for (const shot of data.shots) {
+        editedPrompts[shot.beat_number] = shot.veo_prompt;
+      }
+
+      setPromptPreview({
+        shots: data.shots,
+        editedPrompts,
+        estimatedCostUsd: data.estimated_cost_usd,
+        isLoading: false,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to preview prompts");
+      setPromptPreview((prev) => ({ ...prev, isLoading: false }));
+    }
+  };
+
+  const startFilmWithEditedPrompts = async () => {
+    if (!story || !keyMoment?.entries.length || !protagonistImage) return;
+
+    const approvedVisuals = buildApprovedVisuals();
+    if (!approvedVisuals) return;
+
+    // Build a map from beat_number -> key moment image for per-shot references
+    const keyMomentByBeat: Record<number, { image_base64: string; mime_type: string }> = {};
+    for (const entry of keyMoment.entries) {
+      keyMomentByBeat[entry.beat_number] = {
+        image_base64: entry.image.image_base64,
+        mime_type: entry.image.mime_type,
+      };
+    }
+
+    // Use the selected key moment as the overall key_moment_image (backward compat)
+    const selectedEntry = keyMoment.entries[keyMoment.selectedIndex];
+    const keyMomentImage = {
+      image_base64: selectedEntry.image.image_base64,
+      mime_type: selectedEntry.image.mime_type,
+    };
+
+    const editedShots = promptPreview.shots.map((shot) => ({
+      beat_number: shot.beat_number,
+      veo_prompt: promptPreview.editedPrompts[shot.beat_number] || shot.veo_prompt,
+      // Attach the corresponding key moment image as the sole reference for this shot
+      reference_image: keyMomentByBeat[shot.beat_number] || null,
+    }));
+
+    setFilm({
+      filmId: null,
+      status: "generating",
+      currentShot: 0,
+      totalShots: editedShots.length,
+      phase: "filming",
+      completedShots: [],
+      finalVideoUrl: null,
+      error: null,
+      cost: { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
+    });
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/film/generate-with-prompts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          story,
+          approved_visuals: approvedVisuals,
+          key_moment_image: keyMomentImage,
+          edited_shots: editedShots,
+          generation_id: generationIdRef.current,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to start generation");
+      }
+
+      const data = await response.json();
+
+      setFilm((prev) => ({
+        ...prev,
+        filmId: data.film_id,
+        totalShots: data.total_shots,
+      }));
+
+      // Save film_id to Supabase generation
+      const gid = generationIdRef.current;
+      if (gid) {
+        supaUpdateGeneration(gid, { film_id: data.film_id, status: "filming" }).catch(console.error);
+      }
+
       startPolling(data.film_id);
     } catch (err) {
       setFilm((prev) => ({
@@ -1151,11 +2110,34 @@ export default function AIVideoPage() {
           setTotalCost((prev) => ({ ...prev, film: data.cost.total_usd }));
         }
 
+        // Persist film job progress to Supabase (fire-and-forget)
+        supaUpsertFilmJob({
+          film_id: data.film_id,
+          generation_id: generationIdRef.current,
+          status: data.status,
+          total_shots: data.total_shots,
+          current_shot: data.current_shot,
+          phase: data.phase,
+          completed_shots: data.completed_shots || [],
+          final_video_url: data.final_video_url,
+          error_message: data.error_message,
+          cost_scene_refs: data.cost?.scene_refs_usd || 0,
+          cost_videos: data.cost?.videos_usd || 0,
+        }).catch(console.error);
+
         // Stop polling when done
         if (data.status === "ready" || data.status === "failed") {
           if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current);
             pollingIntervalRef.current = null;
+          }
+          // Update generation status in Supabase on terminal state
+          const gid = generationIdRef.current;
+          if (gid) {
+            supaUpdateGeneration(gid, {
+              status: data.status === "ready" ? "ready" : "failed",
+              film_id: filmId,
+            }).catch(console.error);
           }
         }
       } catch (err) {
@@ -1267,6 +2249,33 @@ export default function AIVideoPage() {
 
   // Calculate grand total cost
   const grandTotalCost = totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film;
+
+  // Helper: convert File to RefImageUpload
+  const fileToRefImage = (file: File): Promise<RefImageUpload> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        const base64 = dataUrl.split(",")[1];
+        resolve({ base64, mimeType: file.type || "image/png", name: file.name });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+  // Helper: handle ref image file input for any entity
+  const handleRefImageUpload = async (
+    files: FileList | null,
+    maxCount: number,
+    setter: (imgs: RefImageUpload[]) => void,
+    existing: RefImageUpload[]
+  ) => {
+    if (!files) return;
+    const remaining = maxCount - existing.length;
+    const toProcess = Array.from(files).slice(0, remaining);
+    const newRefs = await Promise.all(toProcess.map(fileToRefImage));
+    setter([...existing, ...newRefs]);
+  };
 
   // ============================================================
   // Render
@@ -1777,8 +2786,7 @@ export default function AIVideoPage() {
                     </button>
                     <button
                       onClick={startVisualDirection}
-                      disabled={isGenerating || visualStep !== null}
-                      className="flex-1 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex-1 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
                     >
                       Approve & Continue
                     </button>
@@ -1851,12 +2859,78 @@ export default function AIVideoPage() {
                           alt={protagonistImage.character_name}
                           className="w-full h-full object-cover"
                         />
+                      ) : protagonistError ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+                          <span className="text-red-400 text-sm mb-3">{protagonistError}</span>
+                          <button
+                            onClick={generateProtagonistImage}
+                            className="px-4 py-2 bg-[#B8B6FC]/20 text-[#B8B6FC] text-sm rounded-lg hover:bg-[#B8B6FC]/30 transition-colors"
+                          >
+                            ↻ Retry
+                          </button>
+                        </div>
                       ) : null}
                     </div>
 
                     {protagonistImage && !isGeneratingProtagonist && (
                       <div className="p-4">
                         <h4 className="text-white font-medium text-center mb-4">{protagonistImage.character_name}</h4>
+                        {protagonistImage.image.prompt_used && (
+                          <details className="mb-3">
+                            <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">View prompt</summary>
+                            <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
+                              {protagonistImage.image.prompt_used}
+                            </pre>
+                          </details>
+                        )}
+                        <div className="mt-2 mb-3">
+                          <input
+                            type="text"
+                            placeholder="Feedback for refinement..."
+                            value={protagonistFeedback}
+                            onChange={(e) => setProtagonistFeedback(e.target.value)}
+                            className="w-full bg-[#262626] text-white text-xs rounded-lg px-3 py-2 mb-2 placeholder-[#555] focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                          />
+                          {protagonistFeedback.trim() && (
+                            <button
+                              onClick={refineProtagonistImage}
+                              className="w-full text-xs py-1.5 rounded-lg bg-[#B8B6FC]/20 text-[#B8B6FC] hover:bg-[#B8B6FC]/30 transition-colors"
+                            >
+                              Refine with Feedback
+                            </button>
+                          )}
+                          {/* Reference image upload for refinement */}
+                          <div className="mt-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {protagonistImage.refImages.map((ref, idx) => (
+                                <div key={idx} className="relative w-8 h-8 rounded overflow-hidden">
+                                  <img src={`data:${ref.mimeType};base64,${ref.base64}`} alt={ref.name} className="w-full h-full object-cover" />
+                                  <button
+                                    onClick={() => setProtagonistImage({ ...protagonistImage, refImages: protagonistImage.refImages.filter((_, i) => i !== idx) })}
+                                    className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center text-white text-[8px] leading-none"
+                                  >x</button>
+                                </div>
+                              ))}
+                              {protagonistImage.refImages.length < 5 && (
+                                <label className="w-8 h-8 rounded border border-dashed border-white/20 flex items-center justify-center cursor-pointer hover:border-[#B8B6FC]/50 transition-colors">
+                                  <span className="text-white/40 text-xs">+</span>
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    multiple
+                                    className="hidden"
+                                    onChange={(e) => handleRefImageUpload(
+                                      e.target.files, 5,
+                                      (imgs) => setProtagonistImage({ ...protagonistImage, refImages: imgs }),
+                                      protagonistImage.refImages
+                                    )}
+                                  />
+                                </label>
+                              )}
+                              <span className="text-[10px] text-white/30">Refs ({protagonistImage.refImages.length}/5)</span>
+                            </div>
+                          </div>
+                        </div>
                         <div className="flex gap-3">
                           <button
                             onClick={generateProtagonistImage}
@@ -1898,6 +2972,14 @@ export default function AIVideoPage() {
                       <div className="absolute top-3 right-3 w-8 h-8 bg-[#B8B6FC] rounded-full flex items-center justify-center">
                         <span className="text-black text-sm">🔒</span>
                       </div>
+                      <a
+                        href={`data:${protagonistImage.image.mime_type};base64,${protagonistImage.image.image_base64}`}
+                        download={`${protagonistImage.character_name.replace(/\s+/g, '_')}_ref.png`}
+                        className="absolute bottom-3 right-3 w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-black/80 transition-colors"
+                        title="Download reference image"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                      </a>
                     </div>
                     <div className="p-4">
                       <div className="flex items-center justify-between mb-2">
@@ -1907,6 +2989,14 @@ export default function AIVideoPage() {
                         </span>
                       </div>
                       <p className="text-[#ADADAD] text-xs text-center">Locked - defines the style</p>
+                      {protagonistImage.image.prompt_used && (
+                        <details className="mt-2">
+                          <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">View prompt</summary>
+                          <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
+                            {protagonistImage.image.prompt_used}
+                          </pre>
+                        </details>
+                      )}
                     </div>
                   </div>
 
@@ -1942,7 +3032,25 @@ export default function AIVideoPage() {
                                     </svg>
                                   </div>
                                 )}
+                                <a
+                                  href={`data:${charState.image.mime_type};base64,${charState.image.image_base64}`}
+                                  download={`${char.name.replace(/\s+/g, '_')}_ref.png`}
+                                  className="absolute bottom-3 right-3 w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-black/80 transition-colors"
+                                  title="Download reference image"
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                </a>
                               </>
+                            ) : charState.error ? (
+                              <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+                                <span className="text-red-400 text-sm mb-3">{charState.error}</span>
+                                <button
+                                  onClick={() => retryCharacterImage(char.id)}
+                                  className="px-4 py-2 bg-[#B8B6FC]/20 text-[#B8B6FC] text-sm rounded-lg hover:bg-[#B8B6FC]/30 transition-colors"
+                                >
+                                  ↻ Retry
+                                </button>
+                              </div>
                             ) : null}
                           </div>
 
@@ -1971,8 +3079,74 @@ export default function AIVideoPage() {
                               </div>
                             )}
 
+                            {!charState.approved && !charState.isGenerating && charState.image && (
+                              <div className="mt-2">
+                                <input
+                                  type="text"
+                                  placeholder="Feedback for refinement..."
+                                  value={charState.feedback}
+                                  onChange={(e) =>
+                                    setCharacterImages((prev) => ({
+                                      ...prev,
+                                      [char.id]: { ...prev[char.id], feedback: e.target.value },
+                                    }))
+                                  }
+                                  className="w-full bg-[#262626] text-white text-xs rounded-lg px-3 py-2 mb-2 placeholder-[#555] focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                                />
+                                {charState.feedback.trim() && (
+                                  <button
+                                    onClick={() => refineCharacterImage(char.id)}
+                                    className="w-full text-xs py-1.5 rounded-lg bg-[#B8B6FC]/20 text-[#B8B6FC] hover:bg-[#B8B6FC]/30 transition-colors"
+                                  >
+                                    Refine with Feedback
+                                  </button>
+                                )}
+                                {/* Reference image upload for refinement */}
+                                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                                  {charState.refImages.map((ref, idx) => (
+                                    <div key={idx} className="relative w-8 h-8 rounded overflow-hidden">
+                                      <img src={`data:${ref.mimeType};base64,${ref.base64}`} alt={ref.name} className="w-full h-full object-cover" />
+                                      <button
+                                        onClick={() => setCharacterImages((prev) => ({
+                                          ...prev,
+                                          [char.id]: { ...prev[char.id], refImages: prev[char.id].refImages.filter((_, i) => i !== idx) },
+                                        }))}
+                                        className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center text-white text-[8px] leading-none"
+                                      >x</button>
+                                    </div>
+                                  ))}
+                                  {charState.refImages.length < 5 && (
+                                    <label className="w-8 h-8 rounded border border-dashed border-white/20 flex items-center justify-center cursor-pointer hover:border-[#B8B6FC]/50 transition-colors">
+                                      <span className="text-white/40 text-xs">+</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        multiple
+                                        className="hidden"
+                                        onChange={(e) => handleRefImageUpload(
+                                          e.target.files, 5,
+                                          (imgs) => setCharacterImages((prev) => ({ ...prev, [char.id]: { ...prev[char.id], refImages: imgs } })),
+                                          charState.refImages
+                                        )}
+                                      />
+                                    </label>
+                                  )}
+                                  <span className="text-[10px] text-white/30">Refs ({charState.refImages.length}/5)</span>
+                                </div>
+                              </div>
+                            )}
+
                             {charState.approved && (
                               <p className="text-green-400 text-sm text-center">✓ Approved</p>
+                            )}
+
+                            {charState.promptUsed && (
+                              <details className="mt-2">
+                                <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">View prompt</summary>
+                                <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
+                                  {charState.promptUsed}
+                                </pre>
+                              </details>
                             )}
                           </div>
                         </div>
@@ -2009,7 +3183,31 @@ export default function AIVideoPage() {
                                     </svg>
                                   </div>
                                 )}
+                                <a
+                                  href={`data:${locState.image.mime_type};base64,${locState.image.image_base64}`}
+                                  download={`location_${loc.id}_ref.png`}
+                                  className="absolute bottom-3 right-3 w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-black/80 transition-colors"
+                                  title="Download reference image"
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                </a>
                               </>
+                            ) : locState.error ? (
+                              <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+                                <span className="text-red-400 text-sm mb-3">{locState.error}</span>
+                                <button
+                                  onClick={async () => {
+                                    if (!protagonistImage) return;
+                                    await generateLocationWithRef(loc.id, {
+                                      image_base64: protagonistImage.image.image_base64,
+                                      mime_type: protagonistImage.image.mime_type,
+                                    });
+                                  }}
+                                  className="px-4 py-2 bg-[#B8B6FC]/20 text-[#B8B6FC] text-sm rounded-lg hover:bg-[#B8B6FC]/30 transition-colors"
+                                >
+                                  ↻ Retry
+                                </button>
+                              </div>
                             ) : null}
                           </div>
 
@@ -2049,8 +3247,74 @@ export default function AIVideoPage() {
                               </div>
                             )}
 
+                            {!locState.approved && !locState.isGenerating && locState.image && (
+                              <div className="mt-2">
+                                <input
+                                  type="text"
+                                  placeholder="Feedback for refinement..."
+                                  value={locState.feedback}
+                                  onChange={(e) =>
+                                    setLocationImages((prev) => ({
+                                      ...prev,
+                                      [loc.id]: { ...prev[loc.id], feedback: e.target.value },
+                                    }))
+                                  }
+                                  className="w-full bg-[#262626] text-white text-xs rounded-lg px-3 py-2 mb-2 placeholder-[#555] focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                                />
+                                {locState.feedback.trim() && (
+                                  <button
+                                    onClick={() => refineLocationImage(loc.id)}
+                                    className="w-full text-xs py-1.5 rounded-lg bg-[#B8B6FC]/20 text-[#B8B6FC] hover:bg-[#B8B6FC]/30 transition-colors"
+                                  >
+                                    Refine with Feedback
+                                  </button>
+                                )}
+                                {/* Reference image upload for refinement */}
+                                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                                  {locState.refImages.map((ref, idx) => (
+                                    <div key={idx} className="relative w-8 h-8 rounded overflow-hidden">
+                                      <img src={`data:${ref.mimeType};base64,${ref.base64}`} alt={ref.name} className="w-full h-full object-cover" />
+                                      <button
+                                        onClick={() => setLocationImages((prev) => ({
+                                          ...prev,
+                                          [loc.id]: { ...prev[loc.id], refImages: prev[loc.id].refImages.filter((_, i) => i !== idx) },
+                                        }))}
+                                        className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center text-white text-[8px] leading-none"
+                                      >x</button>
+                                    </div>
+                                  ))}
+                                  {locState.refImages.length < 5 && (
+                                    <label className="w-8 h-8 rounded border border-dashed border-white/20 flex items-center justify-center cursor-pointer hover:border-[#B8B6FC]/50 transition-colors">
+                                      <span className="text-white/40 text-xs">+</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        multiple
+                                        className="hidden"
+                                        onChange={(e) => handleRefImageUpload(
+                                          e.target.files, 5,
+                                          (imgs) => setLocationImages((prev) => ({ ...prev, [loc.id]: { ...prev[loc.id], refImages: imgs } })),
+                                          locState.refImages
+                                        )}
+                                      />
+                                    </label>
+                                  )}
+                                  <span className="text-[10px] text-white/30">Refs ({locState.refImages.length}/5)</span>
+                                </div>
+                              </div>
+                            )}
+
                             {locState.approved && (
                               <p className="text-green-400 text-sm text-center">Approved</p>
+                            )}
+
+                            {locState.promptUsed && (
+                              <details className="mt-2">
+                                <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">View prompt</summary>
+                                <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
+                                  {locState.promptUsed}
+                                </pre>
+                              </details>
                             )}
                           </div>
                         </div>
@@ -2083,6 +3347,16 @@ export default function AIVideoPage() {
                               </div>
                             )}
                           </>
+                        ) : settingImage.error ? (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+                            <span className="text-red-400 text-sm mb-3">{settingImage.error}</span>
+                            <button
+                              onClick={retrySettingImage}
+                              className="px-4 py-2 bg-[#B8B6FC]/20 text-[#B8B6FC] text-sm rounded-lg hover:bg-[#B8B6FC]/30 transition-colors"
+                            >
+                              ↻ Retry
+                            </button>
+                          </div>
                         ) : null}
                       </div>
 
@@ -2111,8 +3385,39 @@ export default function AIVideoPage() {
                           </div>
                         )}
 
+                        {!settingImage.approved && !settingImage.isGenerating && settingImage.image && (
+                          <div className="mt-2">
+                            <input
+                              type="text"
+                              placeholder="Feedback for refinement..."
+                              value={settingImage.feedback}
+                              onChange={(e) =>
+                                setSettingImage((prev) => prev ? { ...prev, feedback: e.target.value } : null)
+                              }
+                              className="w-full bg-[#262626] text-white text-xs rounded-lg px-3 py-2 mb-2 placeholder-[#555] focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                            />
+                            {settingImage.feedback.trim() && (
+                              <button
+                                onClick={refineSettingImage}
+                                className="w-full text-xs py-1.5 rounded-lg bg-[#B8B6FC]/20 text-[#B8B6FC] hover:bg-[#B8B6FC]/30 transition-colors"
+                              >
+                                Refine with Feedback
+                              </button>
+                            )}
+                          </div>
+                        )}
+
                         {settingImage.approved && (
                           <p className="text-green-400 text-sm text-center">Approved</p>
+                        )}
+
+                        {settingImage.promptUsed && (
+                          <details className="mt-2">
+                            <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">View prompt</summary>
+                            <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
+                              {settingImage.promptUsed}
+                            </pre>
+                          </details>
                         )}
                       </div>
                     </div>
@@ -2150,95 +3455,137 @@ export default function AIVideoPage() {
             )}
 
 
-            {/* Step 3: Key Moment (SPIKE - emotional peak) */}
+            {/* Step 3: Key Moments (3 distinct scenes) */}
             {visualStep === "key_moment" && (
               <div>
-                <h3 className="text-lg font-medium text-white mb-4">Key Moment (Emotional Peak)</h3>
+                <h3 className="text-lg font-medium text-white mb-4">Key Moments</h3>
                 <p className="text-sm text-[#ADADAD] mb-6">
-                  This reference image captures the emotional peak of your story using your approved characters and setting.
+                  3 distinct scenes from your story — each with the relevant characters and setting. Click to select, refine with feedback.
                 </p>
 
-                {keyMoment?.isGenerating && !keyMoment?.image && (
+                {keyMoment?.isGenerating && keyMoment.entries.length === 0 && (
                   <div className="text-center py-16">
                     <svg className="animate-spin h-12 w-12 mx-auto mb-4 text-[#B8B6FC]" viewBox="0 0 24 24" fill="none">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
-                    <p className="text-[#ADADAD]">Generating key moment image...</p>
+                    <p className="text-[#ADADAD]">Generating 3 key moment images...</p>
                   </div>
                 )}
 
-                {keyMoment && (keyMoment.image || keyMoment.isGenerating) && (
-                  <div className="max-w-md mx-auto">
-                    <div className="bg-[#1A1E2F] rounded-xl overflow-hidden">
-                      <div className="aspect-[9/16] relative bg-[#262626]">
-                        {keyMoment.isGenerating ? (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center">
-                            <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                            </svg>
-                            <span className="text-[#ADADAD] text-sm">Generating...</span>
-                          </div>
-                        ) : keyMoment.image ? (
-                          <img
-                            src={`data:${keyMoment.image.mime_type};base64,${keyMoment.image.image_base64}`}
-                            alt="Key Moment"
-                            className="w-full h-full object-cover"
-                          />
-                        ) : null}
-                      </div>
-
-                      <div className="p-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xs px-2 py-1 rounded-full bg-red-500/20 text-red-400">
-                            Key Moment
-                          </span>
-                          <span className="text-xs text-[#ADADAD]">Scene {keyMoment.beat_number}</span>
-                        </div>
-                        <p className="text-white text-sm mb-3">{keyMoment.beat_description}</p>
-
-                        {/* Prompt Preview */}
-                        {keyMoment.promptUsed && (
-                          <details className="mb-3">
-                            <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">
-                              View prompt
-                            </summary>
-                            <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
-                              {keyMoment.promptUsed}
-                            </pre>
-                          </details>
-                        )}
-
-                        {!keyMoment.isGenerating && (
-                          <>
-                            <textarea
-                              value={keyMoment.feedback}
-                              onChange={(e) => setKeyMoment((prev) => prev ? { ...prev, feedback: e.target.value } : null)}
-                              placeholder="Feedback (optional)..."
-                              className="w-full h-14 bg-[#262626] rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none mb-2"
+                {keyMoment && keyMoment.entries.length > 0 && (
+                  <>
+                    {/* 3-image grid */}
+                    <div className="grid grid-cols-3 gap-4 mb-6">
+                      {keyMoment.entries.map((entry, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => setKeyMoment((prev) => prev ? {
+                            ...prev,
+                            image: entry.image,
+                            beat_number: entry.beat_number,
+                            beat_description: entry.beat_description,
+                            promptUsed: entry.promptUsed,
+                            selectedIndex: idx,
+                          } : null)}
+                          className={`relative rounded-xl overflow-hidden border-2 transition-all ${
+                            idx === keyMoment.selectedIndex
+                              ? "border-[#B8B6FC] ring-2 ring-[#B8B6FC]/30"
+                              : "border-transparent opacity-70 hover:opacity-100"
+                          }`}
+                        >
+                          <div className="aspect-[9/16] relative bg-[#262626]">
+                            <img
+                              src={`data:${entry.image.mime_type};base64,${entry.image.image_base64}`}
+                              alt={`Scene ${entry.beat_number}`}
+                              className="w-full h-full object-cover"
                             />
-                            <button
-                              onClick={refineKeyMoment}
-                              disabled={!keyMoment.feedback.trim()}
-                              className="w-full py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333] disabled:opacity-50 disabled:cursor-not-allowed"
+                            <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px]">
+                              Scene {entry.beat_number}
+                            </div>
+                            {idx === keyMoment.selectedIndex && (
+                              <div className="absolute top-2 right-2 w-6 h-6 bg-[#B8B6FC] rounded-full flex items-center justify-center">
+                                <svg className="w-3.5 h-3.5 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                </svg>
+                              </div>
+                            )}
+                            {/* Download button */}
+                            <a
+                              href={`data:${entry.image.mime_type};base64,${entry.image.image_base64}`}
+                              download={`key_moment_scene_${entry.beat_number}.png`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="absolute bottom-2 right-2 w-7 h-7 bg-black/60 hover:bg-black/80 rounded-full flex items-center justify-center transition-colors"
+                              title="Download image"
                             >
-                              Regenerate
-                            </button>
-                          </>
-                        )}
-                      </div>
+                              <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V3" />
+                              </svg>
+                            </a>
+                          </div>
+                          <div className="p-2 bg-[#1A1E2F]">
+                            <p className="text-white text-[11px] line-clamp-2 text-left">{entry.beat_description}</p>
+                          </div>
+                        </button>
+                      ))}
                     </div>
-                  </div>
+
+                    {/* Selected scene details */}
+                    <div className="max-w-md mx-auto bg-[#1A1E2F] rounded-xl p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xs px-2 py-1 rounded-full bg-[#B8B6FC]/20 text-[#B8B6FC]">
+                          Selected
+                        </span>
+                        <span className="text-xs text-[#ADADAD]">Scene {keyMoment.beat_number}</span>
+                      </div>
+                      <p className="text-white text-sm mb-3">{keyMoment.beat_description}</p>
+
+                      {keyMoment.promptUsed && (
+                        <details className="mb-3">
+                          <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">
+                            View prompt
+                          </summary>
+                          <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
+                            {keyMoment.promptUsed}
+                          </pre>
+                        </details>
+                      )}
+
+                      {!keyMoment.isGenerating && (
+                        <>
+                          <textarea
+                            value={keyMoment.feedback}
+                            onChange={(e) => setKeyMoment((prev) => prev ? { ...prev, feedback: e.target.value } : null)}
+                            placeholder="Feedback to refine this scene..."
+                            className="w-full h-14 bg-[#262626] rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none mb-2"
+                          />
+                          <button
+                            onClick={refineKeyMoment}
+                            disabled={!keyMoment.feedback.trim()}
+                            className="w-full py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333] disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Refine Selected Scene
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </>
                 )}
 
-                {keyMoment?.image && !keyMoment.isGenerating && film.status === "idle" && (
-                  <div className="mt-6 pt-6 border-t border-white/10 flex justify-end">
+                {keyMoment && keyMoment.entries && keyMoment.entries.length > 0 && !keyMoment.isGenerating && film.status === "idle" && (
+                  <div className="mt-6 pt-6 border-t border-white/10 flex items-center justify-between">
                     <button
-                      onClick={startFilmGeneration}
-                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
+                      onClick={() => { setVisualStep("characters"); setMoodboardStep("full"); }}
+                      className="text-sm text-[#ADADAD] hover:text-white transition-colors"
                     >
-                      Approve & Generate Video →
+                      ← Back to Moodboard
+                    </button>
+                    <button
+                      onClick={fetchPromptPreviews}
+                      disabled={promptPreview.isLoading}
+                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50"
+                    >
+                      {promptPreview.isLoading ? "Generating Prompts..." : "Preview Prompts →"}
                     </button>
                   </div>
                 )}
@@ -2247,10 +3594,148 @@ export default function AIVideoPage() {
           </div>
         )}
 
+        {/* Section 3.5: Pre-Flight Check (Prompt Preview) */}
+        {promptPreview.shots.length > 0 && film.status === "idle" && (
+          <div className="mt-8 bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
+            <h2 className="text-xl font-semibold text-white mb-2">Pre-Flight Check</h2>
+            <p className="text-[#ADADAD] mb-6 text-sm">
+              Review and edit the Veo prompts before generating. Each prompt drives one 8-second clip.
+            </p>
+
+            <div className="space-y-4">
+              {promptPreview.shots.map((shot) => {
+                const editedPrompt = promptPreview.editedPrompts[shot.beat_number] || shot.veo_prompt;
+                const isEdited = editedPrompt !== shot.veo_prompt;
+
+                return (
+                  <div key={shot.beat_number} className="bg-[#1A1E2F] rounded-xl p-4">
+                    {/* Header: beat number + scene heading + copy */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 bg-[#B8B6FC] rounded-full flex items-center justify-center text-black font-bold text-sm">
+                          {shot.beat_number}
+                        </div>
+                        <span className="text-white font-medium text-sm">
+                          {shot.scene_heading || `Scene ${shot.beat_number}`}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(editedPrompt)}
+                        className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10 transition-colors"
+                      >
+                        Copy
+                      </button>
+                    </div>
+
+                    {/* Key moment reference image for this shot */}
+                    <div className="flex items-center gap-2 mb-3">
+                      {(() => {
+                        const entry = keyMoment?.entries.find((e) => e.beat_number === shot.beat_number);
+                        if (!entry) return <span className="text-[10px] text-[#555]">No key moment ref</span>;
+                        return (
+                          <>
+                            <img
+                              src={`data:${entry.image.mime_type};base64,${entry.image.image_base64}`}
+                              className="w-10 h-14 object-cover rounded border border-[#B8B6FC]/30"
+                              title={`Key moment — Scene ${entry.beat_number}`}
+                            />
+                            <span className="text-[10px] text-[#555] ml-1">
+                              Key moment ref (1 image)
+                            </span>
+                          </>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Editable prompt textarea */}
+                    <textarea
+                      value={editedPrompt}
+                      onChange={(e) =>
+                        setPromptPreview((prev) => ({
+                          ...prev,
+                          editedPrompts: {
+                            ...prev.editedPrompts,
+                            [shot.beat_number]: e.target.value,
+                          },
+                        }))
+                      }
+                      className="w-full h-28 bg-[#262626] text-white text-sm font-mono rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                    />
+                    <div className="flex justify-between mt-1">
+                      <span className="text-[10px] text-[#555]">
+                        {editedPrompt.split(/\s+/).filter(Boolean).length} words
+                      </span>
+                      {isEdited && (
+                        <button
+                          onClick={() =>
+                            setPromptPreview((prev) => ({
+                              ...prev,
+                              editedPrompts: {
+                                ...prev.editedPrompts,
+                                [shot.beat_number]: shot.veo_prompt,
+                              },
+                            }))
+                          }
+                          className="text-[10px] text-[#ADADAD] hover:text-white transition-colors"
+                        >
+                          Reset to original
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Cost + action buttons */}
+            <div className="mt-6 pt-6 border-t border-white/10">
+              <p className="text-amber-200/80 text-xs mb-4">
+                This will generate {promptPreview.shots.length} video clips (~${promptPreview.estimatedCostUsd.toFixed(0)}). Please ensure prompts look good before proceeding.
+              </p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[#ADADAD] text-sm">
+                    Estimated cost: <span className="text-white font-medium">~${promptPreview.estimatedCostUsd.toFixed(2)}</span>
+                  </p>
+                  <p className="text-[10px] text-[#555]">
+                    {promptPreview.shots.length} clips x 8s (key moment refs)
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() =>
+                      setPromptPreview({ shots: [], editedPrompts: {}, estimatedCostUsd: 0, isLoading: false })
+                    }
+                    className="px-4 py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333] transition-colors"
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    onClick={startFilmWithEditedPrompts}
+                    className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
+                  >
+                    Try {promptPreview.shots.length} Clips (~${promptPreview.estimatedCostUsd.toFixed(0)})
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Section 4: Film Generation */}
         {(film.status === "generating" || film.status === "assembling" || film.status === "ready" || film.status === "failed") && (
           <div className="mt-8 bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
-            <h2 className="text-xl font-semibold text-white mb-2">4. Creating Your Film</h2>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-xl font-semibold text-white">4. Creating Your Film</h2>
+              {(film.status === "ready" || film.status === "failed") && (
+                <button
+                  onClick={() => { setVisualStep("characters"); setMoodboardStep("full"); }}
+                  className="text-sm text-[#ADADAD] hover:text-white transition-colors"
+                >
+                  ← Moodboard
+                </button>
+              )}
+            </div>
             {story && <p className="text-[#ADADAD] mb-6">&ldquo;{story.title}&rdquo;</p>}
 
             {/* Generating State — card grid with lazy-loading clips */}
@@ -2567,6 +4052,133 @@ export default function AIVideoPage() {
       </main>
 
       <Footer />
+
+      {/* Sidebar toggle button */}
+      <button
+        onClick={() => { setSidebarOpen(!sidebarOpen); if (!sidebarOpen) fetchGenerationsList(); }}
+        className="fixed bottom-6 left-6 z-50 w-12 h-12 bg-[#1A1E2F] rounded-full border border-white/10 flex items-center justify-center hover:bg-[#262626] shadow-lg transition-colors"
+        title="Past Generations"
+      >
+        <svg className="w-5 h-5 text-white/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+
+      {/* Sidebar overlay */}
+      {sidebarOpen && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setSidebarOpen(false)} />
+          <div className="fixed left-0 top-0 bottom-0 w-80 bg-[#0F0E13] border-r border-white/10 z-50 overflow-y-auto">
+            <div className="p-4">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-white font-semibold text-lg">Generations</h2>
+                <button
+                  onClick={() => setSidebarOpen(false)}
+                  className="text-white/50 hover:text-white text-xl leading-none"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <button
+                onClick={() => { startNewGeneration(); setSidebarOpen(false); }}
+                className="w-full mb-5 py-2.5 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-lg font-medium hover:opacity-90 transition-opacity"
+              >
+                + New Generation
+              </button>
+
+              {pastGenerations.length === 0 && (
+                <p className="text-[#555] text-sm text-center py-8">No generations yet</p>
+              )}
+
+              <div className="space-y-2">
+                {pastGenerations.map((gen) => {
+                  const isActive = gen.id === generationId;
+                  const statusColors: Record<string, string> = {
+                    drafting: "bg-white/10 text-white/50",
+                    moodboard: "bg-blue-500/20 text-blue-300",
+                    key_moments: "bg-blue-500/20 text-blue-300",
+                    preflight: "bg-blue-500/20 text-blue-300",
+                    filming: "bg-amber-500/20 text-amber-300",
+                    ready: "bg-green-500/20 text-green-300",
+                    failed: "bg-red-500/20 text-red-300",
+                    interrupted: "bg-orange-500/20 text-orange-300",
+                  };
+                  const statusLabels: Record<string, string> = {
+                    drafting: "Draft",
+                    moodboard: "Moodboard",
+                    key_moments: "Key Moments",
+                    preflight: "Pre-Flight",
+                    filming: "Generating...",
+                    ready: "Complete",
+                    failed: "Failed",
+                    interrupted: "Interrupted",
+                  };
+                  return (
+                    <button
+                      key={gen.id}
+                      onClick={() => {
+                        if (!isActive) restoreGeneration(gen.id);
+                        setSidebarOpen(false);
+                      }}
+                      className={`w-full text-left p-3 rounded-lg transition-colors ${
+                        isActive
+                          ? "bg-[#B8B6FC]/15 border border-[#B8B6FC]/30"
+                          : "bg-[#1A1E2F] hover:bg-[#262626] border border-transparent"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        {gen.thumbnail_base64 ? (
+                          <img
+                            src={`data:image/png;base64,${gen.thumbnail_base64}`}
+                            className="w-9 h-12 rounded object-cover flex-shrink-0"
+                            alt=""
+                          />
+                        ) : (
+                          <div className="w-9 h-12 rounded bg-[#262626] flex items-center justify-center flex-shrink-0">
+                            <svg className="w-4 h-4 text-white/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white text-sm font-medium truncate">
+                            {gen.title || "Untitled"}
+                          </p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${statusColors[gen.status] || statusColors.drafting}`}>
+                              {statusLabels[gen.status] || gen.status}
+                            </span>
+                            {gen.cost_total > 0 && (
+                              <span className="text-[10px] text-white/30">${gen.cost_total.toFixed(2)}</span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-white/25 mt-0.5">
+                            {new Date(gen.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Loading overlay during state restore */}
+      {isRestoringState && (
+        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center">
+          <div className="text-center">
+            <svg className="animate-spin h-10 w-10 mx-auto mb-3 text-[#B8B6FC]" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <p className="text-white/70 text-sm">Restoring generation...</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

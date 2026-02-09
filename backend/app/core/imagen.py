@@ -68,6 +68,8 @@ async def generate_image(
     )
 
     # Extract image from response
+    if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
+        raise ValueError("Image generation returned empty response — the prompt may have been blocked by safety filters. Try rephrasing the description.")
     for part in response.candidates[0].content.parts:
         if hasattr(part, 'inline_data') and part.inline_data is not None:
             image_data = part.inline_data
@@ -146,6 +148,8 @@ async def generate_image_with_references(
     )
 
     # Extract image from response
+    if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
+        raise ValueError("Image generation returned empty response — the prompt may have been blocked by safety filters. Try rephrasing the description.")
     for part in response.candidates[0].content.parts:
         if hasattr(part, 'inline_data') and part.inline_data is not None:
             image_data = part.inline_data
