@@ -363,15 +363,55 @@ export default function AIVideoPage() {
   };
 
   // Save on page unload via sendBeacon (POST — no CORS preflight)
+  // NOTE: sendBeacon has a ~64KB limit, but full state with base64 images can be megabytes.
+  // So we send the full state via the debounced auto-save, and use sendBeacon only to
+  // flush the latest snapshot. We strip base64 image data to keep payload small.
   useEffect(() => {
     const handleBeforeUnload = () => {
       const gid = generationIdRef.current;
       if (!gid) return;
+
+      // Also flush the debounced auto-save immediately
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+
+      // Build a lightweight snapshot: strip base64 image data to stay under 64KB
+      const snapshot = buildSnapshot();
+      const strip = (obj: Record<string, unknown> | null | undefined) => {
+        if (!obj) return obj;
+        const out: Record<string, unknown> = { ...obj };
+        // Remove heavy base64 fields; keep everything else (approved, feedback, promptUsed, etc.)
+        for (const key of Object.keys(out)) {
+          const val = out[key] as Record<string, unknown>;
+          if (val && typeof val === "object" && !Array.isArray(val)) {
+            if ("image_base64" in val) {
+              out[key] = { ...val, image_base64: "[stripped]" };
+            }
+            if ("image" in val && val.image && typeof val.image === "object" && "image_base64" in (val.image as Record<string, unknown>)) {
+              out[key] = { ...val, image: { ...(val.image as Record<string, unknown>), image_base64: "[stripped]" } };
+            }
+          }
+        }
+        return out;
+      };
+
+      // Strip images from character/location maps and protagonist
+      const lightState = {
+        ...snapshot,
+        protagonistImage: snapshot.protagonistImage
+          ? { ...snapshot.protagonistImage, image: snapshot.protagonistImage.image ? { ...snapshot.protagonistImage.image, image_base64: "[stripped]" } : null }
+          : null,
+        characterImages: strip(snapshot.characterImages as Record<string, unknown>),
+        locationImages: strip(snapshot.locationImages as Record<string, unknown>),
+      };
+
       const payload = JSON.stringify({
         title: story?.title || "Untitled",
-        state: buildSnapshot(),
+        state: lightState,
         film_id: film.filmId,
-        thumbnail_base64: protagonistImage?.image?.image_base64?.slice(0, 2000) || null,
+        thumbnail_base64: null,
         cost_total: totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film,
       });
       navigator.sendBeacon(
@@ -609,27 +649,33 @@ export default function AIVideoPage() {
       if (s.story !== undefined) setStory(s.story as Story | null);
       if (s.visualStep !== undefined) setVisualStep(s.visualStep as VisualStep | null);
       if (s.moodboardStep) setMoodboardStep(s.moodboardStep as MoodboardStep);
-      // Only restore protagonist if it has actual image data (not mid-generation)
-      if ((s.protagonistImage as Record<string, unknown>)?.image) {
-        setProtagonistImage(s.protagonistImage as typeof protagonistImage);
+      // Only restore protagonist if it has actual image data (not stripped/mid-generation)
+      const protImgRaw = s.protagonistImage as typeof protagonistImage;
+      const protHasRealImage = protImgRaw?.image && protImgRaw.image.image_base64 !== "[stripped]";
+      if (protHasRealImage) {
+        setProtagonistImage(protImgRaw);
       }
       if (s.protagonistLocked !== undefined) setProtagonistLocked(s.protagonistLocked as boolean);
 
-      // Clean character images: keep entries with image/error, mark mid-gen for retry
+      // Helper: check if an image is real (not stripped by sendBeacon)
+      const hasRealImage = (img: MoodboardImage | null) =>
+        img && img.image_base64 && img.image_base64 !== "[stripped]";
+
+      // Clean character images: keep entries with real image/error, mark rest for retry
       const cleanedChars: Record<string, CharacterImageState> = {};
       const retryCharIds: string[] = [];
       if (s.characterImages) {
         const raw = s.characterImages as Record<string, CharacterImageState>;
         for (const key in raw) {
           const ci = raw[key];
-          if (ci.image) {
+          if (hasRealImage(ci.image)) {
             cleanedChars[key] = { ...ci, isGenerating: false };
           } else if (ci.error) {
             cleanedChars[key] = { ...ci, isGenerating: false };
           } else {
-            // Was mid-generation — keep as loading for retry
+            // Was mid-generation or image was stripped — retry
             retryCharIds.push(key);
-            cleanedChars[key] = { ...ci, isGenerating: true };
+            cleanedChars[key] = { ...ci, image: null, isGenerating: true };
           }
         }
       }
@@ -642,14 +688,14 @@ export default function AIVideoPage() {
         const raw = s.locationImages as Record<string, LocationImageState>;
         for (const key in raw) {
           const li = raw[key];
-          if (li.image) {
+          if (hasRealImage(li.image)) {
             cleanedLocs[key] = { ...li, isGenerating: false };
           } else if (li.error) {
             cleanedLocs[key] = { ...li, isGenerating: false };
           } else {
-            // Was mid-generation — keep as loading for retry
+            // Was mid-generation or image was stripped — retry
             retryLocIds.push(key);
-            cleanedLocs[key] = { ...li, isGenerating: true };
+            cleanedLocs[key] = { ...li, image: null, isGenerating: true };
           }
         }
       }
@@ -733,8 +779,8 @@ export default function AIVideoPage() {
         })();
       }
 
-      // 2. Interrupted protagonist generation
-      if (s.isGeneratingProtagonist && !protImg?.image && storyData) {
+      // 2. Interrupted protagonist generation (or protagonist image was stripped)
+      if (s.isGeneratingProtagonist && !protHasRealImage && storyData) {
         setIsGeneratingProtagonist(true);
         (async () => {
           try {
@@ -766,7 +812,7 @@ export default function AIVideoPage() {
       }
 
       // 3. Interrupted character/location generation (moodboard parallel gen)
-      if (protImg?.image && storyData && (retryCharIds.length > 0 || retryLocIds.length > 0)) {
+      if (protHasRealImage && protImg?.image && storyData && (retryCharIds.length > 0 || retryLocIds.length > 0)) {
         const protagonistRef = {
           image_base64: protImg.image.image_base64,
           mime_type: protImg.image.mime_type,
@@ -826,7 +872,7 @@ export default function AIVideoPage() {
       }
 
       // 4. Interrupted key moment generation
-      if (retryKeyMoment && protImg?.image && storyData) {
+      if (retryKeyMoment && protHasRealImage && storyData) {
         (async () => {
           try {
             // Build approved visuals from captured snapshot data
@@ -1846,11 +1892,9 @@ export default function AIVideoPage() {
     return () => { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    generationId, story, protagonistImage, protagonistLocked,
-    characterImages, locationImages,
-    visualStep, film.status, film.filmId,
-    keyMoment?.entries.length, promptPreview.shots.length, clipsApproved,
-    totalCost.film,
+    generationId, story, protagonistImage, protagonistLocked, moodboardStep,
+    characterImages, locationImages, keyMoment, promptPreview,
+    visualStep, film, clipsApproved, totalCost,
   ]);
 
   // On mount: check URL ?g= param first, then fallback to most recent active
