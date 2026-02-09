@@ -232,7 +232,7 @@ interface TotalCost {
 // Constants
 // ============================================================
 
-const BACKEND_URL = "http://localhost:8000";
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
 // Fixed at 8 shots (8 seconds each = ~64 seconds)
 const TOTAL_SHOTS = 8;

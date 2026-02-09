@@ -16,6 +16,16 @@ TEXT_PROVIDER = os.getenv("TEXT_PROVIDER", "claude")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", 8000))
 
+# CORS: comma-separated origins, e.g. "https://myapp.vercel.app,http://localhost:3000"
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if o.strip()
+]
+
 # Validate required config
 if not GOOGLE_GENAI_API_KEY:
     raise ValueError("GOOGLE_GENAI_API_KEY environment variable is required")
