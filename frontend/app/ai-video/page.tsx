@@ -986,18 +986,9 @@ export default function AIVideoPage() {
     // Save current generation if one exists
     if (generationIdRef.current) await saveGeneration();
 
-    // Create new generation in Supabase
-    try {
-      const newId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
-      await supaCreateGeneration(newId, "Untitled", "cinematic");
-      resetAllState();
-      generationIdRef.current = newId;
-      setGenerationId(newId);
-      setGenerationUrl(newId);
-      fetchGenerationsList();
-    } catch (err) {
-      console.error("Failed to create generation:", err);
-    }
+    // Just reset to a clean slate — no Supabase row until first real action
+    resetAllState();
+    fetchGenerationsList();
   };
 
   // ============================================================
