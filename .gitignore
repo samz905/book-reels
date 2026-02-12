@@ -41,4 +41,15 @@ coverage/
 
 # Misc
 *.pem
-backend\temp
+
+# Backend temp & data
+backend/temp/
+backend/data/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Design assets (local only)
+ai-video/designs/
