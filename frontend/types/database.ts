@@ -1,6 +1,6 @@
 // Database types matching Supabase schema
 
-export type StoryType = "video" | "audio";
+export type StoryType = "video";
 export type ContentStatus = "draft" | "published";
 export type SubscriptionStatus = "active" | "canceled";
 export type CartItemType = "subscription" | "ebook";

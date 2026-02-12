@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Apply filters
-    if (type && (type === "video" || type === "audio")) {
+    if (type && type === "video") {
       query = query.eq("type", type);
     }
 
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Validate type enum
-  const typeError = validateEnum(body.type, ["video", "audio"], "type");
+  const typeError = validateEnum(body.type, ["video"], "type");
   if (typeError) {
     return errorResponse(typeError);
   }

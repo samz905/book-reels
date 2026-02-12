@@ -37,8 +37,23 @@ interface Setting {
 
 interface Location {
   id: string;
+  name: string;
   description: string;
   atmosphere: string;
+}
+
+interface Scene {
+  scene_number: number;
+  title: string;
+  duration: string;
+  characters_on_screen: string[];
+  setting_id: string;
+  action: string;
+  dialogue: string | null;
+  image_prompt: string;
+  regenerate_notes: string;
+  scene_change: boolean;
+  scene_heading?: string;
 }
 
 interface DialogueLine {
@@ -68,6 +83,37 @@ function getBlocks(beat: Beat): SceneBlock[] {
   return blocks;
 }
 
+/** Convert legacy beats to scenes if story.scenes is empty */
+function beatsToScenes(beats: Beat[], locations: Location[]): Scene[] {
+  return beats.map((beat) => {
+    const blocks = getBlocks(beat);
+    const descParts = blocks.filter(b => b.type === "description").map(b => b.text);
+    const actionParts = blocks.filter(b => b.type === "action").map(b => b.text);
+    const dialogueParts = blocks
+      .filter(b => b.type === "dialogue")
+      .map(b => `${b.character || "Unknown"}: ${b.text}`);
+    return {
+      scene_number: beat.scene_number,
+      title: `Scene ${beat.scene_number}`,
+      duration: "8 seconds",
+      characters_on_screen: beat.characters_in_scene || [],
+      setting_id: beat.location_id || (locations[0]?.id || ""),
+      action: actionParts.join(" "),
+      dialogue: dialogueParts.length > 0 ? dialogueParts.join("\n") : null,
+      image_prompt: descParts.join(" "),
+      regenerate_notes: "",
+      scene_change: beat.scene_change,
+      scene_heading: beat.scene_heading,
+    };
+  });
+}
+
+/** Get scenes from story — uses scenes if available, otherwise derives from beats */
+function getScenes(story: Story): Scene[] {
+  if (story.scenes && story.scenes.length > 0) return story.scenes;
+  return beatsToScenes(story.beats, story.locations);
+}
+
 function blocksToLegacy(blocks: SceneBlock[]): {
   description?: string;
   action?: string;
@@ -87,6 +133,7 @@ function blocksToLegacy(blocks: SceneBlock[]): {
 
 interface Beat {
   scene_number: number;
+  summary?: string;
   scene_heading?: string;
   blocks: SceneBlock[];
   scene_change: boolean;
@@ -104,7 +151,8 @@ interface Story {
   characters: Character[];
   setting?: Setting;
   locations: Location[];
-  beats: Beat[];
+  scenes: Scene[];    // Primary (new Playbook format)
+  beats: Beat[];      // Legacy (backward compat for pipeline)
   style: string;
 }
 
@@ -247,15 +295,24 @@ const STYLE_OPTIONS: { value: Style; label: string }[] = [
 // Main Component
 // ============================================================
 
-export default function AIVideoPage() {
+export default function CreateEpisodePage() {
   // Input state
+  const [scriptTab, setScriptTab] = useState<"generate" | "insert">("generate");
   const [idea, setIdea] = useState("");
+  const [rawScript, setRawScript] = useState("");
   const [style, setStyle] = useState<Style>("cinematic");
 
   // Story state
   const [story, setStory] = useState<Story | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Right pane tab state
+  const [rightTab, setRightTab] = useState<"assets" | "script">("assets");
+
+  // Scene editing state (new format)
+  const [editingSceneIndex, setEditingSceneIndex] = useState<number | null>(null);
+  const [editSceneDraft, setEditSceneDraft] = useState<Scene | null>(null);
 
   // Feedback state
   const [selectedBeatIndex, setSelectedBeatIndex] = useState<number | null>(null);
@@ -345,6 +402,7 @@ export default function AIVideoPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pastGenerations, setPastGenerations] = useState<AIGenerationSummary[]>([]);
   const [isRestoringState, setIsRestoringState] = useState(false);
+  const [draftSaveStatus, setDraftSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -362,56 +420,23 @@ export default function AIVideoPage() {
     window.history.replaceState({}, "", url.toString());
   };
 
-  // Save on page unload via sendBeacon (POST — no CORS preflight)
-  // NOTE: sendBeacon has a ~64KB limit, but full state with base64 images can be megabytes.
-  // So we send the full state via the debounced auto-save, and use sendBeacon only to
-  // flush the latest snapshot. We strip base64 image data to keep payload small.
+  // Save metadata on page unload via sendBeacon (POST — no CORS preflight)
+  // NOTE: Only sends lightweight metadata (title, status, cost, film_id) — never `state`.
+  // Full state with images is saved by saveNow() and auto-save. sendBeacon must not
+  // overwrite state because it would strip base64 images and destroy good data.
   useEffect(() => {
     const handleBeforeUnload = () => {
       const gid = generationIdRef.current;
       if (!gid) return;
 
-      // Also flush the debounced auto-save immediately
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = null;
-      }
-
-      // Build a lightweight snapshot: strip base64 image data to stay under 64KB
-      const snapshot = buildSnapshot();
-      const strip = (obj: Record<string, unknown> | null | undefined) => {
-        if (!obj) return obj;
-        const out: Record<string, unknown> = { ...obj };
-        // Remove heavy base64 fields; keep everything else (approved, feedback, promptUsed, etc.)
-        for (const key of Object.keys(out)) {
-          const val = out[key] as Record<string, unknown>;
-          if (val && typeof val === "object" && !Array.isArray(val)) {
-            if ("image_base64" in val) {
-              out[key] = { ...val, image_base64: "[stripped]" };
-            }
-            if ("image" in val && val.image && typeof val.image === "object" && "image_base64" in (val.image as Record<string, unknown>)) {
-              out[key] = { ...val, image: { ...(val.image as Record<string, unknown>), image_base64: "[stripped]" } };
-            }
-          }
-        }
-        return out;
-      };
-
-      // Strip images from character/location maps and protagonist
-      const lightState = {
-        ...snapshot,
-        protagonistImage: snapshot.protagonistImage
-          ? { ...snapshot.protagonistImage, image: snapshot.protagonistImage.image ? { ...snapshot.protagonistImage.image, image_base64: "[stripped]" } : null }
-          : null,
-        characterImages: strip(snapshot.characterImages as Record<string, unknown>),
-        locationImages: strip(snapshot.locationImages as Record<string, unknown>),
-      };
-
+      // sendBeacon only saves lightweight metadata — never `state`.
+      // Full state (with images) is already persisted by saveNow() (immediate after
+      // every API response) and auto-save (500ms debounce). Writing state here would
+      // strip base64 images and overwrite the good data already in Supabase.
       const payload = JSON.stringify({
         title: story?.title || "Untitled",
-        state: lightState,
+        status: film.status === "ready" ? "ready" : film.status === "failed" ? "failed" : undefined,
         film_id: film.filmId,
-        thumbnail_base64: null,
         cost_total: totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film,
       });
       navigator.sendBeacon(
@@ -447,7 +472,7 @@ export default function AIVideoPage() {
       setGenerationId(activeGenId);
       setGenerationUrl(activeGenId);
       // Await creation so the row exists before any saves or sendBeacon can fire
-      await supaCreateGeneration(activeGenId, "Untitled", style, { idea, style, isGenerating: true });
+      await supaCreateGeneration(activeGenId, "Untitled", style, { idea, style, scriptTab: "generate", isGenerating: true });
     }
 
     try {
@@ -510,6 +535,100 @@ export default function AIVideoPage() {
     }
   };
 
+  const parseScript = async () => {
+    if (!rawScript.trim()) {
+      alert("Please paste your script.");
+      return;
+    }
+
+    setIsGenerating(true);
+    setError(null);
+    setStory(null);
+    resetVisualDirection();
+    setSelectedBeatIndex(null);
+
+    // Ensure we have a generation session
+    let activeGenId = generationIdRef.current;
+    if (!activeGenId) {
+      activeGenId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+      generationIdRef.current = activeGenId;
+      setGenerationId(activeGenId);
+      setGenerationUrl(activeGenId);
+      await supaCreateGeneration(activeGenId, "Untitled", style, { rawScript, style, scriptTab: "insert", isGenerating: true });
+    }
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/story/parse-script`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ script: rawScript, style }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to parse script");
+      }
+
+      const data = await response.json();
+      setStory(data.story);
+      if (data.cost_usd) {
+        setTotalCost((prev) => ({ ...prev, story: prev.story + data.cost_usd }));
+      }
+      saveNow({ story: data.story, rawScript, scriptTab: "insert" }, "drafting");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to parse script");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  /** Save a scene edit and sync both scenes + beats on the story */
+  const saveSceneEdit = (sceneIndex: number, updatedScene: Scene) => {
+    if (!story) return;
+    const updatedScenes = [...getScenes(story)];
+    updatedScenes[sceneIndex] = updatedScene;
+
+    // Also sync the corresponding beat
+    const updatedBeats = [...story.beats];
+    if (updatedBeats[sceneIndex]) {
+      // Parse dialogue string into DialogueLine[]
+      const dialogueLines: DialogueLine[] = [];
+      if (updatedScene.dialogue) {
+        for (const raw of updatedScene.dialogue.split("\n")) {
+          const trimmed = raw.trim();
+          if (!trimmed) continue;
+          if (trimmed.includes(":")) {
+            const [char, ...rest] = trimmed.split(":");
+            dialogueLines.push({ character: char.trim(), line: rest.join(":").trim() });
+          } else {
+            dialogueLines.push({ character: "Unknown", line: trimmed });
+          }
+        }
+      }
+      // Build blocks from scene fields
+      const blocks: SceneBlock[] = [];
+      if (updatedScene.image_prompt) blocks.push({ type: "description", text: updatedScene.image_prompt });
+      if (updatedScene.action) blocks.push({ type: "action", text: updatedScene.action });
+      for (const dl of dialogueLines) {
+        blocks.push({ type: "dialogue", text: dl.line, character: dl.character });
+      }
+      updatedBeats[sceneIndex] = {
+        ...updatedBeats[sceneIndex],
+        scene_heading: updatedScene.scene_heading,
+        scene_change: updatedScene.scene_change,
+        characters_in_scene: updatedScene.characters_on_screen,
+        location_id: updatedScene.setting_id,
+        blocks,
+        description: updatedScene.image_prompt,
+        action: updatedScene.action,
+        dialogue: dialogueLines.length > 0 ? dialogueLines : null,
+      };
+    }
+    setStory({ ...story, scenes: updatedScenes, beats: updatedBeats });
+    setEditingSceneIndex(null);
+    setEditSceneDraft(null);
+  };
+
   const refineBeat = async () => {
     if (!story || selectedBeatIndex === null || !feedback.trim()) {
       return;
@@ -537,7 +656,23 @@ export default function AIVideoPage() {
 
       const updatedBeats = [...story.beats];
       updatedBeats[selectedBeatIndex] = data.beat;
-      setStory({ ...story, beats: updatedBeats });
+      // Also sync the scene from the refined beat
+      const updatedScenes = [...getScenes(story)];
+      const refinedBeat = data.beat;
+      updatedScenes[selectedBeatIndex] = {
+        scene_number: refinedBeat.scene_number,
+        title: updatedScenes[selectedBeatIndex]?.title || `Scene ${refinedBeat.scene_number}`,
+        duration: updatedScenes[selectedBeatIndex]?.duration || "8 seconds",
+        characters_on_screen: refinedBeat.characters_in_scene || [],
+        setting_id: refinedBeat.location_id || "",
+        action: refinedBeat.action || "",
+        dialogue: refinedBeat.dialogue?.map((d: DialogueLine) => `${d.character}: ${d.line}`).join("\n") || null,
+        image_prompt: refinedBeat.description || "",
+        regenerate_notes: updatedScenes[selectedBeatIndex]?.regenerate_notes || "",
+        scene_change: refinedBeat.scene_change,
+        scene_heading: refinedBeat.scene_heading,
+      };
+      setStory({ ...story, beats: updatedBeats, scenes: updatedScenes });
       setFeedback("");
       setSelectedBeatIndex(null);
     } catch (err) {
@@ -552,7 +687,9 @@ export default function AIVideoPage() {
   // ============================================================
 
   const buildSnapshot = () => ({
+    scriptTab,
     idea,
+    rawScript,
     style,
     story,
     isGenerating,
@@ -619,6 +756,15 @@ export default function AIVideoPage() {
     }).catch(console.error);
   };
 
+  const handleSaveDraft = () => {
+    if (!generationIdRef.current || !story) return;
+    setDraftSaveStatus("saving");
+    saveNow({}, "drafting");
+    // Show "saved" confirmation briefly
+    setTimeout(() => setDraftSaveStatus("saved"), 400);
+    setTimeout(() => setDraftSaveStatus("idle"), 2500);
+  };
+
   const fetchGenerationsList = async () => {
     try {
       const gens = await supaListGenerations();
@@ -644,7 +790,9 @@ export default function AIVideoPage() {
       generationIdRef.current = genId;
       setGenerationId(genId);
       setGenerationUrl(genId);
+      if (s.scriptTab) setScriptTab(s.scriptTab as "generate" | "insert");
       if (s.idea !== undefined) setIdea(s.idea as string);
+      if (s.rawScript !== undefined) setRawScript(s.rawScript as string);
       if (s.style) setStyle(s.style as Style);
       if (s.story !== undefined) setStory(s.story as Story | null);
       if (s.visualStep !== undefined) setVisualStep(s.visualStep as VisualStep | null);
@@ -701,11 +849,19 @@ export default function AIVideoPage() {
       }
       setLocationImages(cleanedLocs);
 
-      // Key moment: restore if it has actual entries; mark mid-gen for retry
+      // Key moment: restore if it has actual entries with real images; otherwise retry
       const km = s.keyMoment as KeyMomentImageState | null;
       let retryKeyMoment = false;
       if (km && km.entries && km.entries.length > 0) {
-        setKeyMoment({ ...km, isGenerating: false });
+        // Check if any entries have stripped images
+        const allEntriesReal = km.entries.every((e) => hasRealImage(e.image));
+        if (allEntriesReal) {
+          setKeyMoment({ ...km, isGenerating: false });
+        } else {
+          // Some entries have stripped images — retry key moment generation
+          setKeyMoment({ ...km, entries: [], isGenerating: true });
+          retryKeyMoment = true;
+        }
       } else if (km && km.isGenerating) {
         // Was mid-generation — keep loading state for retry
         setKeyMoment({ ...km, isGenerating: true });
@@ -779,8 +935,9 @@ export default function AIVideoPage() {
         })();
       }
 
-      // 2. Interrupted protagonist generation (or protagonist image was stripped)
-      if (s.isGeneratingProtagonist && !protHasRealImage && storyData) {
+      // 2. Protagonist missing real image: either mid-generation OR completed but stripped by sendBeacon
+      const protExistsButStripped = protImgRaw && !protHasRealImage;
+      if ((s.isGeneratingProtagonist || protExistsButStripped) && !protHasRealImage && storyData) {
         setIsGeneratingProtagonist(true);
         (async () => {
           try {
@@ -945,7 +1102,9 @@ export default function AIVideoPage() {
     generationIdRef.current = null;
     setGenerationId(null);
     setGenerationUrl(null);
+    setScriptTab("generate");
     setIdea("");
+    setRawScript("");
     setStyle("cinematic");
     setStory(null);
     setIsGenerating(false);
@@ -1888,27 +2047,18 @@ export default function AIVideoPage() {
     visualStep, film, clipsApproved, totalCost,
   ]);
 
-  // On mount: check URL ?g= param first, then fallback to most recent active
+  // On mount: only restore if URL has ?g= param. Otherwise start fresh.
+  // Works like ChatGPT/Claude: bare URL = blank slate, ?g=xxx = restore that generation.
   useEffect(() => {
     const init = async () => {
-      const gens = await fetchGenerationsList();
+      fetchGenerationsList();
 
-      // 1. URL param takes priority
       const urlParams = new URLSearchParams(window.location.search);
       const urlGenId = urlParams.get("g");
       if (urlGenId) {
         await restoreGeneration(urlGenId);
-        return;
       }
-
-      // 2. Fallback: restore most recent in-progress generation
-      const active = gens.find((g: AIGenerationSummary) =>
-        ["drafting", "moodboard", "key_moments", "preflight", "filming"].includes(g.status)
-      );
-      if (active) {
-        await restoreGeneration(active.id);
-      }
-      // No auto-create on first visit — generation is created when user clicks "Generate Story Beats"
+      // No ?g= param → fresh blank state. User starts generating to create an entry.
     };
     init().catch(console.error);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1930,7 +2080,7 @@ export default function AIVideoPage() {
       filmId: null,
       status: "generating",
       currentShot: 0,
-      totalShots: story.beats.length,
+      totalShots: getScenes(story).length || story.beats.length,
       phase: "filming",
       completedShots: [],
       finalVideoUrl: null,
@@ -2321,71 +2471,193 @@ export default function AIVideoPage() {
       <Header />
 
       <main className="max-w-[1400px] mx-auto px-6 py-8">
-        <h1 className="text-3xl font-bold text-white mb-2">AI Video Story</h1>
-        <p className="text-[#ADADAD] mb-8">
-          Transform your idea into a structured story with visual beats
-        </p>
+        {/* Step Indicator + Save Draft */}
+        <div className="relative flex items-center justify-center gap-2 mb-8">
+          {[
+            { num: 1, label: "Create Your Script", active: !visualStep && film.status === "idle" },
+            { num: 2, label: "Build Your Visuals", active: !!visualStep && film.status === "idle" },
+            { num: 3, label: "Create Your Video", active: film.status !== "idle" },
+          ].map((step, i) => {
+            const isCompleted = step.num === 1 ? (!!visualStep || film.status !== "idle")
+              : step.num === 2 ? film.status !== "idle"
+              : film.status === "ready";
+            return (
+              <div key={step.num} className="flex items-center gap-2">
+                {i > 0 && <div className={`w-16 sm:w-24 h-[2px] ${isCompleted || step.active ? "bg-[#9C99FF]" : "bg-white/10"}`} />}
+                <div className="flex items-center gap-2">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${
+                    step.active ? "bg-[#9C99FF] text-black" : isCompleted ? "bg-[#9C99FF] text-black" : "bg-white/10 text-white/50"
+                  }`}>
+                    {isCompleted ? "\u2713" : step.num}
+                  </div>
+                  <span className={`text-sm font-medium whitespace-nowrap ${step.active ? "text-white" : isCompleted ? "text-white/70" : "text-white/40"}`}>
+                    {step.label}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Save Draft Button — right-aligned */}
+          {story && generationId && (
+            <button
+              onClick={handleSaveDraft}
+              disabled={draftSaveStatus === "saving"}
+              className={`absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 ${
+                draftSaveStatus === "saved"
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                  : draftSaveStatus === "saving"
+                  ? "bg-white/5 text-white/40 border border-white/10"
+                  : "bg-white/5 text-white/70 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20"
+              }`}
+            >
+              {draftSaveStatus === "saved" ? (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Saved
+                </>
+              ) : draftSaveStatus === "saving" ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                  </svg>
+                  Save Draft
+                </>
+              )}
+            </button>
+          )}
+        </div>
+
+        {/* Script Input Tabs (only visible during Step 1) */}
+        {!visualStep && film.status === "idle" && (
+          <div className="flex gap-6 mb-6">
+            <button
+              onClick={() => setScriptTab("generate")}
+              className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
+                scriptTab === "generate"
+                  ? "text-white border-white"
+                  : "text-white/50 border-transparent hover:text-white/70"
+              }`}
+            >
+              Generate with AI
+            </button>
+            <button
+              onClick={() => setScriptTab("insert")}
+              className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
+                scriptTab === "insert"
+                  ? "text-white border-white"
+                  : "text-white/50 border-transparent hover:text-white/70"
+              }`}
+            >
+              Insert Your Script
+            </button>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column: Input Form */}
           <div className="bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
-            <h2 className="text-xl font-semibold text-white mb-6">
-              1. Your Story Idea
-            </h2>
+            {scriptTab === "generate" ? (
+              <>
+                <h2 className="text-xl font-semibold text-white mb-2">
+                  Your Episode Idea
+                </h2>
+                <p className="text-sm text-[#ADADAD] mb-6">
+                  Describe your idea for the episode. Include characters, setting, genre, dialogue style, and other details you want to see.
+                </p>
 
-            <div className="mb-6">
-              <label className="block text-sm text-[#ADADAD] mb-2">
-                Describe your story idea
-              </label>
-              <textarea
-                value={idea}
-                onChange={(e) => setIdea(e.target.value)}
-                placeholder="e.g., A robot learns to dance in an abandoned factory..."
-                className="w-full h-32 bg-[#262626] rounded-2xl px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none"
-              />
-            </div>
+                <div className="mb-6">
+                  <textarea
+                    value={idea}
+                    onChange={(e) => setIdea(e.target.value)}
+                    placeholder="e.g., A robot learns to dance in an abandoned factory..."
+                    className="w-full h-48 bg-[#262626] rounded-2xl px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none"
+                  />
+                </div>
 
-            <div className="mb-6">
-              <label className="block text-sm text-[#ADADAD] mb-2">Visual Style</label>
-              <div className="flex gap-3">
-                {STYLE_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setStyle(opt.value)}
-                    className={`flex-1 py-3 px-4 rounded-xl text-sm font-medium transition-all ${
-                      style === opt.value
-                        ? "bg-[#B8B6FC] text-black"
-                        : "bg-[#262626] text-white hover:bg-[#333]"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+                <div className="flex items-center gap-3 mb-6">
+                  <span className="text-xs text-[#ADADAD] bg-[#262626] px-3 py-1.5 rounded-full">Episode Length: ~60s</span>
+                </div>
 
-            <button
-              onClick={generateStory}
-              disabled={isGenerating || !idea.trim()}
-              className="w-full py-4 rounded-xl font-semibold text-white bg-gradient-to-r from-[#9C99FF] to-[#7370FF] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-            >
-              {isGenerating ? (
-                <>
-                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Generating Story...
-                </>
-              ) : (
-                <>
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                  Generate Story Beats
-                </>
-              )}
-            </button>
+                <button
+                  onClick={generateStory}
+                  disabled={isGenerating || !idea.trim()}
+                  className="w-full py-4 rounded-xl font-semibold text-white bg-gradient-to-r from-[#9C99FF] to-[#7370FF] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                >
+                  {isGenerating ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Generating Script...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      Generate Script
+                    </>
+                  )}
+                </button>
+              </>
+            ) : (
+              <>
+                <h2 className="text-xl font-semibold text-white mb-2">
+                  Your Episode Script
+                </h2>
+                <p className="text-sm text-[#ADADAD] mb-6">
+                  Recommended: organize your script into 3 main scenes of no more than 1 min in length
+                </p>
+
+                <div className="mb-6">
+                  <textarea
+                    value={rawScript}
+                    onChange={(e) => setRawScript(e.target.value)}
+                    placeholder="Paste your script here..."
+                    className="w-full h-64 bg-[#262626] rounded-2xl px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none font-mono text-sm leading-relaxed"
+                  />
+                </div>
+
+                <div className="flex items-center gap-3 mb-6">
+                  <span className="text-xs text-[#ADADAD] bg-[#262626] px-3 py-1.5 rounded-full">Episode Length: ~60s</span>
+                </div>
+
+                <button
+                  onClick={parseScript}
+                  disabled={isGenerating || !rawScript.trim()}
+                  className="w-full py-4 rounded-xl font-semibold text-white bg-gradient-to-r from-[#9C99FF] to-[#7370FF] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                >
+                  {isGenerating ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Generating Scenes...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Generate Scenes
+                    </>
+                  )}
+                </button>
+              </>
+            )}
 
             {error && (
               <div className="mt-4 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">
@@ -2394,16 +2666,38 @@ export default function AIVideoPage() {
             )}
           </div>
 
-          {/* Right Column: Story Display */}
+          {/* Right Column: Story Structure */}
           <div className="bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
-            <h2 className="text-xl font-semibold text-white mb-6">2. Story Beats</h2>
+            <h2 className="text-xl font-semibold text-white mb-4">Story Structure</h2>
+
+            {/* Tab switcher */}
+            {story && !isGenerating && (
+              <div className="flex gap-1 bg-[#1A1E2F] rounded-lg p-1 mb-6">
+                <button
+                  onClick={() => setRightTab("assets")}
+                  className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                    rightTab === "assets" ? "bg-[#B8B6FC] text-black" : "text-[#ADADAD] hover:text-white"
+                  }`}
+                >
+                  Assets
+                </button>
+                <button
+                  onClick={() => setRightTab("script")}
+                  className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                    rightTab === "script" ? "bg-[#B8B6FC] text-black" : "text-[#ADADAD] hover:text-white"
+                  }`}
+                >
+                  Script
+                </button>
+              </div>
+            )}
 
             {!story && !isGenerating && (
               <div className="text-center py-16 text-[#ADADAD]">
                 <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
-                <p>Enter your idea and click Generate</p>
+                <p>{scriptTab === "generate" ? "Enter your idea and click Generate Script" : "Paste your script and click Generate Scenes"}</p>
               </div>
             )}
 
@@ -2419,8 +2713,8 @@ export default function AIVideoPage() {
 
             {story && !isGenerating && (
               <div className="space-y-4">
-                <div className="bg-[#1A1E2F] rounded-xl p-4 mb-6">
-                  {/* Editable title */}
+                {/* Editable title */}
+                <div className="flex items-center gap-2 mb-2">
                   {editingTitle ? (
                     <input
                       autoFocus
@@ -2428,405 +2722,350 @@ export default function AIVideoPage() {
                       onChange={(e) => setStory({ ...story, title: e.target.value })}
                       onBlur={() => setEditingTitle(false)}
                       onKeyDown={(e) => { if (e.key === "Enter") setEditingTitle(false); }}
-                      className="text-lg font-semibold text-white bg-[#262626] rounded px-2 py-1 mb-2 w-full focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                      className="text-lg font-semibold text-white bg-[#262626] rounded px-2 py-1 w-full focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
                     />
                   ) : (
                     <h3
-                      className="text-lg font-semibold text-white mb-2 cursor-pointer hover:text-[#B8B6FC] transition-colors"
+                      className="text-lg font-semibold text-white cursor-pointer hover:text-[#B8B6FC] transition-colors"
                       onClick={() => setEditingTitle(true)}
                       title="Click to edit title"
                     >
                       {story.title}
                     </h3>
                   )}
+                  {/* Style selection will come later */}
+                </div>
 
-                  <div className="text-sm text-[#ADADAD] space-y-2">
-                    {/* Expandable Characters */}
+                {/* ===== ASSETS TAB ===== */}
+                {rightTab === "assets" && (
+                  <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
+                    {/* Characters */}
                     <div>
-                      <button
-                        onClick={() => setExpandedCharacters(!expandedCharacters)}
-                        className="flex items-center gap-1 text-white/70 hover:text-white transition-colors"
-                      >
-                        <span className="text-xs">{expandedCharacters ? "\u25BE" : "\u25B8"}</span>
-                        <span>Characters ({story.characters.length})</span>
-                      </button>
-                      {expandedCharacters && (
-                        <div className="mt-2 space-y-2 pl-4">
-                          {story.characters.map((char, ci) => (
-                            <div key={char.id} className="bg-[#262626] rounded-lg p-3">
-                              {editingCharIndex === ci && editCharDraft ? (
-                                <div className="space-y-2">
-                                  <div className="flex gap-2">
-                                    <input value={editCharDraft.name} onChange={(e) => setEditCharDraft({ ...editCharDraft, name: e.target.value })} className="flex-1 bg-[#1A1E2F] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Name" />
-                                    <input value={editCharDraft.age} onChange={(e) => setEditCharDraft({ ...editCharDraft, age: e.target.value })} className="w-24 bg-[#1A1E2F] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Age" />
-                                    <input value={editCharDraft.gender} onChange={(e) => setEditCharDraft({ ...editCharDraft, gender: e.target.value })} className="w-20 bg-[#1A1E2F] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Gender" />
+                      <h4 className="text-sm font-semibold text-white mb-3">Characters ({story.characters.length})</h4>
+                      <div className="space-y-2">
+                        {story.characters.map((char, ci) => (
+                          <div key={char.id} className="bg-[#1A1E2F] rounded-xl p-4">
+                            {editingCharIndex === ci && editCharDraft ? (
+                              <div className="space-y-2">
+                                <div className="flex gap-2">
+                                  <input value={editCharDraft.name} onChange={(e) => setEditCharDraft({ ...editCharDraft, name: e.target.value })} className="flex-1 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Name" />
+                                  <input value={editCharDraft.age} onChange={(e) => setEditCharDraft({ ...editCharDraft, age: e.target.value })} className="w-24 bg-[#262626] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Age" />
+                                  <input value={editCharDraft.gender} onChange={(e) => setEditCharDraft({ ...editCharDraft, gender: e.target.value })} className="w-20 bg-[#262626] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Gender" />
+                                </div>
+                                <textarea value={editCharDraft.appearance} onChange={(e) => setEditCharDraft({ ...editCharDraft, appearance: e.target.value })} className="w-full bg-[#262626] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none" rows={2} placeholder="Appearance..." />
+                                <div className="flex gap-2">
+                                  <button onClick={() => { const updated = [...story.characters]; updated[ci] = editCharDraft; setStory({ ...story, characters: updated }); setEditingCharIndex(null); setEditCharDraft(null); }} className="px-3 py-1 bg-[#B8B6FC] text-black text-xs font-medium rounded hover:opacity-90">Save</button>
+                                  <button onClick={() => { setEditingCharIndex(null); setEditCharDraft(null); }} className="px-3 py-1 bg-[#333] text-[#ADADAD] text-xs rounded hover:text-white">Cancel</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-white font-medium text-sm">{char.name}</span>
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/50 uppercase">{char.role}</span>
                                   </div>
-                                  <textarea value={editCharDraft.appearance} onChange={(e) => setEditCharDraft({ ...editCharDraft, appearance: e.target.value })} className="w-full bg-[#1A1E2F] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none" rows={2} placeholder="Appearance..." />
+                                  <span className="text-white/40 text-xs">{char.age} {char.gender}</span>
+                                  <p className="text-white/60 text-xs mt-1">{char.appearance}</p>
+                                </div>
+                                <button onClick={() => { setEditingCharIndex(ci); setEditCharDraft({ ...char }); }} className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10 flex-shrink-0">Edit</button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Locations */}
+                    {story.locations && story.locations.length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-white mb-3">Settings ({story.locations.length})</h4>
+                        <div className="space-y-2">
+                          {story.locations.map((loc, li) => (
+                            <div key={loc.id} className="bg-[#1A1E2F] rounded-xl p-4">
+                              {editingLocIndex === li && editLocDraft ? (
+                                <div className="space-y-2">
+                                  <input value={editLocDraft.name} onChange={(e) => setEditLocDraft({ ...editLocDraft, name: e.target.value })} className="w-full bg-[#262626] text-white text-sm font-medium rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Location name..." />
+                                  <textarea value={editLocDraft.description} onChange={(e) => setEditLocDraft({ ...editLocDraft, description: e.target.value })} className="w-full bg-[#262626] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none" rows={2} placeholder="Description..." />
+                                  <input value={editLocDraft.atmosphere} onChange={(e) => setEditLocDraft({ ...editLocDraft, atmosphere: e.target.value })} className="w-full bg-[#262626] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Atmosphere..." />
                                   <div className="flex gap-2">
-                                    <button onClick={() => { const updated = [...story.characters]; updated[ci] = editCharDraft; setStory({ ...story, characters: updated }); setEditingCharIndex(null); setEditCharDraft(null); }} className="px-3 py-1 bg-[#B8B6FC] text-black text-xs font-medium rounded hover:opacity-90">Save</button>
-                                    <button onClick={() => { setEditingCharIndex(null); setEditCharDraft(null); }} className="px-3 py-1 bg-[#333] text-[#ADADAD] text-xs rounded hover:text-white">Cancel</button>
+                                    <button onClick={() => { const updated = [...story.locations]; updated[li] = editLocDraft; setStory({ ...story, locations: updated }); setEditingLocIndex(null); setEditLocDraft(null); }} className="px-3 py-1 bg-[#B8B6FC] text-black text-xs font-medium rounded hover:opacity-90">Save</button>
+                                    <button onClick={() => { setEditingLocIndex(null); setEditLocDraft(null); }} className="px-3 py-1 bg-[#333] text-[#ADADAD] text-xs rounded hover:text-white">Cancel</button>
                                   </div>
                                 </div>
                               ) : (
                                 <div className="flex items-start justify-between">
                                   <div>
-                                    <span className="text-white font-medium text-sm">{char.name}</span>
-                                    <span className="text-white/50 text-xs ml-2">{char.age} {char.gender}</span>
-                                    <p className="text-white/60 text-xs mt-1">{char.appearance}</p>
+                                    <span className="text-white font-medium text-sm">{loc.name || loc.id}</span>
+                                    <p className="text-white/60 text-xs mt-1">{loc.description}</p>
+                                    <p className="text-white/40 text-xs mt-0.5">{loc.atmosphere}</p>
                                   </div>
-                                  <button onClick={() => { setEditingCharIndex(ci); setEditCharDraft({ ...char }); }} className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10 flex-shrink-0">Edit</button>
+                                  <button onClick={() => { setEditingLocIndex(li); setEditLocDraft({ ...loc }); }} className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10 flex-shrink-0">Edit</button>
                                 </div>
                               )}
                             </div>
                           ))}
                         </div>
-                      )}
-                    </div>
-
-                    {/* Expandable Locations */}
-                    {story.locations && story.locations.length > 0 && (
-                      <div>
-                        <button
-                          onClick={() => setExpandedLocations(!expandedLocations)}
-                          className="flex items-center gap-1 text-white/70 hover:text-white transition-colors"
-                        >
-                          <span className="text-xs">{expandedLocations ? "\u25BE" : "\u25B8"}</span>
-                          <span>Locations ({story.locations.length})</span>
-                        </button>
-                        {expandedLocations && (
-                          <div className="mt-2 space-y-2 pl-4">
-                            {story.locations.map((loc, li) => (
-                              <div key={loc.id} className="bg-[#262626] rounded-lg p-3">
-                                {editingLocIndex === li && editLocDraft ? (
-                                  <div className="space-y-2">
-                                    <textarea value={editLocDraft.description} onChange={(e) => setEditLocDraft({ ...editLocDraft, description: e.target.value })} className="w-full bg-[#1A1E2F] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none" rows={2} placeholder="Description..." />
-                                    <input value={editLocDraft.atmosphere} onChange={(e) => setEditLocDraft({ ...editLocDraft, atmosphere: e.target.value })} className="w-full bg-[#1A1E2F] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Atmosphere..." />
-                                    <div className="flex gap-2">
-                                      <button onClick={() => { const updated = [...story.locations]; updated[li] = editLocDraft; setStory({ ...story, locations: updated }); setEditingLocIndex(null); setEditLocDraft(null); }} className="px-3 py-1 bg-[#B8B6FC] text-black text-xs font-medium rounded hover:opacity-90">Save</button>
-                                      <button onClick={() => { setEditingLocIndex(null); setEditLocDraft(null); }} className="px-3 py-1 bg-[#333] text-[#ADADAD] text-xs rounded hover:text-white">Cancel</button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <div className="flex items-start justify-between">
-                                    <div>
-                                      <p className="text-white/70 text-sm">{loc.description}</p>
-                                      <p className="text-white/40 text-xs mt-1">{loc.atmosphere}</p>
-                                    </div>
-                                    <button onClick={() => { setEditingLocIndex(li); setEditLocDraft({ ...loc }); }} className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10 flex-shrink-0">Edit</button>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
                       </div>
                     )}
-
-                    <p className="text-xs text-white/40">Style: {story.style}</p>
                   </div>
-                </div>
+                )}
 
-                <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
-                  {story.beats.map((beat, index) => {
-                    const isEditing = editingBeatIndex === index;
-                    const isSelected = selectedBeatIndex === index;
-                    const draft = isEditing ? editBeatDraft : null;
+                {/* ===== SCRIPT TAB ===== */}
+                {rightTab === "script" && (
+                  <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
+                    {getScenes(story).map((scene, index) => {
+                      const isEditing = editingSceneIndex === index;
+                      const isSelected = selectedBeatIndex === index;
+                      const draft = isEditing ? editSceneDraft : null;
+                      const locationName = story.locations.find(l => l.id === scene.setting_id)?.name || scene.setting_id;
 
-                    return (
-                      <div
-                        key={beat.scene_number}
-                        className={`bg-[#1A1E2F] rounded-xl p-4 transition-all ${
-                          isSelected || isEditing ? "ring-2 ring-[#B8B6FC]" : "hover:bg-[#242836]"
-                        }`}
-                      >
-                        {/* Scene header */}
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-[#B8B6FC] rounded-full flex items-center justify-center text-black font-bold text-sm flex-shrink-0">
-                              {beat.scene_number}
+                      return (
+                        <div
+                          key={scene.scene_number}
+                          className={`bg-[#1A1E2F] rounded-xl p-4 transition-all ${
+                            isSelected || isEditing ? "ring-2 ring-[#B8B6FC]" : "hover:bg-[#242836]"
+                          }`}
+                        >
+                          {/* Scene header */}
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 bg-[#B8B6FC] rounded-full flex items-center justify-center text-black font-bold text-sm flex-shrink-0">
+                                {scene.scene_number}
+                              </div>
+                              <div>
+                                <span className="text-white font-semibold text-sm">{scene.title || `Scene ${scene.scene_number}`}</span>
+                                <span className="text-white/30 text-xs ml-2">{scene.duration}</span>
+                              </div>
+                              {/* scene_change badge removed — derived automatically from setting_id */}
                             </div>
-                            <span className="text-white font-semibold text-sm">Scene {beat.scene_number}</span>
-                            {beat.scene_change && (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-white/70">scene change</span>
+                            {!isEditing && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingSceneIndex(index);
+                                  setEditSceneDraft({ ...scene });
+                                  setSelectedBeatIndex(null);
+                                }}
+                                className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10"
+                              >
+                                Edit
+                              </button>
                             )}
                           </div>
-                          {!isEditing && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setEditingBeatIndex(index);
-                                setEditBeatDraft({
-                                  scene_heading: beat.scene_heading || "",
-                                  blocks: getBlocks(beat).map(b => ({ ...b })),
-                                  scene_change: beat.scene_change,
-                                  characters_in_scene: beat.characters_in_scene,
-                                  location_id: beat.location_id,
-                                });
-                                setSelectedBeatIndex(null);
-                              }}
-                              className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10"
-                            >
-                              Edit
-                            </button>
-                          )}
-                        </div>
 
-                        {/* Scene heading */}
-                        {isEditing ? (
-                          <input
-                            value={draft?.scene_heading || ""}
-                            onChange={(e) => setEditBeatDraft(prev => prev ? { ...prev, scene_heading: e.target.value } : prev)}
-                            placeholder="INT. KITCHEN - NIGHT"
-                            className="w-full bg-[#262626] text-white/50 text-xs font-mono rounded px-2 py-1 mb-2 placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                          />
-                        ) : beat.scene_heading ? (
-                          <p className="text-white/50 text-xs font-mono mb-2">{beat.scene_heading}</p>
-                        ) : null}
-
-                        {/* Scene content — blocks */}
-                        {isEditing && draft ? (
-                          /* ── Edit mode: labeled block cards with reorder ── */
-                          <div className="space-y-2">
-                            {draft.blocks.map((block, bi) => (
-                              <div key={bi} className="bg-[#262626] rounded-lg p-3">
-                                <div className="flex items-center justify-between mb-2">
-                                  <span className="text-[10px] font-semibold tracking-wider text-white/40 uppercase">
-                                    {block.type}
-                                  </span>
-                                  <div className="flex items-center gap-1">
-                                    {bi > 0 && (
-                                      <button
-                                        onClick={() => {
-                                          const newBlocks = [...draft.blocks];
-                                          [newBlocks[bi - 1], newBlocks[bi]] = [newBlocks[bi], newBlocks[bi - 1]];
-                                          setEditBeatDraft({ ...draft, blocks: newBlocks });
-                                        }}
-                                        className="text-white/40 hover:text-white text-xs px-1"
-                                        title="Move up"
-                                      >
-                                        ↑
-                                      </button>
-                                    )}
-                                    {bi < draft.blocks.length - 1 && (
-                                      <button
-                                        onClick={() => {
-                                          const newBlocks = [...draft.blocks];
-                                          [newBlocks[bi], newBlocks[bi + 1]] = [newBlocks[bi + 1], newBlocks[bi]];
-                                          setEditBeatDraft({ ...draft, blocks: newBlocks });
-                                        }}
-                                        className="text-white/40 hover:text-white text-xs px-1"
-                                        title="Move down"
-                                      >
-                                        ↓
-                                      </button>
-                                    )}
-                                    {draft.blocks.length > 1 && (
-                                      <button
-                                        onClick={() => {
-                                          const newBlocks = draft.blocks.filter((_, i) => i !== bi);
-                                          setEditBeatDraft({ ...draft, blocks: newBlocks });
-                                        }}
-                                        className="text-red-400/60 hover:text-red-400 text-xs px-1 ml-1"
-                                        title="Remove block"
-                                      >
-                                        ×
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                                {block.type === "dialogue" && (
-                                  <select
-                                    value={block.character || ""}
-                                    onChange={(e) => {
-                                      const newBlocks = [...draft.blocks];
-                                      newBlocks[bi] = { ...newBlocks[bi], character: e.target.value };
-                                      setEditBeatDraft({ ...draft, blocks: newBlocks });
-                                    }}
-                                    className="w-full bg-[#1A1E2F] text-white/70 text-sm rounded px-2 py-1 mb-2 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] appearance-none"
-                                  >
-                                    <option value="">Select character...</option>
-                                    {(beat.characters_in_scene || []).map((charId) => {
-                                      const char = story?.characters.find(c => c.id === charId || c.name === charId);
-                                      return (
-                                        <option key={charId} value={char?.name || charId}>
-                                          {char?.name || charId}
-                                        </option>
-                                      );
-                                    })}
-                                    {/* Allow free-type via "Other" */}
-                                    {block.character && !(beat.characters_in_scene || []).some(cid => {
-                                      const char = story?.characters.find(c => c.id === cid || c.name === cid);
-                                      return (char?.name || cid) === block.character;
-                                    }) && (
-                                      <option value={block.character}>{block.character}</option>
-                                    )}
-                                  </select>
-                                )}
-                                <textarea
-                                  value={block.text}
-                                  onChange={(e) => {
-                                    const newBlocks = [...draft.blocks];
-                                    newBlocks[bi] = { ...newBlocks[bi], text: e.target.value };
-                                    setEditBeatDraft({ ...draft, blocks: newBlocks });
-                                  }}
-                                  className={`w-full bg-[#1A1E2F] text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none ${
-                                    block.type === "action" ? "text-white/70 italic" : "text-white"
-                                  }`}
-                                  rows={block.type === "dialogue" ? 2 : 3}
-                                  placeholder={
-                                    block.type === "description" ? "Scene description..." :
-                                    block.type === "action" ? "Physical action, gestures..." :
-                                    "Dialogue line..."
-                                  }
-                                />
-                              </div>
-                            ))}
-                            {/* Add block buttons + counter */}
-                            <div className="flex items-center justify-between pt-1">
+                          {isEditing && draft ? (
+                            /* ---- Edit mode ---- */
+                            <div className="space-y-3">
+                              {/* Title + Duration */}
                               <div className="flex gap-2">
-                                {draft.blocks.length < MAX_BLOCKS_PER_SCENE && (
-                                  <>
-                                    <button
-                                      onClick={() => setEditBeatDraft({ ...draft, blocks: [...draft.blocks, { type: "description", text: "" }] })}
-                                      className="text-xs text-[#B8B6FC] hover:text-white px-2 py-1 rounded bg-white/5 hover:bg-white/10"
-                                    >
-                                      + Description
-                                    </button>
-                                    <button
-                                      onClick={() => setEditBeatDraft({ ...draft, blocks: [...draft.blocks, { type: "action", text: "" }] })}
-                                      className="text-xs text-[#B8B6FC] hover:text-white px-2 py-1 rounded bg-white/5 hover:bg-white/10"
-                                    >
-                                      + Action
-                                    </button>
-                                    <button
-                                      onClick={() => setEditBeatDraft({ ...draft, blocks: [...draft.blocks, { type: "dialogue", text: "", character: "" }] })}
-                                      className="text-xs text-[#B8B6FC] hover:text-white px-2 py-1 rounded bg-white/5 hover:bg-white/10"
-                                    >
-                                      + Dialogue
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                              <span className={`text-xs ${draft.blocks.length >= MAX_BLOCKS_PER_SCENE ? "text-amber-400" : "text-white/30"}`}>
-                                {draft.blocks.length}/{MAX_BLOCKS_PER_SCENE} blocks
-                              </span>
-                            </div>
-                          </div>
-                        ) : (
-                          /* ── Read mode: clean script text, no labels ── */
-                          <div className="space-y-2">
-                            {getBlocks(beat).map((block, bi) => (
-                              block.type === "dialogue" ? (
-                                <p key={bi} className="text-[#ADADAD] text-sm">
-                                  <span className="text-white/70 font-medium">{block.character}:</span>{" "}
-                                  &ldquo;{block.text}&rdquo;
-                                </p>
-                              ) : block.type === "action" ? (
-                                <p key={bi} className="text-white/70 text-sm italic">{block.text}</p>
-                              ) : (
-                                <p key={bi} className="text-white text-sm">{block.text}</p>
-                              )
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Edit mode: save/cancel buttons */}
-                        {isEditing && draft && (
-                          <div className="flex gap-2 mt-4 pt-3 border-t border-white/10">
-                            <button
-                              onClick={() => {
-                                if (story) {
-                                  const legacy = blocksToLegacy(draft.blocks);
-                                  const updatedBeats = [...story.beats];
-                                  updatedBeats[index] = {
-                                    ...story.beats[index],
-                                    scene_heading: draft.scene_heading,
-                                    blocks: draft.blocks,
-                                    scene_change: draft.scene_change,
-                                    characters_in_scene: draft.characters_in_scene,
-                                    location_id: draft.location_id,
-                                    description: legacy.description,
-                                    action: legacy.action,
-                                    dialogue: legacy.dialogue,
-                                  };
-                                  setStory({ ...story, beats: updatedBeats });
-                                }
-                                setEditingBeatIndex(null);
-                                setEditBeatDraft(null);
-                              }}
-                              className="px-4 py-2 bg-[#B8B6FC] text-black text-sm font-medium rounded-lg hover:opacity-90"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={() => {
-                                setEditingBeatIndex(null);
-                                setEditBeatDraft(null);
-                              }}
-                              className="px-4 py-2 bg-[#262626] text-[#ADADAD] text-sm rounded-lg hover:bg-[#333] hover:text-white"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Feedback + refine (when selected, not editing) */}
-                        {!isEditing && (
-                          <div
-                            className="mt-3 pt-3 border-t border-white/10 cursor-pointer"
-                            onClick={() => setSelectedBeatIndex(isSelected ? null : index)}
-                          >
-                            {isSelected ? (
-                              <div onClick={(e) => e.stopPropagation()}>
-                                <label className="block text-xs text-[#ADADAD] mb-2">Feedback for this scene</label>
-                                <textarea
-                                  value={feedback}
-                                  onChange={(e) => setFeedback(e.target.value)}
-                                  placeholder="e.g., Make it more dramatic..."
-                                  className="w-full h-20 bg-[#262626] rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none"
+                                <input
+                                  value={draft.title}
+                                  onChange={(e) => setEditSceneDraft({ ...draft, title: e.target.value })}
+                                  className="flex-1 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                                  placeholder="Scene title..."
                                 />
-                                <button
-                                  onClick={refineBeat}
-                                  disabled={isRefining || !feedback.trim()}
-                                  className="mt-2 px-4 py-2 bg-[#B8B6FC] text-black text-sm font-medium rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                                <select
+                                  value={draft.duration}
+                                  onChange={(e) => setEditSceneDraft({ ...draft, duration: e.target.value })}
+                                  className="w-28 bg-[#262626] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
                                 >
-                                  {isRefining ? "Refining..." : "Refine This Scene"}
+                                  {[6,7,8,9].map(s => <option key={s} value={`${s} seconds`}>{s}s</option>)}
+                                </select>
+                              </div>
+                              {/* Scene heading */}
+                              <input
+                                value={draft.scene_heading || ""}
+                                onChange={(e) => setEditSceneDraft({ ...draft, scene_heading: e.target.value })}
+                                placeholder="INT. KITCHEN - NIGHT"
+                                className="w-full bg-[#262626] text-white/50 text-xs font-mono rounded px-2 py-1 placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                              />
+                              {/* Characters on screen (multi-select) */}
+                              <div>
+                                <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Characters</label>
+                                <div className="flex flex-wrap gap-1">
+                                  {story.characters.map(c => {
+                                    const isIn = (draft.characters_on_screen || []).includes(c.id);
+                                    return (
+                                      <button
+                                        key={c.id}
+                                        onClick={() => {
+                                          const updated = isIn
+                                            ? draft.characters_on_screen.filter(id => id !== c.id)
+                                            : [...(draft.characters_on_screen || []), c.id];
+                                          setEditSceneDraft({ ...draft, characters_on_screen: updated });
+                                        }}
+                                        className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                                          isIn ? "border-[#B8B6FC] text-[#B8B6FC] bg-[#B8B6FC]/10" : "border-white/20 text-white/50 hover:border-white/40"
+                                        }`}
+                                      >
+                                        {c.name}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                              {/* Setting (single select) */}
+                              <div>
+                                <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Setting</label>
+                                <select
+                                  value={draft.setting_id}
+                                  onChange={(e) => setEditSceneDraft({ ...draft, setting_id: e.target.value })}
+                                  className="w-full bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                                >
+                                  {story.locations.map(loc => (
+                                    <option key={loc.id} value={loc.id}>{loc.name || loc.id}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              {/* Action */}
+                              <div>
+                                <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Action</label>
+                                <textarea
+                                  value={draft.action}
+                                  onChange={(e) => setEditSceneDraft({ ...draft, action: e.target.value })}
+                                  className="w-full bg-[#262626] text-white/70 text-sm italic rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
+                                  rows={2}
+                                  placeholder="What characters physically do..."
+                                />
+                              </div>
+                              {/* Dialogue */}
+                              <div>
+                                <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Dialogue</label>
+                                <textarea
+                                  value={draft.dialogue || ""}
+                                  onChange={(e) => setEditSceneDraft({ ...draft, dialogue: e.target.value || null })}
+                                  className="w-full bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
+                                  rows={2}
+                                  placeholder="CHARACTER: What they say..."
+                                />
+                              </div>
+                              {/* Image prompt (collapsible) */}
+                              <details className="group">
+                                <summary className="text-[10px] text-white/40 uppercase tracking-wider cursor-pointer hover:text-white/60">Image Prompt</summary>
+                                <textarea
+                                  value={draft.image_prompt}
+                                  onChange={(e) => setEditSceneDraft({ ...draft, image_prompt: e.target.value })}
+                                  className="w-full mt-1 bg-[#262626] text-white/60 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
+                                  rows={3}
+                                  placeholder="Camera sees: composition, framing, lighting..."
+                                />
+                              </details>
+                              {/* Regenerate notes (collapsible) */}
+                              <details className="group">
+                                <summary className="text-[10px] text-white/40 uppercase tracking-wider cursor-pointer hover:text-white/60">Regenerate Notes</summary>
+                                <textarea
+                                  value={draft.regenerate_notes}
+                                  onChange={(e) => setEditSceneDraft({ ...draft, regenerate_notes: e.target.value })}
+                                  className="w-full mt-1 bg-[#262626] text-white/60 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
+                                  rows={2}
+                                  placeholder="What can vary without breaking continuity..."
+                                />
+                              </details>
+                              {/* Save/Cancel */}
+                              <div className="flex gap-2 pt-2 border-t border-white/10">
+                                <button
+                                  onClick={() => saveSceneEdit(index, draft)}
+                                  className="px-4 py-2 bg-[#B8B6FC] text-black text-sm font-medium rounded-lg hover:opacity-90"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  onClick={() => { setEditingSceneIndex(null); setEditSceneDraft(null); }}
+                                  className="px-4 py-2 bg-[#262626] text-[#ADADAD] text-sm rounded-lg hover:bg-[#333] hover:text-white"
+                                >
+                                  Cancel
                                 </button>
                               </div>
-                            ) : (
-                              <p className="text-xs text-[#555] text-center">Click to refine this scene</p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                            </div>
+                          ) : (
+                            /* ---- Read mode ---- */
+                            <>
+                              {scene.scene_heading && (
+                                <p className="text-white/50 text-xs font-mono mb-2">{scene.scene_heading}</p>
+                              )}
+                              {/* Location + Characters chips */}
+                              <div className="flex flex-wrap gap-1.5 mb-2">
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-white/50">{locationName}</span>
+                                {(scene.characters_on_screen || []).map(charId => {
+                                  const c = story.characters.find(ch => ch.id === charId);
+                                  return <span key={charId} className="text-[10px] px-2 py-0.5 rounded-full bg-[#B8B6FC]/10 text-[#B8B6FC]">{c?.name || charId}</span>;
+                                })}
+                              </div>
+                              {/* Action */}
+                              {scene.action && <p className="text-white/70 text-sm italic mb-1">{scene.action}</p>}
+                              {/* Dialogue */}
+                              {scene.dialogue && scene.dialogue.split("\n").map((line, li) => (
+                                <p key={li} className="text-[#ADADAD] text-sm">
+                                  {line.includes(":") ? (
+                                    <>
+                                      <span className="text-white/70 font-medium">{line.split(":")[0]}:</span>{" "}
+                                      &ldquo;{line.split(":").slice(1).join(":").trim()}&rdquo;
+                                    </>
+                                  ) : (
+                                    <>&ldquo;{line}&rdquo;</>
+                                  )}
+                                </p>
+                              ))}
+                              {/* Refine section */}
+                              <div
+                                className="mt-3 pt-3 border-t border-white/10 cursor-pointer"
+                                onClick={() => setSelectedBeatIndex(isSelected ? null : index)}
+                              >
+                                {isSelected ? (
+                                  <div onClick={(e) => e.stopPropagation()}>
+                                    <label className="block text-xs text-[#ADADAD] mb-2">Feedback for this scene</label>
+                                    <textarea
+                                      value={feedback}
+                                      onChange={(e) => setFeedback(e.target.value)}
+                                      placeholder="e.g., Make it more dramatic..."
+                                      className="w-full h-20 bg-[#262626] rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none"
+                                    />
+                                    <button
+                                      onClick={refineBeat}
+                                      disabled={isRefining || !feedback.trim()}
+                                      className="mt-2 px-4 py-2 bg-[#B8B6FC] text-black text-sm font-medium rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      {isRefining ? "Refining..." : "Refine This Scene"}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-[#555] text-center">Click to refine this scene</p>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
 
-                <div className="pt-4 border-t border-white/10">
-                  <label className="block text-xs text-[#ADADAD] mb-2">Overall feedback (optional)</label>
-                  <textarea
-                    value={globalFeedback}
-                    onChange={(e) => setGlobalFeedback(e.target.value)}
-                    placeholder="e.g., Make the ending more hopeful..."
-                    className="w-full h-16 bg-[#262626] rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none"
-                  />
-                  <div className="flex gap-3 mt-3">
-                    <button
-                      onClick={regenerateStory}
-                      disabled={isGenerating}
-                      className="flex-1 py-3 bg-[#262626] text-white rounded-xl font-medium hover:bg-[#333] disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Regenerate All
-                    </button>
-                    <button
-                      onClick={startVisualDirection}
-                      className="flex-1 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
-                    >
-                      Approve & Continue
-                    </button>
+                    {/* Global feedback */}
+                    <div className="pt-4 border-t border-white/10">
+                      <label className="block text-xs text-[#ADADAD] mb-2">Overall feedback (optional)</label>
+                      <textarea
+                        value={globalFeedback}
+                        onChange={(e) => setGlobalFeedback(e.target.value)}
+                        placeholder="e.g., Make the ending more hopeful..."
+                        className="w-full h-16 bg-[#262626] rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none"
+                      />
+                      <div className="flex gap-3 mt-3">
+                        <button
+                          onClick={regenerateStory}
+                          disabled={isGenerating}
+                          className="flex-1 py-3 bg-[#262626] text-white rounded-xl font-medium hover:bg-[#333] disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Regenerate All
+                        </button>
+                        <button
+                          onClick={startVisualDirection}
+                          className="flex-1 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
+                        >
+                          Approve & Continue
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
           </div>

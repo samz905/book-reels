@@ -39,7 +39,7 @@ interface ApiStory {
   title: string;
   description: string;
   cover_url: string | null;
-  type: "video" | "audio";
+  type: "video";
   view_count: number;
   likes: number;
   genres: string[];

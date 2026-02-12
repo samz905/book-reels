@@ -35,6 +35,10 @@ import {
   mapDbProfileToFrontend,
   mapDbSettingsToFrontend,
 } from "@/lib/api/creator";
+import {
+  listGenerations as supaListGenerations,
+  AIGenerationSummary,
+} from "@/lib/supabase/ai-generations";
 
 export default function CreatePage() {
   const router = useRouter();
@@ -55,6 +59,7 @@ export default function CreatePage() {
   const [showAddBookModal, setShowAddBookModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isAddingBook, setIsAddingBook] = useState(false);
+  const [episodeDrafts, setEpisodeDrafts] = useState<AIGenerationSummary[]>([]);
 
   // Fetch data on mount when user is authenticated
   useEffect(() => {
@@ -110,6 +115,14 @@ export default function CreatePage() {
         setProfile(mappedProfile);
         setStories(storiesData);
         setSubscription(mappedSubscription);
+
+        // Fetch episode drafts (AI generations)
+        try {
+          const drafts = await supaListGenerations(20);
+          setEpisodeDrafts(drafts);
+        } catch {
+          // Non-critical — silently ignore
+        }
       } catch (err) {
         console.error("Error loading creator data:", err);
         setError(err instanceof Error ? err.message : "Failed to load data");
@@ -496,12 +509,10 @@ export default function CreatePage() {
               Create New Story
             </button>
             <button
-              disabled={stories.length === 0}
-              className="w-full py-2 rounded-lg font-semibold text-sm text-white transition-opacity border border-[#B8B6FC] disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => router.push("/create-episode")}
+              className="w-full py-2 rounded-lg font-semibold text-sm text-white transition-opacity border border-[#B8B6FC] hover:opacity-90"
               style={{
-                background: stories.length > 0
-                  ? "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)"
-                  : "#333",
+                background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",
               }}
             >
               Create New Episode
@@ -558,6 +569,67 @@ export default function CreatePage() {
             <p className="text-white/60 mb-4">
               Create your first story to start publishing content.
             </p>
+          </div>
+        )}
+
+        {/* Episode Drafts section */}
+        {episodeDrafts.length > 0 && (
+          <div className="mt-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white">My Episode Drafts</h2>
+              <button
+                onClick={() => router.push("/create-episode")}
+                className="text-sm text-[#B8B6FC] hover:text-white transition-colors"
+              >
+                + New Episode
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {episodeDrafts.map((draft) => {
+                const statusColors: Record<string, string> = {
+                  drafting: "bg-amber-500/20 text-amber-400",
+                  moodboard: "bg-blue-500/20 text-blue-400",
+                  key_moments: "bg-blue-500/20 text-blue-400",
+                  preflight: "bg-purple-500/20 text-purple-400",
+                  filming: "bg-orange-500/20 text-orange-400",
+                  ready: "bg-green-500/20 text-green-400",
+                  failed: "bg-red-500/20 text-red-400",
+                };
+                const statusLabel: Record<string, string> = {
+                  drafting: "Script",
+                  moodboard: "Moodboard",
+                  key_moments: "Key Moments",
+                  preflight: "Pre-flight",
+                  filming: "Filming",
+                  ready: "Ready",
+                  failed: "Failed",
+                };
+                const colorClass = statusColors[draft.status] || "bg-white/10 text-white/60";
+                const label = statusLabel[draft.status] || draft.status;
+                const updatedDate = new Date(draft.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+                return (
+                  <button
+                    key={draft.id}
+                    onClick={() => router.push(`/create-episode?g=${draft.id}`)}
+                    className="bg-[#0F0E13] border border-[#1A1E2F] rounded-xl p-4 text-left hover:border-[#B8B6FC]/40 transition-colors group"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <h3 className="text-white font-medium text-sm truncate flex-1 mr-2 group-hover:text-[#B8B6FC] transition-colors">
+                        {draft.title || "Untitled"}
+                      </h3>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 ${colorClass}`}>
+                        {label}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-white/40">
+                      <span>{draft.style}</span>
+                      <span>Updated {updatedDate}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </main>

@@ -3,11 +3,10 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import Header from "./components/Header";
 import Footer from "./components/Footer";
-import StoryTypeTabs from "./components/StoryTypeTabs";
 import CategoryTabs from "./components/CategoryTabs";
 import StoryGrid from "./components/StoryGrid";
 import { StoryGridSkeleton } from "./components/skeletons";
-import { CATEGORIES, type Category, type StoryType, type Story } from "./data/mockStories";
+import { CATEGORIES, type Category, type Story } from "./data/mockStories";
 
 // API response types
 interface ApiStory {
@@ -15,7 +14,7 @@ interface ApiStory {
   title: string;
   description: string;
   cover_url: string | null;
-  type: "video" | "audio";
+  type: "video";
   view_count: number;
   likes: number;
   genres: string[];
@@ -51,14 +50,12 @@ function transformStory(apiStory: ApiStory): Story {
     creatorUsername: apiStory.creator?.username || "unknown",
     creatorAvatar: apiStory.creator?.avatar_url || "https://picsum.photos/seed/avatar/100/100",
     category,
-    storyType: apiStory.type.toUpperCase() as "VIDEO" | "AUDIO",
     viewCount: apiStory.view_count > 0 ? apiStory.view_count.toLocaleString() : undefined,
   };
 }
 
 export default function Home() {
   const [activeCategory, setActiveCategory] = useState<Category>("ALL");
-  const [activeStoryType, setActiveStoryType] = useState<StoryType>("ALL");
   const [isSticky, setIsSticky] = useState(false);
   const stickyRef = useRef<HTMLDivElement>(null);
 
@@ -75,10 +72,6 @@ export default function Home() {
     try {
       const params = new URLSearchParams();
       params.set("limit", "50");
-
-      if (activeStoryType !== "ALL") {
-        params.set("type", activeStoryType.toLowerCase());
-      }
 
       if (activeCategory !== "ALL") {
         params.set("category", activeCategory);
@@ -97,7 +90,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [activeCategory, activeStoryType]);
+  }, [activeCategory]);
 
   // Fetch on mount and when filters change
   useEffect(() => {
@@ -172,14 +165,6 @@ export default function Home() {
             isSticky ? "bg-[#010101]" : ""
           }`}
         >
-          {/* Story Type Tabs */}
-          <section className="max-w-[1440px] mx-auto mb-5">
-            <StoryTypeTabs
-              activeType={activeStoryType}
-              onTypeChange={setActiveStoryType}
-            />
-          </section>
-
           {/* Category Tabs */}
           <section className="max-w-[1440px] mx-auto">
             <CategoryTabs

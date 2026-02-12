@@ -16,7 +16,7 @@ export interface SeedStory {
   title: string;
   description: string;
   cover_url: string;
-  type: "video" | "audio";
+  type: "video";
   status: "draft" | "published";
   genres: string[];
   episodes: SeedEpisode[];
@@ -88,7 +88,7 @@ export const seedCreators: SeedCreator[] = [
         title: "Midnight Whispers",
         description: "A psychological thriller where a therapist's patients start disappearing one by one.",
         cover_url: cover("midnight-whispers"),
-        type: "audio",
+        type: "video",
         status: "published",
         genres: ["Thriller", "Horror", "Drama"],
         episodes: generateEpisodes("midnight", 12),
@@ -151,7 +151,7 @@ export const seedCreators: SeedCreator[] = [
         title: "The Paris Letters",
         description: "Love letters exchanged between two strangers in Paris lead to an unexpected connection.",
         cover_url: cover("paris-letters"),
-        type: "audio",
+        type: "video",
         status: "published",
         genres: ["Romance", "Drama"],
         episodes: generateEpisodes("paris", 8),
@@ -254,7 +254,7 @@ export const seedCreators: SeedCreator[] = [
         title: "Detective Stone: The First Case",
         description: "A seasoned detective takes on a seemingly simple missing person case that spirals into something much darker.",
         cover_url: cover("stone-case"),
-        type: "audio",
+        type: "video",
         status: "published",
         genres: ["Crime", "Mystery", "Drama"],
         episodes: generateEpisodes("stone", 5),
@@ -271,7 +271,7 @@ export const seedCreators: SeedCreator[] = [
         title: "The Cold Trail",
         description: "A cold case reopens when new evidence surfaces, leading detective Stone into dangerous territory.",
         cover_url: cover("cold-trail"),
-        type: "audio",
+        type: "video",
         status: "published",
         genres: ["Crime", "Mystery", "Thriller"],
         episodes: generateEpisodes("cold", 12),
@@ -310,7 +310,7 @@ export const seedCreators: SeedCreator[] = [
         title: "Starting Over",
         description: "After a devastating divorce, a woman in her 40s embarks on a journey of self-discovery.",
         cover_url: cover("starting-over"),
-        type: "audio",
+        type: "video",
         status: "published",
         genres: ["Drama", "Romance"],
         episodes: generateEpisodes("starting", 6),
@@ -391,7 +391,7 @@ export const seedCreators: SeedCreator[] = [
         title: "The Silk Road Journey",
         description: "A merchant's daughter travels the ancient Silk Road, encountering danger, love, and adventure.",
         cover_url: cover("silk-road"),
-        type: "audio",
+        type: "video",
         status: "published",
         genres: ["Historical", "Adventure", "Romance"],
         episodes: generateEpisodes("silk", 10),
@@ -408,7 +408,7 @@ export const seedCreators: SeedCreator[] = [
         title: "Letters from the Trenches",
         description: "A WWI soldier's letters home reveal the human side of warfare and undying love.",
         cover_url: cover("trenches"),
-        type: "audio",
+        type: "video",
         status: "published",
         genres: ["Historical", "Drama", "Romance"],
         episodes: generateEpisodes("trench", 8),
@@ -447,7 +447,7 @@ export const seedCreators: SeedCreator[] = [
         title: "Whispers in the Dark",
         description: "A paranormal investigator takes on his most dangerous case yet - a house that doesn't want him to leave.",
         cover_url: cover("whispers-dark"),
-        type: "audio",
+        type: "video",
         status: "published",
         genres: ["Horror", "Supernatural"],
         episodes: generateEpisodes("whispers", 6),
@@ -493,7 +493,7 @@ export const seedCreators: SeedCreator[] = [
         title: "Finding My Voice",
         description: "A shy teenager discovers her passion for music and learns to overcome her fears.",
         cover_url: cover("finding-voice"),
-        type: "audio",
+        type: "video",
         status: "published",
         genres: ["Young Adult", "Drama"],
         episodes: generateEpisodes("voice", 14),

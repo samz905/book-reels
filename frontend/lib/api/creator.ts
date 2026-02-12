@@ -193,7 +193,7 @@ export async function getMyStories(
 
 export async function createStory(data: {
   title: string;
-  type: "video" | "audio";
+  type: "video";
   description?: string;
   cover_url?: string | null;
   genres?: string[];
@@ -226,7 +226,7 @@ export async function updateStory(
   storyId: string,
   data: {
     title?: string;
-    type?: "video" | "audio";
+    type?: "video";
     description?: string;
     cover_url?: string | null;
     genres?: string[];

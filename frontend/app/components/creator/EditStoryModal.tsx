@@ -21,7 +21,7 @@ export default function EditStoryModal({
 }: EditStoryModalProps) {
   const [cover, setCover] = useState<string>(story.cover);
   const [storyName, setStoryName] = useState(story.title);
-  const [storyType, setStoryType] = useState<"video" | "audio">(story.type);
+  const [storyType] = useState<"video">("video");
   const [selectedGenres, setSelectedGenres] = useState<string[]>(story.genre);
   const [description, setDescription] = useState(story.description);
   const [status, setStatus] = useState<"draft" | "published">(story.status);
@@ -38,7 +38,6 @@ export default function EditStoryModal({
   useEffect(() => {
     setCover(story.cover);
     setStoryName(story.title);
-    setStoryType(story.type);
     setSelectedGenres(story.genre);
     setDescription(story.description);
     setStatus(story.status);
@@ -192,42 +191,6 @@ export default function EditStoryModal({
             className="w-full h-14 bg-[#262626] rounded-2xl px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC]"
             placeholder=""
           />
-        </div>
-
-        {/* Story Type */}
-        <div className="mb-6">
-          <label className="block text-white text-base font-medium mb-3">Story Type</label>
-          <div className="flex items-center gap-6">
-            {/* Video Story radio */}
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div
-                onClick={() => setStoryType("video")}
-                className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${
-                  storyType === "video" ? "border-[#B8B6FC]" : "border-[#ADADAD]"
-                }`}
-              >
-                {storyType === "video" && (
-                  <div className="w-3 h-3 rounded-full bg-[#B8B6FC]" />
-                )}
-              </div>
-              <span className="text-white text-[17px] font-semibold">Video Story</span>
-            </label>
-
-            {/* Audio Story radio */}
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div
-                onClick={() => setStoryType("audio")}
-                className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${
-                  storyType === "audio" ? "border-[#B8B6FC]" : "border-[#ADADAD]"
-                }`}
-              >
-                {storyType === "audio" && (
-                  <div className="w-3 h-3 rounded-full bg-[#B8B6FC]" />
-                )}
-              </div>
-              <span className="text-white text-[17px] font-semibold">Audio Story</span>
-            </label>
-          </div>
         </div>
 
         {/* Select Genres */}

@@ -19,7 +19,7 @@ export default function CreateStoryModal({
 }: CreateStoryModalProps) {
   const [cover, setCover] = useState<string | null>(null);
   const [storyName, setStoryName] = useState("");
-  const [storyType, setStoryType] = useState<"video" | "audio" | null>(null);
+  const [storyType] = useState<"video">("video");
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [description, setDescription] = useState("");
   const [isGenreDropdownOpen, setIsGenreDropdownOpen] = useState(false);
@@ -78,10 +78,6 @@ export default function CreateStoryModal({
       alert("Story name is required");
       return;
     }
-    if (!storyType) {
-      alert("Select a story type");
-      return;
-    }
     if (selectedGenres.length === 0) {
       alert("Select at least one genre");
       return;
@@ -108,7 +104,6 @@ export default function CreateStoryModal({
 
     setCover(null);
     setStoryName("");
-    setStoryType(null);
     setSelectedGenres([]);
     setDescription("");
     onClose();
@@ -190,42 +185,6 @@ export default function CreateStoryModal({
             className="w-full h-14 bg-[#262626] rounded-2xl px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC]"
             placeholder=""
           />
-        </div>
-
-        {/* Story Type */}
-        <div className="mb-6">
-          <label className="block text-white text-base font-medium mb-3">Story Type</label>
-          <div className="flex items-center gap-6">
-            {/* Video Story radio */}
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div
-                onClick={() => setStoryType("video")}
-                className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${
-                  storyType === "video" ? "border-[#B8B6FC]" : "border-[#ADADAD]"
-                }`}
-              >
-                {storyType === "video" && (
-                  <div className="w-3 h-3 rounded-full bg-[#B8B6FC]" />
-                )}
-              </div>
-              <span className="text-white text-[17px] font-semibold">Video Story</span>
-            </label>
-
-            {/* Audio Story radio */}
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div
-                onClick={() => setStoryType("audio")}
-                className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${
-                  storyType === "audio" ? "border-[#B8B6FC]" : "border-[#ADADAD]"
-                }`}
-              >
-                {storyType === "audio" && (
-                  <div className="w-3 h-3 rounded-full bg-[#B8B6FC]" />
-                )}
-              </div>
-              <span className="text-white text-[17px] font-semibold">Audio Story</span>
-            </label>
-          </div>
         </div>
 
         {/* Select Genres */}

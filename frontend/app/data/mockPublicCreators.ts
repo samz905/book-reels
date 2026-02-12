@@ -12,7 +12,7 @@ export interface Ebook {
 export interface PublicStory {
   id: string;
   title: string;
-  type: "video" | "audio";
+  type: "video";
   episodeCount: number;
   viewCount: number;
   description: string;
@@ -89,7 +89,7 @@ export const mockPublicCreators: Record<string, PublicCreatorProfile> = {
       {
         id: "luna-story-2",
         title: "Reborn",
-        type: "audio",
+        type: "video",
         episodeCount: 15,
         viewCount: 890000,
         description:

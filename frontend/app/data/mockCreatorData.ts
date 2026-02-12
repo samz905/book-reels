@@ -46,7 +46,7 @@ export interface Ebook {
 export interface Story {
   id: string;
   title: string;
-  type: "video" | "audio";
+  type: "video";
   episodeCount: number;
   viewCount: number;
   description: string;
@@ -160,7 +160,7 @@ export const mockStories: Story[] = [
   {
     id: "story-2",
     title: "Story Name",
-    type: "audio",
+    type: "video",
     episodeCount: 15,
     viewCount: 890000,
     description:
