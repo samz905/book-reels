@@ -294,6 +294,76 @@ export interface Database {
           cost_videos?: number;
         };
       };
+      story_characters: {
+        Row: {
+          id: string;
+          story_id: string;
+          name: string;
+          age: string;
+          gender: string;
+          description: string;
+          role: string;
+          visual_style: string | null;
+          image_base64: string | null;
+          image_mime_type: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          story_id: string;
+          name: string;
+          age?: string;
+          gender?: string;
+          description?: string;
+          role?: string;
+          visual_style?: string | null;
+          image_base64?: string | null;
+          image_mime_type?: string;
+        };
+        Update: {
+          name?: string;
+          age?: string;
+          gender?: string;
+          description?: string;
+          role?: string;
+          visual_style?: string | null;
+          image_base64?: string | null;
+          image_mime_type?: string;
+        };
+      };
+      story_locations: {
+        Row: {
+          id: string;
+          story_id: string;
+          name: string;
+          description: string;
+          atmosphere: string;
+          visual_style: string | null;
+          image_base64: string | null;
+          image_mime_type: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          story_id: string;
+          name: string;
+          description?: string;
+          atmosphere?: string;
+          visual_style?: string | null;
+          image_base64?: string | null;
+          image_mime_type?: string;
+        };
+        Update: {
+          name?: string;
+          description?: string;
+          atmosphere?: string;
+          visual_style?: string | null;
+          image_base64?: string | null;
+          image_mime_type?: string;
+        };
+      };
       cart_items: {
         Row: {
           id: string;
@@ -354,6 +424,14 @@ export type SubscriptionUpdate = Database["public"]["Tables"]["subscriptions"]["
 
 export type EbookPurchase = Database["public"]["Tables"]["ebook_purchases"]["Row"];
 export type EbookPurchaseInsert = Database["public"]["Tables"]["ebook_purchases"]["Insert"];
+
+export type StoryCharacter = Database["public"]["Tables"]["story_characters"]["Row"];
+export type StoryCharacterInsert = Database["public"]["Tables"]["story_characters"]["Insert"];
+export type StoryCharacterUpdate = Database["public"]["Tables"]["story_characters"]["Update"];
+
+export type StoryLocation = Database["public"]["Tables"]["story_locations"]["Row"];
+export type StoryLocationInsert = Database["public"]["Tables"]["story_locations"]["Insert"];
+export type StoryLocationUpdate = Database["public"]["Tables"]["story_locations"]["Update"];
 
 export type CartItem = Database["public"]["Tables"]["cart_items"]["Row"];
 export type CartItemInsert = Database["public"]["Tables"]["cart_items"]["Insert"];

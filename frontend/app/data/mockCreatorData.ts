@@ -58,6 +58,35 @@ export interface Story {
   ebooks: Ebook[];
 }
 
+export interface StoryCharacterFE {
+  id: string;
+  name: string;
+  age: string;
+  gender: string;
+  description: string;
+  role: string;
+  visualStyle: string | null;
+  imageBase64: string | null;
+  imageMimeType: string;
+}
+
+export interface StoryLocationFE {
+  id: string;
+  name: string;
+  description: string;
+  atmosphere: string;
+  visualStyle: string | null;
+  imageBase64: string | null;
+  imageMimeType: string;
+}
+
+export const VISUAL_STYLES = [
+  { value: "cinematic", label: "Cinematic" },
+  { value: "2d_anime", label: "Anime" },
+  { value: "2d_animated", label: "Animated" },
+  { value: "3d_animated", label: "Pixar" },
+];
+
 export const GENRES = [
   "Fantasy",
   "Romance",

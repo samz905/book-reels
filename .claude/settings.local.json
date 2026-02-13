@@ -101,7 +101,12 @@
       "WebFetch(domain:www.veo3ai.io)",
       "WebFetch(domain:n8n.io)",
       "WebFetch(domain:prompt-helper.com)",
-      "WebFetch(domain:ulazai.com)"
+      "WebFetch(domain:ulazai.com)",
+      "Bash(git remote add:*)",
+      "Bash(vercel:*)",
+      "WebFetch(domain:www.figma.com)",
+      "mcp__figma__get_screenshot",
+      "mcp__supabase__get_advisors"
     ]
   },
   "enableAllProjectMcpServers": true,

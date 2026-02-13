@@ -119,12 +119,13 @@ export default function CreateEpisodeModal({
           className="hidden"
         />
 
-        {/* Episode Number (read-only) */}
+        {/* Episode Number (auto-assigned) */}
         <div className="mb-6">
-          <label className="block text-white text-base mb-3">Episode Number</label>
-          <div className="w-full h-14 bg-[#262626] rounded-2xl px-4 flex items-center text-white/50">
-            Episode {nextEpisodeNumber}
+          <div className="flex items-baseline gap-3">
+            <span className="text-white text-base">Episode Number:</span>
+            <span className="text-[#B8B6FC] text-2xl font-bold">{nextEpisodeNumber}</span>
           </div>
+          <p className="text-white/40 text-xs mt-1">Automatically assigned as the next episode in sequence</p>
         </div>
 
         {/* Episode Name */}

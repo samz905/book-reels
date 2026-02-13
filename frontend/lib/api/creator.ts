@@ -6,6 +6,8 @@ import type {
   Episode as DbEpisode,
   Ebook as DbEbook,
   StoryFull,
+  StoryCharacter as DbStoryCharacter,
+  StoryLocation as DbStoryLocation,
 } from "@/types/database";
 import type {
   CreatorProfile,
@@ -14,7 +16,11 @@ import type {
   Story as FrontendStory,
   Episode as FrontendEpisode,
   Ebook as FrontendEbook,
+  StoryCharacterFE,
+  StoryLocationFE,
 } from "@/app/data/mockCreatorData";
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
 // ============ Type Mappers ============
 
@@ -366,6 +372,201 @@ export function generateRandomUsername(): string {
     suffix += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return `creator-${suffix}`;
+}
+
+// ============ Character & Location Mappers ============
+
+export function mapDbCharacterToFrontend(db: DbStoryCharacter): StoryCharacterFE {
+  return {
+    id: db.id,
+    name: db.name,
+    age: db.age,
+    gender: db.gender,
+    description: db.description,
+    role: db.role,
+    visualStyle: db.visual_style,
+    imageBase64: db.image_base64,
+    imageMimeType: db.image_mime_type,
+  };
+}
+
+export function mapDbLocationToFrontend(db: DbStoryLocation): StoryLocationFE {
+  return {
+    id: db.id,
+    name: db.name,
+    description: db.description,
+    atmosphere: db.atmosphere,
+    visualStyle: db.visual_style,
+    imageBase64: db.image_base64,
+    imageMimeType: db.image_mime_type,
+  };
+}
+
+// ============ Character CRUD ============
+
+export async function getStoryCharacters(storyId: string): Promise<StoryCharacterFE[]> {
+  const response = await fetch(`/api/stories/${storyId}/characters`, {
+    credentials: "include",
+  });
+  const data = await handleResponse<DbStoryCharacter[]>(response);
+  return data.map(mapDbCharacterToFrontend);
+}
+
+export async function createStoryCharacter(
+  storyId: string,
+  data: {
+    name: string;
+    age?: string;
+    gender?: string;
+    description?: string;
+    role?: string;
+    visual_style?: string | null;
+    image_base64?: string | null;
+    image_mime_type?: string;
+  }
+): Promise<StoryCharacterFE> {
+  const response = await fetch(`/api/stories/${storyId}/characters`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
+  });
+  const db = await handleResponse<DbStoryCharacter>(response);
+  return mapDbCharacterToFrontend(db);
+}
+
+export async function updateStoryCharacter(
+  storyId: string,
+  characterId: string,
+  data: {
+    name?: string;
+    age?: string;
+    gender?: string;
+    description?: string;
+    role?: string;
+    visual_style?: string | null;
+    image_base64?: string | null;
+    image_mime_type?: string;
+  }
+): Promise<StoryCharacterFE> {
+  const response = await fetch(`/api/stories/${storyId}/characters/${characterId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
+  });
+  const db = await handleResponse<DbStoryCharacter>(response);
+  return mapDbCharacterToFrontend(db);
+}
+
+export async function deleteStoryCharacter(storyId: string, characterId: string): Promise<void> {
+  const response = await fetch(`/api/stories/${storyId}/characters/${characterId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  await handleResponse<{ success: boolean }>(response);
+}
+
+// ============ Location CRUD ============
+
+export async function getStoryLocations(storyId: string): Promise<StoryLocationFE[]> {
+  const response = await fetch(`/api/stories/${storyId}/locations`, {
+    credentials: "include",
+  });
+  const data = await handleResponse<DbStoryLocation[]>(response);
+  return data.map(mapDbLocationToFrontend);
+}
+
+export async function createStoryLocation(
+  storyId: string,
+  data: {
+    name: string;
+    description?: string;
+    atmosphere?: string;
+    visual_style?: string | null;
+    image_base64?: string | null;
+    image_mime_type?: string;
+  }
+): Promise<StoryLocationFE> {
+  const response = await fetch(`/api/stories/${storyId}/locations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
+  });
+  const db = await handleResponse<DbStoryLocation>(response);
+  return mapDbLocationToFrontend(db);
+}
+
+export async function updateStoryLocation(
+  storyId: string,
+  locationId: string,
+  data: {
+    name?: string;
+    description?: string;
+    atmosphere?: string;
+    visual_style?: string | null;
+    image_base64?: string | null;
+    image_mime_type?: string;
+  }
+): Promise<StoryLocationFE> {
+  const response = await fetch(`/api/stories/${storyId}/locations/${locationId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
+  });
+  const db = await handleResponse<DbStoryLocation>(response);
+  return mapDbLocationToFrontend(db);
+}
+
+export async function deleteStoryLocation(storyId: string, locationId: string): Promise<void> {
+  const response = await fetch(`/api/stories/${storyId}/locations/${locationId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  await handleResponse<{ success: boolean }>(response);
+}
+
+// ============ AI Image Generation (calls FastAPI directly) ============
+
+export async function generateCharacterImage(data: {
+  name: string;
+  age: string;
+  gender?: string;
+  description: string;
+  visual_style?: string;
+  reference_image?: { image_base64: string; mime_type: string };
+}): Promise<{ image_base64: string; mime_type: string; cost_usd: number }> {
+  const response = await fetch(`${BACKEND_URL}/assets/generate-character-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.detail || "Image generation failed");
+  }
+  return response.json();
+}
+
+export async function generateLocationImage(data: {
+  name: string;
+  description: string;
+  atmosphere?: string;
+  visual_style?: string;
+  reference_image?: { image_base64: string; mime_type: string };
+}): Promise<{ image_base64: string; mime_type: string; cost_usd: number }> {
+  const response = await fetch(`${BACKEND_URL}/assets/generate-location-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.detail || "Image generation failed");
+  }
+  return response.json();
 }
 
 // Purchased Ebooks API

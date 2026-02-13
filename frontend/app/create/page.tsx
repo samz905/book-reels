@@ -10,6 +10,7 @@ import SubscriptionCard from "../components/creator/SubscriptionCard";
 import CreatorStoryCard from "../components/creator/CreatorStoryCard";
 import CreateStoryModal from "../components/creator/CreateStoryModal";
 import AddBookModal from "../components/creator/AddBookModal";
+import StoryPickerModal from "../components/creator/StoryPickerModal";
 import { useAuth } from "../context/AuthContext";
 import {
   CreatorProfile,
@@ -57,6 +58,7 @@ export default function CreatePage() {
   const [stories, setStories] = useState<Story[]>([]);
   const [showCreateStoryModal, setShowCreateStoryModal] = useState(false);
   const [showAddBookModal, setShowAddBookModal] = useState(false);
+  const [showEpisodeStoryPicker, setShowEpisodeStoryPicker] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isAddingBook, setIsAddingBook] = useState(false);
   const [episodeDrafts, setEpisodeDrafts] = useState<AIGenerationSummary[]>([]);
@@ -509,10 +511,13 @@ export default function CreatePage() {
               Create New Story
             </button>
             <button
-              onClick={() => router.push("/create-episode")}
-              className="w-full py-2 rounded-lg font-semibold text-sm text-white transition-opacity border border-[#B8B6FC] hover:opacity-90"
+              onClick={() => setShowEpisodeStoryPicker(true)}
+              disabled={stories.length === 0}
+              className="w-full py-2 rounded-lg font-semibold text-sm text-white transition-opacity border border-[#B8B6FC] disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
               style={{
-                background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",
+                background: stories.length > 0
+                  ? "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)"
+                  : "#333",
               }}
             >
               Create New Episode
@@ -651,6 +656,24 @@ export default function CreatePage() {
         onSave={handleAddBookFromModal}
         stories={stories.map(s => ({ id: s.id, title: s.title }))}
         isSaving={isAddingBook}
+      />
+
+      {/* Story Picker for Episode Creation */}
+      <StoryPickerModal
+        isOpen={showEpisodeStoryPicker}
+        onClose={() => setShowEpisodeStoryPicker(false)}
+        onSelect={(storyId) => {
+          setShowEpisodeStoryPicker(false);
+          router.push(`/create-episode?storyId=${storyId}`);
+        }}
+        stories={stories.map(s => ({
+          id: s.id,
+          title: s.title,
+          cover: s.cover,
+          episodeCount: s.episodeCount,
+        }))}
+        title="Choose a Story"
+        description="Which story should this episode belong to?"
       />
     </div>
   );

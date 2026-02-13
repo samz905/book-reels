@@ -250,9 +250,9 @@ export default function CreatorStoryCard({
           <span className={`text-sm font-semibold ${story.status === "draft" ? "text-[#FF8C00]" : "text-[#1ED760]"}`}>
             {story.status === "draft" ? "DRAFT" : "PUBLISHED"}
           </span>
-          {/* Edit button */}
+          {/* Edit button - navigates to story management page */}
           <button
-            onClick={() => setShowEditModal(true)}
+            onClick={() => router.push(`/create/${story.id}`)}
             className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="#E8EAED">
