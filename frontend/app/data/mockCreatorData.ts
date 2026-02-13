@@ -82,9 +82,9 @@ export interface StoryLocationFE {
 
 export const VISUAL_STYLES = [
   { value: "cinematic", label: "Cinematic" },
-  { value: "2d_anime", label: "Anime" },
-  { value: "2d_animated", label: "Animated" },
-  { value: "3d_animated", label: "Pixar" },
+  { value: "anime", label: "Anime" },
+  { value: "animated", label: "Animated" },
+  { value: "pixar", label: "Pixar" },
 ];
 
 export const GENRES = [

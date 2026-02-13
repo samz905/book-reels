@@ -187,7 +187,7 @@ export default function LocationModal({
 
         {/* Image section */}
         <div className="mb-5">
-          <div className="w-full h-[300px] bg-[#262626] rounded-2xl overflow-hidden flex items-center justify-center mb-3">
+          <div className="max-w-[280px] mx-auto aspect-[9/16] bg-[#262626] rounded-2xl overflow-hidden flex items-center justify-center mb-3">
             {imageBase64 ? (
               <img
                 src={`data:${imageMimeType};base64,${imageBase64}`}

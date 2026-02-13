@@ -16,7 +16,7 @@ import {
 // Types
 // ============================================================
 
-type Style = "cinematic" | "3d_animated" | "2d_animated";
+type Style = "cinematic" | "anime" | "animated" | "pixar";
 type VisualStep = "characters" | "setting" | "key_moment";
 type MoodboardStep = "protagonist" | "full";
 
@@ -287,9 +287,21 @@ const TOTAL_SHOTS = 8;
 
 const STYLE_OPTIONS: { value: Style; label: string }[] = [
   { value: "cinematic", label: "Cinematic" },
-  { value: "3d_animated", label: "3D Animated" },
-  { value: "2d_animated", label: "2D Animated" },
+  { value: "anime", label: "Anime" },
+  { value: "animated", label: "Animated" },
+  { value: "pixar", label: "Pixar" },
 ];
+
+const STYLE_DISPLAY_MAP: Record<string, string> = {
+  cinematic: "Cinematic",
+  anime: "Anime",
+  animated: "Animated",
+  pixar: "Pixar",
+  // Legacy values for existing generations
+  "3d_animated": "Pixar",
+  "2d_animated": "Animated",
+  "2d_anime": "Anime",
+};
 
 // ============================================================
 // Main Component
@@ -395,6 +407,20 @@ export default function CreateEpisodePage() {
     film: 0,
   });
 
+  // Story association (when created from a story management page)
+  const [associatedStoryId, setAssociatedStoryId] = useState<string | null>(null);
+  const associatedStoryIdRef = useRef<string | null>(null);
+  const [associatedStoryName, setAssociatedStoryName] = useState<string | null>(null);
+  const [episodeName, setEpisodeName] = useState<string | null>(null);
+  const episodeNameRef = useRef<string | null>(null);
+  const [episodeNumber, setEpisodeNumber] = useState<number | null>(null);
+  const [episodeIsFree, setEpisodeIsFree] = useState(false);
+  const [isEditingEpName, setIsEditingEpName] = useState(false);
+  const [editingEpNameValue, setEditingEpNameValue] = useState("");
+  // Keep refs in sync
+  useEffect(() => { associatedStoryIdRef.current = associatedStoryId; }, [associatedStoryId]);
+  useEffect(() => { episodeNameRef.current = episodeName; }, [episodeName]);
+
   // Generation persistence
   const [generationId, setGenerationId] = useState<string | null>(null);
   const generationIdRef = useRef<string | null>(null);
@@ -472,7 +498,7 @@ export default function CreateEpisodePage() {
       setGenerationId(activeGenId);
       setGenerationUrl(activeGenId);
       // Await creation so the row exists before any saves or sendBeacon can fire
-      await supaCreateGeneration(activeGenId, "Untitled", style, { idea, style, scriptTab: "generate", isGenerating: true });
+      await supaCreateGeneration(activeGenId, "Untitled", style, { idea, style, scriptTab: "generate", isGenerating: true }, associatedStoryIdRef.current);
     }
 
     try {
@@ -495,6 +521,7 @@ export default function CreateEpisodePage() {
       }
       // Save immediately with actual story data
       saveNow({ story: data.story }, "drafting");
+      fetchGenerationsList();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate story");
     } finally {
@@ -554,7 +581,7 @@ export default function CreateEpisodePage() {
       generationIdRef.current = activeGenId;
       setGenerationId(activeGenId);
       setGenerationUrl(activeGenId);
-      await supaCreateGeneration(activeGenId, "Untitled", style, { rawScript, style, scriptTab: "insert", isGenerating: true });
+      await supaCreateGeneration(activeGenId, "Untitled", style, { rawScript, style, scriptTab: "insert", isGenerating: true }, associatedStoryIdRef.current);
     }
 
     try {
@@ -575,6 +602,7 @@ export default function CreateEpisodePage() {
         setTotalCost((prev) => ({ ...prev, story: prev.story + data.cost_usd }));
       }
       saveNow({ story: data.story, rawScript, scriptTab: "insert" }, "drafting");
+      fetchGenerationsList();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to parse script");
     } finally {
@@ -790,6 +818,14 @@ export default function CreateEpisodePage() {
       generationIdRef.current = genId;
       setGenerationId(genId);
       setGenerationUrl(genId);
+      // Restore story association from DB column
+      if (data.story_id) {
+        setAssociatedStoryId(data.story_id);
+        fetch(`/api/stories/${data.story_id}`)
+          .then(res => res.ok ? res.json() : null)
+          .then(d => { if (d?.title) setAssociatedStoryName(d.title); })
+          .catch(() => {});
+      }
       if (s.scriptTab) setScriptTab(s.scriptTab as "generate" | "insert");
       if (s.idea !== undefined) setIdea(s.idea as string);
       if (s.rawScript !== undefined) setRawScript(s.rawScript as string);
@@ -2055,6 +2091,22 @@ export default function CreateEpisodePage() {
 
       const urlParams = new URLSearchParams(window.location.search);
       const urlGenId = urlParams.get("g");
+      const urlStoryId = urlParams.get("storyId");
+      const urlEpName = urlParams.get("name");
+      const urlEpNumber = urlParams.get("number");
+      const urlEpIsFree = urlParams.get("isFree");
+      if (urlStoryId) {
+        setAssociatedStoryId(urlStoryId);
+        associatedStoryIdRef.current = urlStoryId;
+        // Fetch story name for banner
+        fetch(`/api/stories/${urlStoryId}`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => { if (data?.title) setAssociatedStoryName(data.title); })
+          .catch(() => {});
+      }
+      if (urlEpName) { setEpisodeName(urlEpName); episodeNameRef.current = urlEpName; }
+      if (urlEpNumber) setEpisodeNumber(parseInt(urlEpNumber, 10));
+      if (urlEpIsFree === "true") setEpisodeIsFree(true);
       if (urlGenId) {
         await restoreGeneration(urlGenId);
       }
@@ -2324,6 +2376,18 @@ export default function CreateEpisodePage() {
               film_id: filmId,
             }).catch(console.error);
           }
+          // Create episode under the associated story when film is ready
+          if (data.status === "ready" && associatedStoryIdRef.current) {
+            fetch(`/api/stories/${associatedStoryIdRef.current}/episodes`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: episodeNameRef.current || story?.title || "Untitled Episode",
+                media_url: data.final_video_url || null,
+                status: "draft",
+              }),
+            }).catch((err) => console.error("Failed to save episode to story:", err));
+          }
         }
       } catch (err) {
         console.error("Polling error:", err);
@@ -2471,6 +2535,68 @@ export default function CreateEpisodePage() {
       <Header />
 
       <main className="max-w-[1400px] mx-auto px-6 py-8">
+        {/* Episode Name Banner */}
+        {episodeName && (
+          <div className="flex items-center gap-3 mb-6 pb-5 border-b border-white/5">
+            <a
+              href={associatedStoryId ? `/create/${associatedStoryId}` : "/create"}
+              className="text-white/30 hover:text-white/60 transition-colors flex-shrink-0"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
+              </svg>
+            </a>
+            {isEditingEpName ? (
+              <input
+                autoFocus
+                value={editingEpNameValue}
+                onChange={(e) => setEditingEpNameValue(e.target.value)}
+                onBlur={() => {
+                  const trimmed = editingEpNameValue.trim();
+                  if (trimmed) {
+                    setEpisodeName(trimmed);
+                    episodeNameRef.current = trimmed;
+                    const gid = generationIdRef.current;
+                    if (gid) supaUpdateGeneration(gid, { title: trimmed }).catch(console.error);
+                  }
+                  setIsEditingEpName(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const trimmed = editingEpNameValue.trim();
+                    if (trimmed) {
+                      setEpisodeName(trimmed);
+                      episodeNameRef.current = trimmed;
+                      const gid = generationIdRef.current;
+                      if (gid) supaUpdateGeneration(gid, { title: trimmed }).catch(console.error);
+                    }
+                    setIsEditingEpName(false);
+                  } else if (e.key === "Escape") {
+                    setIsEditingEpName(false);
+                  }
+                }}
+                className="bg-transparent text-white font-semibold text-lg border-b border-[#B8B6FC] outline-none px-1 min-w-0 flex-1"
+              />
+            ) : (
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-white font-semibold text-lg truncate">{episodeName}</span>
+                <button
+                  onClick={() => {
+                    setEditingEpNameValue(episodeName || "");
+                    setIsEditingEpName(true);
+                  }}
+                  className="w-8 h-8 rounded-full bg-[#3A3A3A] flex items-center justify-center hover:bg-[#4A4A4A] transition-colors flex-shrink-0"
+                  title="Edit episode name"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
+                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                  </svg>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Step Indicator + Save Draft */}
         <div className="relative flex items-center justify-center gap-2 mb-8">
           {[
@@ -4365,7 +4491,7 @@ export default function CreateEpisodePage() {
                 <p className="text-[#555] text-sm text-center py-8">No generations yet</p>
               )}
 
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {pastGenerations.map((gen) => {
                   const isActive = gen.id === generationId;
                   const statusColors: Record<string, string> = {
@@ -4395,43 +4521,49 @@ export default function CreateEpisodePage() {
                         if (!isActive) restoreGeneration(gen.id);
                         setSidebarOpen(false);
                       }}
-                      className={`w-full text-left p-3 rounded-lg transition-colors ${
+                      className={`w-full text-left p-3 rounded-xl transition-colors ${
                         isActive
                           ? "bg-[#B8B6FC]/15 border border-[#B8B6FC]/30"
                           : "bg-[#1A1E2F] hover:bg-[#262626] border border-transparent"
                       }`}
                     >
-                      <div className="flex items-center gap-3">
+                      {/* 16:9 thumbnail */}
+                      <div className="w-full aspect-video rounded-lg overflow-hidden bg-[#262626] mb-2.5">
                         {gen.thumbnail_base64 ? (
                           <img
                             src={`data:image/png;base64,${gen.thumbnail_base64}`}
-                            className="w-9 h-12 rounded object-cover flex-shrink-0"
+                            className="w-full h-full object-cover"
                             alt=""
                           />
                         ) : (
-                          <div className="w-9 h-12 rounded bg-[#262626] flex items-center justify-center flex-shrink-0">
-                            <svg className="w-4 h-4 text-white/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <div className="w-full h-full flex items-center justify-center">
+                            <svg className="w-8 h-8 text-white/15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                             </svg>
                           </div>
                         )}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-white text-sm font-medium truncate">
-                            {gen.title || "Untitled"}
-                          </p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${statusColors[gen.status] || statusColors.drafting}`}>
-                              {statusLabels[gen.status] || gen.status}
-                            </span>
-                            {gen.cost_total > 0 && (
-                              <span className="text-[10px] text-white/30">${gen.cost_total.toFixed(2)}</span>
-                            )}
-                          </div>
-                          <p className="text-[10px] text-white/25 mt-0.5">
-                            {new Date(gen.created_at).toLocaleDateString()}
-                          </p>
-                        </div>
                       </div>
+                      <p className="text-white text-sm font-medium truncate mb-1.5">
+                        {gen.title || "Untitled"}
+                      </p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] text-white/40">
+                          {STYLE_DISPLAY_MAP[gen.style] || gen.style}
+                        </span>
+                        <span className="text-white/15">|</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${statusColors[gen.status] || statusColors.drafting}`}>
+                          {statusLabels[gen.status] || gen.status}
+                        </span>
+                        {gen.cost_total > 0 && (
+                          <>
+                            <span className="text-white/15">|</span>
+                            <span className="text-[10px] text-white/30">${gen.cost_total.toFixed(2)}</span>
+                          </>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-white/25 mt-1">
+                        {new Date(gen.created_at).toLocaleDateString()}
+                      </p>
                     </button>
                   );
                 })}

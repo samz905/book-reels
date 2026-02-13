@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Story, Episode, Ebook, formatViewCount } from "@/app/data/mockCreatorData";
+import { Story, Ebook, formatViewCount } from "@/app/data/mockCreatorData";
 import EpisodeList from "./EpisodeList";
 import CreateEpisodeModal from "./CreateEpisodeModal";
 import AddBookModal from "./AddBookModal";
@@ -13,7 +13,6 @@ interface CreatorStoryCardProps {
   story: Story;
   allStories?: Array<{ id: string; title: string }>;
   onUpdateStory: (story: Story) => void | Promise<void>;
-  onCreateEpisode?: (episodeData: { number: number; name: string; isFree: boolean }) => Promise<Episode>;
   onAddEbook?: (ebookData: {
     storyId: string;
     title: string;
@@ -34,7 +33,6 @@ export default function CreatorStoryCard({
   story,
   allStories,
   onUpdateStory,
-  onCreateEpisode,
   onAddEbook,
   onUpdateEbook,
 }: CreatorStoryCardProps) {
@@ -127,36 +125,6 @@ export default function CreatorStoryCard({
   // Calculate free episode count (first 4 are free per design)
   const freeCount = 4;
 
-  // Handler for creating episode
-  const handleCreateEpisode = async (episodeData: Omit<Episode, "id">) => {
-    if (onCreateEpisode) {
-      // Use API-based creation
-      try {
-        await onCreateEpisode({
-          number: episodeData.number,
-          name: episodeData.name,
-          isFree: episodeData.isFree,
-        });
-        setShowCreateEpisodeModal(false);
-      } catch (err) {
-        console.error("Error creating episode:", err);
-        alert("Failed to create episode. Please try again.");
-      }
-    } else {
-      // Fallback to local state update
-      const newEpisode: Episode = {
-        ...episodeData,
-        id: `${story.id}-ep-${story.episodes.length + 1}`,
-      };
-      onUpdateStory({
-        ...story,
-        episodes: [...story.episodes, newEpisode],
-        episodeCount: story.episodeCount + 1,
-      });
-      setShowCreateEpisodeModal(false);
-    }
-  };
-
   // Handler for adding book
   const handleAddBook = async (bookData: {
     storyId: string;
@@ -207,17 +175,6 @@ export default function CreatorStoryCard({
       setIsEditSaving(false);
     }
   };
-
-  // Handler for publish/unpublish
-  const handleTogglePublish = () => {
-    onUpdateStory({
-      ...story,
-      status: story.status === "draft" ? "published" : "draft",
-    });
-  };
-
-  // Check if can publish (has episodes or ebooks)
-  const canPublish = story.episodes.length > 0 || (story.ebooks?.length || 0) > 0;
 
   return (
     <div className="bg-[#0F0E13] rounded-xl p-6">
@@ -355,35 +312,6 @@ export default function CreatorStoryCard({
             <EpisodeList episodes={story.episodes} freeCount={freeCount} />
           )}
 
-          {/* Publish/Unpublish section */}
-          <div className="flex items-center justify-end gap-2 mt-4">
-            {story.status === "draft" ? (
-              <>
-                <button
-                  onClick={handleTogglePublish}
-                  disabled={!canPublish}
-                  className="text-[#1ED760] font-semibold hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Publish
-                </button>
-                <span className="text-[#ADADAD] text-sm">
-                  {canPublish ? "" : "Add an episode or ebook to publish."}
-                </span>
-              </>
-            ) : (
-              <>
-                <button
-                  onClick={handleTogglePublish}
-                  className="text-[#FF8C00] font-semibold hover:underline"
-                >
-                  Unpublish
-                </button>
-                <span className="text-[#ADADAD] text-sm">
-                  All episodes and books will be unpublished
-                </span>
-              </>
-            )}
-          </div>
         </div>
       </div>
 
@@ -516,8 +444,17 @@ export default function CreatorStoryCard({
       <CreateEpisodeModal
         isOpen={showCreateEpisodeModal}
         onClose={() => setShowCreateEpisodeModal(false)}
-        onSave={handleCreateEpisode}
-        nextEpisodeNumber={story.episodes.length + 1}
+        onSave={(episode) => {
+          setShowCreateEpisodeModal(false);
+          const params = new URLSearchParams({
+            storyId: story.id,
+            name: episode.name,
+            number: String(episode.number),
+            isFree: String(episode.isFree),
+          });
+          router.push(`/create-episode?${params.toString()}`);
+        }}
+        nextEpisodeNumber={story.episodeCount + 1}
       />
       <AddBookModal
         isOpen={showAddBookModal}

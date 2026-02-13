@@ -11,6 +11,7 @@ import CreatorStoryCard from "../components/creator/CreatorStoryCard";
 import CreateStoryModal from "../components/creator/CreateStoryModal";
 import AddBookModal from "../components/creator/AddBookModal";
 import StoryPickerModal from "../components/creator/StoryPickerModal";
+import CreateEpisodeModal from "../components/creator/CreateEpisodeModal";
 import { useAuth } from "../context/AuthContext";
 import {
   CreatorProfile,
@@ -59,6 +60,8 @@ export default function CreatePage() {
   const [showCreateStoryModal, setShowCreateStoryModal] = useState(false);
   const [showAddBookModal, setShowAddBookModal] = useState(false);
   const [showEpisodeStoryPicker, setShowEpisodeStoryPicker] = useState(false);
+  const [showCreateEpisodeModal, setShowCreateEpisodeModal] = useState(false);
+  const [selectedStoryIdForEpisode, setSelectedStoryIdForEpisode] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isAddingBook, setIsAddingBook] = useState(false);
   const [episodeDrafts, setEpisodeDrafts] = useState<AIGenerationSummary[]>([]);
@@ -555,9 +558,6 @@ export default function CreatePage() {
                 story={story}
                 allStories={stories.map(s => ({ id: s.id, title: s.title }))}
                 onUpdateStory={handleStoryUpdate}
-                onCreateEpisode={(episodeData) =>
-                  handleCreateEpisode(story.id, episodeData)
-                }
                 onAddEbook={(ebookData) => handleAddEbook(story.id, ebookData)}
                 onUpdateEbook={(ebookId, data) => handleUpdateEbook(story.id, ebookId, data)}
               />
@@ -583,13 +583,13 @@ export default function CreatePage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-white">My Episode Drafts</h2>
               <button
-                onClick={() => router.push("/create-episode")}
+                onClick={() => setShowEpisodeStoryPicker(true)}
                 className="text-sm text-[#B8B6FC] hover:text-white transition-colors"
               >
                 + New Episode
               </button>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
               {episodeDrafts.map((draft) => {
                 const statusColors: Record<string, string> = {
                   drafting: "bg-amber-500/20 text-amber-400",
@@ -609,6 +609,15 @@ export default function CreatePage() {
                   ready: "Ready",
                   failed: "Failed",
                 };
+                const styleDisplayMap: Record<string, string> = {
+                  cinematic: "Cinematic",
+                  anime: "Anime",
+                  animated: "Animated",
+                  pixar: "Pixar",
+                  "3d_animated": "Pixar",
+                  "2d_animated": "Animated",
+                  "2d_anime": "Anime",
+                };
                 const colorClass = statusColors[draft.status] || "bg-white/10 text-white/60";
                 const label = statusLabel[draft.status] || draft.status;
                 const updatedDate = new Date(draft.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -617,19 +626,34 @@ export default function CreatePage() {
                   <button
                     key={draft.id}
                     onClick={() => router.push(`/create-episode?g=${draft.id}`)}
-                    className="bg-[#0F0E13] border border-[#1A1E2F] rounded-xl p-4 text-left hover:border-[#B8B6FC]/40 transition-colors group"
+                    className="bg-[#0F0E13] border border-[#1A1E2F] rounded-xl overflow-hidden text-left hover:border-[#B8B6FC]/40 transition-colors group"
                   >
-                    <div className="flex items-start justify-between mb-2">
-                      <h3 className="text-white font-medium text-sm truncate flex-1 mr-2 group-hover:text-[#B8B6FC] transition-colors">
+                    {/* Portrait thumbnail */}
+                    <div className="w-full aspect-[9/16] bg-[#1A1E2F] flex items-center justify-center overflow-hidden">
+                      {draft.thumbnail_base64 ? (
+                        <img
+                          src={draft.thumbnail_base64.startsWith("data:") ? draft.thumbnail_base64 : `data:image/png;base64,${draft.thumbnail_base64}`}
+                          alt={draft.title}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="#444">
+                          <path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z" />
+                        </svg>
+                      )}
+                    </div>
+                    {/* Info */}
+                    <div className="p-3">
+                      <h3 className="text-white font-medium text-sm truncate group-hover:text-[#B8B6FC] transition-colors mb-2">
                         {draft.title || "Untitled"}
                       </h3>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 ${colorClass}`}>
-                        {label}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-white/40">
-                      <span>{draft.style}</span>
-                      <span>Updated {updatedDate}</span>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-white/40">{styleDisplayMap[draft.style] || draft.style}</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${colorClass}`}>
+                          {label}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-white/30 mt-1">Updated {updatedDate}</p>
                     </div>
                   </button>
                 );
@@ -664,7 +688,8 @@ export default function CreatePage() {
         onClose={() => setShowEpisodeStoryPicker(false)}
         onSelect={(storyId) => {
           setShowEpisodeStoryPicker(false);
-          router.push(`/create-episode?storyId=${storyId}`);
+          setSelectedStoryIdForEpisode(storyId);
+          setShowCreateEpisodeModal(true);
         }}
         stories={stories.map(s => ({
           id: s.id,
@@ -674,6 +699,25 @@ export default function CreatePage() {
         }))}
         title="Choose a Story"
         description="Which story should this episode belong to?"
+      />
+
+      {/* Episode Details Modal (after story selection) */}
+      <CreateEpisodeModal
+        isOpen={showCreateEpisodeModal}
+        onClose={() => setShowCreateEpisodeModal(false)}
+        onSave={(episode) => {
+          setShowCreateEpisodeModal(false);
+          const params = new URLSearchParams({
+            storyId: selectedStoryIdForEpisode!,
+            name: episode.name,
+            number: String(episode.number),
+            isFree: String(episode.isFree),
+          });
+          router.push(`/create-episode?${params.toString()}`);
+        }}
+        nextEpisodeNumber={
+          (stories.find(s => s.id === selectedStoryIdForEpisode)?.episodeCount || 0) + 1
+        }
       />
     </div>
   );

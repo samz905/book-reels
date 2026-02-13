@@ -21,17 +21,17 @@ STYLE_PREFIXES = {
         "shallow depth of field, natural lighting, film grain, "
         "professional cinematography"
     ),
-    "2d_anime": (
+    "anime": (
         "Studio Ghibli anime style, warm watercolor aesthetic, "
         "soft lighting, detailed expressive eyes, lush painted backgrounds, "
         "Miyazaki-inspired, gentle cel-shading"
     ),
-    "2d_animated": (
+    "animated": (
         "2D animated, illustrated style, hand-drawn aesthetic, "
         "bold outlines, stylized, expressive, graphic shapes, "
         "flat lighting with soft shadows"
     ),
-    "3d_animated": (
+    "pixar": (
         "3D animated, Pixar-style rendering, stylized realism, "
         "expressive features, vibrant colors, clean lighting, appealing design"
     ),

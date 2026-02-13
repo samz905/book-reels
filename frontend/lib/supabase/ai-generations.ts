@@ -9,6 +9,7 @@ export interface AIGenerationSummary {
   title: string;
   style: string;
   status: string;
+  story_id: string | null;
   film_id: string | null;
   thumbnail_base64: string | null;
   cost_total: number;
@@ -49,13 +50,16 @@ export async function createGeneration(
   id: string,
   title: string,
   style: string,
-  state: Record<string, unknown> = {}
+  state: Record<string, unknown> = {},
+  storyId?: string | null
 ): Promise<AIGenerationSummary | null> {
   const supabase = getSupabase();
+  const row: Record<string, unknown> = { id, title, style, state };
+  if (storyId) row.story_id = storyId;
   const { data, error } = await supabase
     .from("ai_generations")
-    .insert({ id, title, style, state })
-    .select("id, title, style, status, film_id, thumbnail_base64, cost_total, created_at, updated_at")
+    .insert(row)
+    .select("id, title, style, status, story_id, film_id, thumbnail_base64, cost_total, created_at, updated_at")
     .single();
   if (error) {
     console.error("createGeneration error:", error);
@@ -115,7 +119,7 @@ export async function listGenerations(limit = 50): Promise<AIGenerationSummary[]
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("ai_generations")
-    .select("id, title, style, status, film_id, thumbnail_base64, cost_total, created_at, updated_at")
+    .select("id, title, style, status, story_id, film_id, thumbnail_base64, cost_total, created_at, updated_at")
     .order("updated_at", { ascending: false })
     .limit(limit);
   if (error) {

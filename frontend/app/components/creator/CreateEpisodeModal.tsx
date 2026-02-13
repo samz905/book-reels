@@ -166,7 +166,7 @@ export default function CreateEpisodeModal({
         <div className="mb-6">
           <label className="block text-white text-base mb-3">Thumbnail (Optional)</label>
           <div className="flex items-center gap-4">
-            <div className="w-[120px] h-[80px] bg-[#262626] rounded-lg flex items-center justify-center overflow-hidden">
+            <div className="w-[120px] aspect-[9/16] bg-[#262626] rounded-lg flex items-center justify-center overflow-hidden">
               {thumbnail ? (
                 <img src={thumbnail} alt="Thumbnail" className="w-full h-full object-cover" />
               ) : (

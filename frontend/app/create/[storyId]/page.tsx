@@ -6,6 +6,7 @@ import Image from "next/image";
 import Header from "@/app/components/Header";
 import Footer from "@/app/components/Footer";
 import EpisodeList from "@/app/components/creator/EpisodeList";
+import CreateEpisodeModal from "@/app/components/creator/CreateEpisodeModal";
 import AddBookModal from "@/app/components/creator/AddBookModal";
 import EditStoryModal from "@/app/components/creator/EditStoryModal";
 import LibraryCarousel from "@/app/components/creator/LibraryCarousel";
@@ -54,6 +55,7 @@ export default function StoryManagementPage() {
 
   // Modal states
   const [showEpisodes, setShowEpisodes] = useState(false);
+  const [showCreateEpisodeModal, setShowCreateEpisodeModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showAddBookModal, setShowAddBookModal] = useState(false);
   const [editingEbook, setEditingEbook] = useState<Ebook | null>(null);
@@ -130,17 +132,6 @@ export default function StoryManagementPage() {
       alert("Failed to update story. Please try again.");
     } finally {
       setIsEditSaving(false);
-    }
-  };
-
-  const handleTogglePublish = async () => {
-    if (!story) return;
-    const newStatus = story.status === "draft" ? "published" : "draft";
-    try {
-      await updateStory(story.id, { status: newStatus });
-      setStory({ ...story, status: newStatus });
-    } catch (err) {
-      console.error("Error toggling publish:", err);
     }
   };
 
@@ -388,7 +379,6 @@ export default function StoryManagementPage() {
   }
 
   const freeCount = 4;
-  const canPublish = story.episodes.length > 0 || story.ebooks.length > 0;
 
   return (
     <div className="min-h-screen bg-black relative overflow-clip">
@@ -411,7 +401,7 @@ export default function StoryManagementPage() {
           {/* Action buttons row */}
           <div className="flex items-center justify-end gap-3 mb-4">
             <button
-              onClick={() => router.push(`/create-episode?storyId=${storyId}`)}
+              onClick={() => setShowCreateEpisodeModal(true)}
               className="px-4 py-2 border border-[#1ED760] text-[#1ED760] rounded-lg text-sm font-medium hover:bg-[#1ED760]/10 transition-colors"
             >
               Create New Episode
@@ -537,37 +527,6 @@ export default function StoryManagementPage() {
                 <EpisodeList episodes={story.episodes} freeCount={freeCount} />
               )}
 
-              {/* Publish/Unpublish */}
-              <div className="flex items-center justify-end gap-2 mt-4">
-                {story.status === "draft" ? (
-                  <>
-                    <button
-                      onClick={handleTogglePublish}
-                      disabled={!canPublish}
-                      className="text-[#1ED760] font-semibold hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Publish
-                    </button>
-                    {!canPublish && (
-                      <span className="text-[#ADADAD] text-sm">
-                        Add an episode or ebook to publish.
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <button
-                      onClick={handleTogglePublish}
-                      className="text-[#FF8C00] font-semibold hover:underline"
-                    >
-                      Unpublish
-                    </button>
-                    <span className="text-[#ADADAD] text-sm">
-                      All episodes and books will be unpublished
-                    </span>
-                  </>
-                )}
-              </div>
             </div>
           </div>
 
@@ -707,6 +666,22 @@ export default function StoryManagementPage() {
       <Footer />
 
       {/* Modals */}
+      <CreateEpisodeModal
+        isOpen={showCreateEpisodeModal}
+        onClose={() => setShowCreateEpisodeModal(false)}
+        onSave={(episode) => {
+          setShowCreateEpisodeModal(false);
+          const params = new URLSearchParams({
+            storyId: storyId as string,
+            name: episode.name,
+            number: String(episode.number),
+            isFree: String(episode.isFree),
+          });
+          router.push(`/create-episode?${params.toString()}`);
+        }}
+        nextEpisodeNumber={story.episodes.length + 1}
+      />
+
       <EditStoryModal
         isOpen={showEditModal}
         story={story}

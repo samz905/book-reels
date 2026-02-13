@@ -57,8 +57,9 @@ router = APIRouter()
 
 STYLE_PREFIXES = {
     "cinematic": "Cinematic, photorealistic, 35mm film, shallow depth of field, natural lighting.",
-    "3d_animated": "3D animated, Pixar-style, stylized realism, expressive, vibrant colors.",
-    "2d_animated": "2D animated, hand-drawn, bold outlines, stylized, flat lighting.",
+    "anime": "Studio Ghibli anime style, warm watercolor aesthetic, soft lighting, Miyazaki-inspired, cel-shading.",
+    "animated": "2D animated, hand-drawn, bold outlines, stylized, flat lighting.",
+    "pixar": "3D animated, Pixar-style, stylized realism, expressive, vibrant colors.",
 }
 
 

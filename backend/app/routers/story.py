@@ -46,8 +46,9 @@ BEAT_TIME_RANGES = {
 
 STYLE_DISPLAY = {
     "cinematic": "Cinematic (photorealistic, shot on 35mm film)",
-    "3d_animated": "3D Animated (Pixar-style rendering)",
-    "2d_animated": "2D Animated (illustrated, hand-drawn aesthetic)",
+    "anime": "Anime (Studio Ghibli-style aesthetic)",
+    "animated": "Animated (western animated style)",
+    "pixar": "Pixar (3D Pixar-style rendering)",
 }
 
 STORY_SYSTEM_PROMPT = """You are an 8-Scene Vertical Episode Generator designed for maximum viewer retention.
@@ -236,7 +237,7 @@ class Story(BaseModel):
 
 class GenerateStoryRequest(BaseModel):
     idea: str
-    style: Literal["cinematic", "3d_animated", "2d_animated"]
+    style: Literal["cinematic", "anime", "animated", "pixar"]
     # No duration - fixed at 1 minute
 
 
@@ -247,14 +248,14 @@ class GenerateStoryResponse(BaseModel):
 
 class RegenerateStoryRequest(BaseModel):
     idea: str
-    style: Literal["cinematic", "3d_animated", "2d_animated"]
+    style: Literal["cinematic", "anime", "animated", "pixar"]
     feedback: Optional[str] = None
     # No duration - fixed at 1 minute
 
 
 class ParseScriptRequest(BaseModel):
     script: str
-    style: Literal["cinematic", "3d_animated", "2d_animated"] = "cinematic"
+    style: Literal["cinematic", "anime", "animated", "pixar"] = "cinematic"
 
 
 class RefineBeatRequest(BaseModel):
@@ -802,7 +803,7 @@ async def generate_story(request: GenerateStoryRequest):
     """
     Generate story beats from an idea.
 
-    Input: { "idea": "...", "style": "cinematic"|"3d_animated"|"2d_animated" }
+    Input: { "idea": "...", "style": "cinematic"|"anime"|"animated"|"pixar" }
     Output: { "story": { "id": "...", "title": "...", "characters": [...], "setting": {...}, "beats": [...] } }
 
     Note: Duration is fixed at 1 minute (8 shots x 8 seconds = 64 seconds)
@@ -868,7 +869,7 @@ async def parse_script(request: ParseScriptRequest):
     """
     Parse a user-provided script into structured story beats.
 
-    Input: { "script": "raw script text...", "style": "cinematic"|"3d_animated"|"2d_animated" }
+    Input: { "script": "raw script text...", "style": "cinematic"|"anime"|"animated"|"pixar" }
     Output: { "story": { "id": "...", "title": "...", "characters": [...], "beats": [...] }, "cost_usd": ... }
     """
     try:

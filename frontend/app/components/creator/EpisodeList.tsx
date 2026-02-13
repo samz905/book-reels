@@ -13,9 +13,7 @@ export default function EpisodeList({ episodes, freeCount }: EpisodeListProps) {
       {episodes.map((episode) => (
         <div
           key={episode.id}
-          className={`flex items-center gap-3 py-2.5 px-3 ${
-            episode.number === 1 ? "border-b-2 border-[#ADADAD] rounded-lg" : ""
-          }`}
+          className="flex items-center gap-3 py-2.5 px-3 rounded-lg border-b-2 border-transparent hover:border-[#ADADAD] transition-colors cursor-pointer"
         >
           {/* Play circle icon */}
           <svg
