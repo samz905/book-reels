@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { StoryCharacterFE } from "@/app/data/mockCreatorData";
 import { VISUAL_STYLES } from "@/app/data/mockCreatorData";
-import { generateCharacterImage } from "@/lib/api/creator";
+import { generateCharacterImage, GenerationContext } from "@/lib/api/creator";
 
 interface CharacterModalProps {
   isOpen: boolean;
@@ -22,6 +22,11 @@ interface CharacterModalProps {
   character?: StoryCharacterFE;
   existingCharacters?: StoryCharacterFE[];
   isSaving?: boolean;
+  hideRole?: boolean;
+  lockedStyle?: string;
+  readOnlyFields?: string[];
+  /** When provided, image generation is tracked via gen_jobs for persistence */
+  generationContext?: GenerationContext;
 }
 
 export default function CharacterModal({
@@ -31,6 +36,10 @@ export default function CharacterModal({
   character,
   existingCharacters = [],
   isSaving = false,
+  hideRole = true,
+  lockedStyle,
+  readOnlyFields = [],
+  generationContext,
 }: CharacterModalProps) {
   const isEditing = !!character;
 
@@ -62,7 +71,7 @@ export default function CharacterModal({
         setGender(character.gender);
         setDescription(character.description);
         setRole(character.role);
-        setVisualStyle(character.visualStyle || "cinematic");
+        setVisualStyle(lockedStyle || character.visualStyle || "cinematic");
         setRefCharId("");
         setImageBase64(character.imageBase64);
         setImageMimeType(character.imageMimeType);
@@ -72,7 +81,7 @@ export default function CharacterModal({
         setGender("");
         setDescription("");
         setRole("supporting");
-        setVisualStyle("cinematic");
+        setVisualStyle(lockedStyle || "cinematic");
         setRefCharId("");
         setImageBase64(null);
         setImageMimeType("image/png");
@@ -129,16 +138,19 @@ export default function CharacterModal({
         ? existingCharacters.find((c) => c.id === refCharId)
         : null;
 
-      const result = await generateCharacterImage({
-        name: name.trim(),
-        age: age.trim(),
-        gender: gender || undefined,
-        description: description.trim(),
-        visual_style: refChar ? undefined : visualStyle,
-        reference_image: refChar?.imageBase64
-          ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
-          : undefined,
-      });
+      const result = await generateCharacterImage(
+        {
+          name: name.trim(),
+          age: age.trim(),
+          gender: gender || undefined,
+          description: description.trim(),
+          visual_style: refChar ? undefined : (lockedStyle || visualStyle),
+          reference_image: refChar?.imageBase64
+            ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
+            : undefined,
+        },
+        generationContext
+      );
 
       setImageBase64(result.image_base64);
       setImageMimeType(result.mime_type);
@@ -255,7 +267,8 @@ export default function CharacterModal({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full h-12 bg-[#262626] rounded-xl px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC]"
+              disabled={readOnlyFields.includes("name")}
+              className={`w-full h-12 bg-[#262626] rounded-xl px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] ${readOnlyFields.includes("name") ? "opacity-50 cursor-not-allowed" : ""}`}
               placeholder="e.g. Arya"
             />
           </div>
@@ -265,7 +278,8 @@ export default function CharacterModal({
               type="text"
               value={age}
               onChange={(e) => setAge(e.target.value)}
-              className="w-full h-12 bg-[#262626] rounded-xl px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC]"
+              disabled={readOnlyFields.includes("age")}
+              className={`w-full h-12 bg-[#262626] rounded-xl px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] ${readOnlyFields.includes("age") ? "opacity-50 cursor-not-allowed" : ""}`}
               placeholder="e.g. 25"
             />
           </div>
@@ -277,7 +291,8 @@ export default function CharacterModal({
           <select
             value={gender}
             onChange={(e) => setGender(e.target.value)}
-            className="w-full h-12 bg-[#262626] rounded-xl px-4 text-white focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] appearance-none cursor-pointer"
+            disabled={readOnlyFields.includes("gender")}
+            className={`w-full h-12 bg-[#262626] rounded-xl px-4 text-white focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] appearance-none cursor-pointer ${readOnlyFields.includes("gender") ? "opacity-50 cursor-not-allowed" : ""}`}
           >
             <option value="">Select gender</option>
             <option value="male">Male</option>
@@ -292,7 +307,8 @@ export default function CharacterModal({
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="w-full h-[100px] bg-[#262626] rounded-xl px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none"
+            disabled={readOnlyFields.includes("description")}
+            className={`w-full h-[100px] bg-[#262626] rounded-xl px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none ${readOnlyFields.includes("description") ? "opacity-50 cursor-not-allowed" : ""}`}
             placeholder="Describe their appearance, clothing, distinctive features..."
           />
         </div>
@@ -318,8 +334,8 @@ export default function CharacterModal({
           </div>
         )}
 
-        {/* Visual Style (hidden when ref char selected) */}
-        {!refCharId && (
+        {/* Visual Style (hidden when ref char selected OR lockedStyle is set) */}
+        {!refCharId && !lockedStyle && (
           <div className="mb-4">
             <label className="block text-white text-sm mb-2">Visual Style</label>
             <div className="flex flex-wrap gap-2">
@@ -340,19 +356,21 @@ export default function CharacterModal({
           </div>
         )}
 
-        {/* Role */}
-        <div className="mb-6">
-          <label className="block text-white text-sm mb-2">Role</label>
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="w-full h-12 bg-[#262626] rounded-xl px-4 text-white focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] appearance-none cursor-pointer"
-          >
-            <option value="protagonist">Protagonist</option>
-            <option value="antagonist">Antagonist</option>
-            <option value="supporting">Supporting</option>
-          </select>
-        </div>
+        {/* Role — hidden on story dashboard, shown in episode context */}
+        {!hideRole && (
+          <div className="mb-6">
+            <label className="block text-white text-sm mb-2">Role</label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              className="w-full h-12 bg-[#262626] rounded-xl px-4 text-white focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] appearance-none cursor-pointer"
+            >
+              <option value="protagonist">Protagonist</option>
+              <option value="antagonist">Antagonist</option>
+              <option value="supporting">Supporting</option>
+            </select>
+          </div>
+        )}
 
         {/* Action buttons */}
         <div className="flex items-center justify-end gap-3">

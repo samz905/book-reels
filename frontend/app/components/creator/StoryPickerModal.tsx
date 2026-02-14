@@ -73,9 +73,18 @@ export default function StoryPickerModal({
         {/* Story list */}
         <div className="overflow-y-auto flex-1 space-y-2">
           {stories.length === 0 ? (
-            <p className="text-[#ADADAD] text-sm text-center py-8">
-              No stories yet. Create a story first.
-            </p>
+            <div className="text-center py-8">
+              <p className="text-[#ADADAD] text-sm mb-3">
+                No stories yet. Create a story first.
+              </p>
+              <a
+                href="/create"
+                className="inline-block px-4 py-2 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                style={{ background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)" }}
+              >
+                Create a Story
+              </a>
+            </div>
           ) : (
             stories.map((story) => (
               <button

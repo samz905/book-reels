@@ -51,9 +51,9 @@ export default function CharacterCard({ character, onEdit, onDelete }: Character
       {/* Info */}
       <div className="mt-2">
         <p className="text-white text-sm font-medium truncate">{character.name}</p>
-        <p className="text-[#ADADAD] text-xs truncate">
-          Role: {character.role.charAt(0).toUpperCase() + character.role.slice(1)}
-        </p>
+        {character.description && (
+          <p className="text-[#ADADAD] text-xs truncate">{character.description}</p>
+        )}
       </div>
     </div>
   );

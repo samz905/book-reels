@@ -27,7 +27,6 @@ export interface SeedEpisode {
   number: number;
   name: string;
   is_free: boolean;
-  thumbnail_url: string;
   media_url: string;
   status: "draft" | "published";
 }
@@ -42,15 +41,12 @@ export interface SeedEbook {
 // Helper to generate picsum URLs with consistent seeds
 const avatar = (seed: string) => `https://picsum.photos/seed/${seed}-avatar/200/200`;
 const cover = (seed: string) => `https://picsum.photos/seed/${seed}-cover/400/600`;
-const thumbnail = (seed: string, ep: number) => `https://picsum.photos/seed/${seed}-ep${ep}/320/180`;
-
 // Generate episodes for a story
 function generateEpisodes(storySeed: string, count: number, freeCount: number = 2): SeedEpisode[] {
   return Array.from({ length: count }, (_, i) => ({
     number: i + 1,
     name: `Episode ${i + 1}`,
     is_free: i < freeCount,
-    thumbnail_url: thumbnail(storySeed, i + 1),
     media_url: `https://placeholder.media/${storySeed}/episode-${i + 1}.mp4`,
     status: "published" as const,
   }));

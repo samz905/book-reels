@@ -113,7 +113,6 @@ export interface Database {
           number: number;
           name: string;
           is_free: boolean;
-          thumbnail_url: string | null;
           media_url: string | null;
           status: ContentStatus;
           created_at: string;
@@ -125,7 +124,6 @@ export interface Database {
           number: number;
           name: string;
           is_free?: boolean;
-          thumbnail_url?: string | null;
           media_url?: string | null;
           status?: ContentStatus;
           created_at?: string;
@@ -135,7 +133,6 @@ export interface Database {
           number?: number;
           name?: string;
           is_free?: boolean;
-          thumbnail_url?: string | null;
           media_url?: string | null;
           status?: ContentStatus;
           updated_at?: string;

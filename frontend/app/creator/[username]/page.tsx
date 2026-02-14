@@ -22,7 +22,6 @@ interface ApiEpisode {
   number: number;
   name: string;
   is_free: boolean;
-  thumbnail_url: string | null;
   status: string;
 }
 
@@ -92,7 +91,6 @@ function transformCreatorData(api: ApiCreatorResponse): PublicCreatorProfile {
       number: ep.number,
       name: ep.name,
       isFree: ep.is_free,
-      thumbnail: ep.thumbnail_url || undefined,
       status: ep.status as "draft" | "published" | undefined,
     })),
     ebooks: (story.ebooks || []).map((eb): Ebook => ({

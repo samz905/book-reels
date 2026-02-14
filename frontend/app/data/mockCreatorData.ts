@@ -29,7 +29,6 @@ export interface Episode {
   number: number;
   name: string;
   isFree: boolean;
-  thumbnail?: string;
   status?: "draft" | "published";
 }
 
@@ -157,7 +156,6 @@ const createEpisodes = (count: number, storyId: string): Episode[] => {
     number: i + 1,
     name: "Episode name",
     isFree: i < 3, // First 3 episodes are free
-    thumbnail: `https://picsum.photos/seed/${storyId}-ep${i + 1}/300/200`,
   }));
 };
 

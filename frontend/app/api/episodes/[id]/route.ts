@@ -96,7 +96,6 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   const allowedFields: (keyof EpisodeUpdate)[] = [
     "name",
     "is_free",
-    "thumbnail_url",
     "media_url",
     "status",
     "number",

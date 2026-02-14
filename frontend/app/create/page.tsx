@@ -37,10 +37,6 @@ import {
   mapDbProfileToFrontend,
   mapDbSettingsToFrontend,
 } from "@/lib/api/creator";
-import {
-  listGenerations as supaListGenerations,
-  AIGenerationSummary,
-} from "@/lib/supabase/ai-generations";
 
 export default function CreatePage() {
   const router = useRouter();
@@ -64,8 +60,6 @@ export default function CreatePage() {
   const [selectedStoryIdForEpisode, setSelectedStoryIdForEpisode] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isAddingBook, setIsAddingBook] = useState(false);
-  const [episodeDrafts, setEpisodeDrafts] = useState<AIGenerationSummary[]>([]);
-
   // Fetch data on mount when user is authenticated
   useEffect(() => {
     async function loadData() {
@@ -103,9 +97,9 @@ export default function CreatePage() {
         // Fetch creator settings
         const settingsData = await getCreatorSettings();
 
-        // Compute episode count
+        // Compute episode count (published only)
         const totalEpisodes = storiesData.reduce(
-          (sum, s) => sum + s.episodes.length,
+          (sum, s) => sum + s.episodeCount,
           0
         );
 
@@ -121,13 +115,6 @@ export default function CreatePage() {
         setStories(storiesData);
         setSubscription(mappedSubscription);
 
-        // Fetch episode drafts (AI generations)
-        try {
-          const drafts = await supaListGenerations(20);
-          setEpisodeDrafts(drafts);
-        } catch {
-          // Non-critical — silently ignore
-        }
       } catch (err) {
         console.error("Error loading creator data:", err);
         setError(err instanceof Error ? err.message : "Failed to load data");
@@ -251,26 +238,19 @@ export default function CreatePage() {
         status: "draft",
       });
 
-      // Update the story's episodes
+      // Update the story's episodes (episodeCount only changes for published eps)
       setStories((prev) =>
         prev.map((s) =>
           s.id === storyId
             ? {
                 ...s,
                 episodes: [...s.episodes, newEpisode],
-                episodeCount: s.episodeCount + 1,
               }
             : s
         )
       );
 
-      // Update profile episode count
-      if (profile) {
-        setProfile({
-          ...profile,
-          episodesCount: profile.episodesCount + 1,
-        });
-      }
+      // Don't increment profile episode count for drafts — only published eps count
 
       return newEpisode;
     } catch (err) {
@@ -577,90 +557,6 @@ export default function CreatePage() {
           </div>
         )}
 
-        {/* Episode Drafts section */}
-        {episodeDrafts.length > 0 && (
-          <div className="mt-8">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-white">My Episode Drafts</h2>
-              <button
-                onClick={() => setShowEpisodeStoryPicker(true)}
-                className="text-sm text-[#B8B6FC] hover:text-white transition-colors"
-              >
-                + New Episode
-              </button>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-              {episodeDrafts.map((draft) => {
-                const statusColors: Record<string, string> = {
-                  drafting: "bg-amber-500/20 text-amber-400",
-                  moodboard: "bg-blue-500/20 text-blue-400",
-                  key_moments: "bg-blue-500/20 text-blue-400",
-                  preflight: "bg-purple-500/20 text-purple-400",
-                  filming: "bg-orange-500/20 text-orange-400",
-                  ready: "bg-green-500/20 text-green-400",
-                  failed: "bg-red-500/20 text-red-400",
-                };
-                const statusLabel: Record<string, string> = {
-                  drafting: "Script",
-                  moodboard: "Moodboard",
-                  key_moments: "Key Moments",
-                  preflight: "Pre-flight",
-                  filming: "Filming",
-                  ready: "Ready",
-                  failed: "Failed",
-                };
-                const styleDisplayMap: Record<string, string> = {
-                  cinematic: "Cinematic",
-                  anime: "Anime",
-                  animated: "Animated",
-                  pixar: "Pixar",
-                  "3d_animated": "Pixar",
-                  "2d_animated": "Animated",
-                  "2d_anime": "Anime",
-                };
-                const colorClass = statusColors[draft.status] || "bg-white/10 text-white/60";
-                const label = statusLabel[draft.status] || draft.status;
-                const updatedDate = new Date(draft.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-
-                return (
-                  <button
-                    key={draft.id}
-                    onClick={() => router.push(`/create-episode?g=${draft.id}`)}
-                    className="bg-[#0F0E13] border border-[#1A1E2F] rounded-xl overflow-hidden text-left hover:border-[#B8B6FC]/40 transition-colors group"
-                  >
-                    {/* Portrait thumbnail */}
-                    <div className="w-full aspect-[9/16] bg-[#1A1E2F] flex items-center justify-center overflow-hidden">
-                      {draft.thumbnail_base64 ? (
-                        <img
-                          src={draft.thumbnail_base64.startsWith("data:") ? draft.thumbnail_base64 : `data:image/png;base64,${draft.thumbnail_base64}`}
-                          alt={draft.title}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="#444">
-                          <path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z" />
-                        </svg>
-                      )}
-                    </div>
-                    {/* Info */}
-                    <div className="p-3">
-                      <h3 className="text-white font-medium text-sm truncate group-hover:text-[#B8B6FC] transition-colors mb-2">
-                        {draft.title || "Untitled"}
-                      </h3>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] text-white/40">{styleDisplayMap[draft.style] || draft.style}</span>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${colorClass}`}>
-                          {label}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-white/30 mt-1">Updated {updatedDate}</p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </main>
 
       <Footer />
@@ -716,7 +612,7 @@ export default function CreatePage() {
           router.push(`/create-episode?${params.toString()}`);
         }}
         nextEpisodeNumber={
-          (stories.find(s => s.id === selectedStoryIdForEpisode)?.episodeCount || 0) + 1
+          (stories.find(s => s.id === selectedStoryIdForEpisode)?.episodes.length || 0) + 1
         }
       />
     </div>

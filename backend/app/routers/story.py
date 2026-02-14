@@ -65,13 +65,15 @@ GLOBAL CONSTRAINTS (NON-NEGOTIABLE):
 1. Do NOT include exposition.
 2. Do NOT include backstory explanations.
 3. Every scene must introduce: new tension OR new information OR a power shift.
-4. Emotional intensity must increase until Scene 4.
-5. Scenes 5-7 must escalate consequences.
-6. Scene 8 must introduce a new unanswered threat.
-7. Keep dialogue short and sharp (1-2 lines max per scene).
-8. Maintain visual consistency with the approved style/vibe.
-9. Each scene must contain exactly ONE emotional move.
-10. Do not label scenes with structural names (hook, rise, etc).
+4. ALL conflict must be between characters ON-SCREEN. Never have characters discuss off-screen threats as the main tension.
+5. Each scene must have enough physical action and visual detail to fill its full duration (6-9 seconds). A single line of action is not enough.
+6. Emotional intensity must increase until Scene 4.
+7. Scenes 5-7 must escalate consequences.
+8. Scene 8 must introduce a new unanswered threat.
+9. Keep dialogue short and sharp (1-2 lines max per scene).
+10. Maintain visual consistency with the approved style/vibe.
+11. Each scene must contain exactly ONE emotional move.
+12. Do not label scenes with structural names (hook, rise, etc).
 
 STRUCTURAL BLUEPRINT (follow strictly):
 
@@ -92,7 +94,7 @@ Scene 3 — Pressure Intensifies (6-9s)
 
 Scene 4 — Peak Emotional Moment (6-9s)
   Biggest emotional payoff. Must include ONE of: Reveal, Betrayal, Power move, Kiss, Humiliation, Discovery, Explicit threat.
-  This is the highest intensity point in the episode.
+  This is the highest intensity point in the episode. The peak must HAPPEN on-screen — not be discussed or referenced.
   Visual: Clear framing shift (close-up OR dramatic reveal OR reversal of spatial dominance).
 
 Scene 5 — Impact Reaction (6-9s)
@@ -112,6 +114,7 @@ Scene 7 — Escalation to Edge (6-9s)
 Scene 8 — Cliffhanger (6-9s)
   End with a worse unanswered question.
   A new threat OR hidden truth revealed OR dangerous arrival OR final line that destabilizes everything.
+  The cliffhanger must be visible or audible on-screen — not an off-screen reference.
   Hard cut. No resolution. No emotional closure.
 
 VIBE APPLICATION RULES:
@@ -133,7 +136,7 @@ OUTPUT: Valid JSON only. No markdown, no explanation."""
 class Ingredients(BaseModel):
     """Story ingredients extracted from user idea (INTERNAL ONLY)."""
     protagonist: str
-    antagonist: str
+    conflict_source: Optional[str] = None
     immediate_tension: str
     secret: str
     spike_moment: str
@@ -147,6 +150,25 @@ class Character(BaseModel):
     age: str  # e.g. "mid-30s", "late 20s", "early 50s"
     appearance: str
     role: Literal["protagonist", "antagonist", "supporting"]
+    origin: Optional[Literal["story", "ai"]] = "ai"  # "story" = pre-selected from library
+
+
+class PreSelectedCharacter(BaseModel):
+    """Character pre-selected from the story library before script generation."""
+    id: str
+    name: str
+    gender: str
+    age: str
+    appearance: str
+    role: Literal["protagonist", "antagonist", "supporting"]
+
+
+class PreSelectedLocation(BaseModel):
+    """Location pre-selected from the story library before script generation."""
+    id: str
+    name: str
+    description: str
+    atmosphere: str
 
 
 class Setting(BaseModel):
@@ -225,7 +247,7 @@ class Scene(BaseModel):
 
 class Story(BaseModel):
     id: str
-    title: str
+    title: str = ""  # Not used for episode naming — episode name set by user
     ingredients: Optional[Ingredients] = None
     characters: List[Character]
     setting: Optional[Setting] = None       # DEPRECATED
@@ -238,6 +260,8 @@ class Story(BaseModel):
 class GenerateStoryRequest(BaseModel):
     idea: str
     style: Literal["cinematic", "anime", "animated", "pixar"]
+    characters: Optional[List[PreSelectedCharacter]] = None
+    location: Optional[PreSelectedLocation] = None
     # No duration - fixed at 1 minute
 
 
@@ -250,6 +274,8 @@ class RegenerateStoryRequest(BaseModel):
     idea: str
     style: Literal["cinematic", "anime", "animated", "pixar"]
     feedback: Optional[str] = None
+    characters: Optional[List[PreSelectedCharacter]] = None
+    location: Optional[PreSelectedLocation] = None
     # No duration - fixed at 1 minute
 
 
@@ -463,7 +489,13 @@ def beat_to_scene(beat_data: dict, scene_num: int) -> Scene:
     )
 
 
-def build_story_prompt(idea: str, style: str, feedback: Optional[str] = None) -> str:
+def build_story_prompt(
+    idea: str,
+    style: str,
+    feedback: Optional[str] = None,
+    characters: Optional[List[PreSelectedCharacter]] = None,
+    location: Optional[PreSelectedLocation] = None,
+) -> str:
     """Build the user prompt for story generation using Playbook structural blueprint."""
     style_display = STYLE_DISPLAY[style]
 
@@ -474,17 +506,47 @@ STYLE: {style_display}
 
 STEP 1 — Extract story ingredients:
 - Protagonist: Who we follow
-- Antagonist/Opposing Force: Source of conflict
+- Conflict Source: What person, force, or situation directly opposes the protagonist (must be visible on-screen)
 - Immediate Tension: What's at stake RIGHT NOW
 - Hidden Information/Secret: What's being concealed
 - Peak Moment: The emotional spike (Scene 4)
 - Cliff Problem: What new danger emerges at the end
 
 STEP 2 — Create characters:
-For each: id (snake_case), name, gender, age (e.g. "mid-30s"), appearance (4-5 specific visual details we will SEE on camera), role (protagonist/antagonist/supporting).
+For each: id (snake_case), name, gender, age (e.g. "mid-30s"), appearance (4-5 specific visual details we will SEE on camera), role (protagonist/antagonist/supporting)."""
+
+    # Inject pre-selected characters
+    if characters:
+        char_lines = []
+        for c in characters:
+            char_lines.append(
+                f'  - id: "{c.id}", name: "{c.name}", gender: "{c.gender}", '
+                f'age: "{c.age}", appearance: "{c.appearance}", role: "{c.role}"'
+            )
+        prompt += f"""
+
+PRE-SELECTED CHARACTERS (YOU MUST USE THESE EXACTLY — keep their id, name, gender, age, and role unchanged. You may enrich their appearance field):
+{chr(10).join(char_lines)}
+Create additional supporting characters ONLY if the story absolutely requires them. Any additional characters must have origin "ai"."""
+
+    prompt += """
 
 STEP 3 — Create locations:
-For each: id (e.g. "loc_1"), name (short name like "Kitchen" or "Hospital Suite"), description (specific visual details — lighting, furniture, textures), atmosphere (emotional tone).
+For each: id (e.g. "loc_1"), name (short name like "Kitchen" or "Hospital Suite"), description (specific visual details — lighting, furniture, textures), atmosphere (emotional tone)."""
+
+    # Inject pre-selected location + single-location constraint
+    if location:
+        prompt += f"""
+
+PRE-SELECTED LOCATION (USE THIS for ALL 8 scenes — do NOT create additional locations):
+  - id: "{location.id}", name: "{location.name}", description: "{location.description}", atmosphere: "{location.atmosphere}"
+Every scene's setting_id MUST be "{location.id}". This follows the Vibe Application Rules: consistent environment across all scenes."""
+    else:
+        prompt += """
+
+IMPORTANT: Create exactly ONE location. All 8 scenes MUST use the same location (same setting_id). This follows the Vibe Application Rules: lighting, color palette, environment, and camera style remain consistent. Only emotional intensity changes."""
+
+    prompt += """
 
 STEP 4 — Write exactly 8 scenes following the structural blueprint.
 For each scene provide ALL of these fields:
@@ -501,40 +563,38 @@ For each scene provide ALL of these fields:
 - scene_change: true if location differs from previous scene
 
 OUTPUT FORMAT (JSON):
-{{
-  "title": "Provocative 2-4 word title",
-
-  "ingredients": {{
+{
+  "ingredients": {
     "protagonist": "...",
-    "antagonist": "...",
+    "conflict_source": "...",
     "immediate_tension": "...",
     "secret": "...",
     "spike_moment": "...",
     "cliff_problem": "..."
-  }},
+  },
 
   "characters": [
-    {{
+    {
       "id": "unique_id",
       "name": "Name",
       "gender": "male or female",
       "age": "rough age like mid-30s",
       "appearance": "4-5 specific visual details",
       "role": "protagonist|antagonist|supporting"
-    }}
+    }
   ],
 
   "locations": [
-    {{
+    {
       "id": "loc_1",
       "name": "Kitchen",
       "description": "Specific visual details of the location",
       "atmosphere": "Emotional tone"
-    }}
+    }
   ],
 
   "scenes": [
-    {{
+    {
       "scene_number": 1,
       "title": "The Accusation",
       "duration": "8 seconds",
@@ -546,9 +606,15 @@ OUTPUT FORMAT (JSON):
       "regenerate_notes": "Exact hand positions and background objects can vary",
       "scene_heading": "INT. KITCHEN - NIGHT",
       "scene_change": false
-    }}
+    }
   ]
-}}
+}
+
+SHOW, DON'T TELL:
+- WRONG: "ALEX: The detective is closing in on us." (discussing absent character)
+- RIGHT: "DETECTIVE: [entering] Don't move." (conflict happens on-screen)
+- WRONG: Scene with only "Character turns and looks thoughtful." (too thin for 8 seconds)
+- RIGHT: Scene with specific physical actions, spatial movement, and visual beats to fill 6-9 seconds
 
 CRITICAL RULES:
 - Exactly 8 scenes, each 6-9 seconds
@@ -614,15 +680,11 @@ YOUR TASK:
    - scene_heading: Standard screenplay format (INT/EXT. LOCATION - TIME)
    - scene_change: true if location differs from previous scene
 
-5. Give the episode a provocative 2-4 word title.
-
 OUTPUT FORMAT (JSON only, no markdown):
 {{
-  "title": "Provocative 2-4 word title",
-
   "ingredients": {{
     "protagonist": "Who we follow",
-    "antagonist": "Source of conflict",
+    "conflict_source": "Source of conflict (person, force, or situation visible on-screen)",
     "immediate_tension": "What's at stake",
     "secret": "What's hidden",
     "spike_moment": "Emotional peak",
@@ -677,7 +739,13 @@ RULES:
     return prompt
 
 
-def parse_story_response(response_text: str, style: str) -> Story:
+def parse_story_response(
+    response_text: str,
+    style: str,
+    pre_selected_char_ids: Optional[set] = None,
+    pre_selected_chars: Optional[List[PreSelectedCharacter]] = None,
+    pre_selected_location: Optional[PreSelectedLocation] = None,
+) -> Story:
     """Parse the AI response into a Story object with both scenes and beats populated."""
     # Clean up response - remove markdown code blocks if present
     cleaned = response_text.strip()
@@ -791,6 +859,44 @@ def parse_story_response(response_text: str, style: str) -> Story:
             for i, b in enumerate(data["beats"])
         ]
 
+    # Force-correct pre-selected characters: match by name and restore DB entity IDs.
+    # Gemini may change the IDs it was given, so we match by name (case-insensitive)
+    # and overwrite the generated char with the DB entity's fields.
+    if pre_selected_chars:
+        pre_by_name = {c.name.lower(): c for c in pre_selected_chars}
+        pre_by_id = {c.id: c for c in pre_selected_chars}
+        for char in data.get("characters", []):
+            # Try ID match first, then name match
+            matched = pre_by_id.get(char.get("id")) or pre_by_name.get(char.get("name", "").lower())
+            if matched:
+                char["id"] = matched.id
+                char["name"] = matched.name
+                char["gender"] = matched.gender
+                char["age"] = matched.age
+                char["appearance"] = matched.appearance
+                char["role"] = matched.role
+                char["origin"] = "story"
+            else:
+                char["origin"] = "ai"
+    elif pre_selected_char_ids:
+        # Legacy path: only IDs available
+        for char in data.get("characters", []):
+            char["origin"] = "story" if char.get("id") in pre_selected_char_ids else "ai"
+    else:
+        for char in data.get("characters", []):
+            char["origin"] = "ai"
+
+    # Force-correct pre-selected location: restore DB entity ID
+    if pre_selected_location:
+        for loc in data.get("locations", []):
+            if loc.get("id") == pre_selected_location.id or \
+               loc.get("name", "").lower() == pre_selected_location.name.lower():
+                loc["id"] = pre_selected_location.id
+                loc["name"] = pre_selected_location.name
+                loc["description"] = pre_selected_location.description
+                loc["atmosphere"] = pre_selected_location.atmosphere
+                break
+
     return Story(**data)
 
 
@@ -809,14 +915,24 @@ async def generate_story(request: GenerateStoryRequest):
     Note: Duration is fixed at 1 minute (8 shots x 8 seconds = 64 seconds)
     """
     try:
-        prompt = build_story_prompt(request.idea, request.style)
+        pre_char_ids = {c.id for c in request.characters} if request.characters else None
+        prompt = build_story_prompt(
+            request.idea, request.style,
+            characters=request.characters,
+            location=request.location,
+        )
 
         response = await generate_text(
             prompt=prompt,
             system_prompt=STORY_SYSTEM_PROMPT,
         )
 
-        story = parse_story_response(response, request.style)
+        story = parse_story_response(
+            response, request.style,
+            pre_selected_char_ids=pre_char_ids,
+            pre_selected_chars=request.characters,
+            pre_selected_location=request.location,
+        )
         cost = estimate_story_cost(len(story.scenes) or len(story.beats))
 
         # Sanitize before returning to client
@@ -840,10 +956,13 @@ async def regenerate_story(request: RegenerateStoryRequest):
     Note: Duration is fixed at 1 minute (8 shots x 8 seconds = 64 seconds)
     """
     try:
+        pre_char_ids = {c.id for c in request.characters} if request.characters else None
         prompt = build_story_prompt(
             request.idea,
             request.style,
-            request.feedback
+            feedback=request.feedback,
+            characters=request.characters,
+            location=request.location,
         )
 
         response = await generate_text(
@@ -851,7 +970,12 @@ async def regenerate_story(request: RegenerateStoryRequest):
             system_prompt=STORY_SYSTEM_PROMPT,
         )
 
-        story = parse_story_response(response, request.style)
+        story = parse_story_response(
+            response, request.style,
+            pre_selected_char_ids=pre_char_ids,
+            pre_selected_chars=request.characters,
+            pre_selected_location=request.location,
+        )
         cost = estimate_story_cost(len(story.scenes) or len(story.beats))
 
         # Sanitize before returning to client
@@ -1080,5 +1204,147 @@ async def generate_story_internal(request: GenerateStoryRequest):
 
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse AI response as JSON: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Scene Descriptions Endpoint
+# ============================================================
+
+class GenerateSceneDescriptionsRequest(BaseModel):
+    story: Story
+
+
+class SceneVisualDescription(BaseModel):
+    scene_number: int
+    title: str
+    visual_description: str
+
+
+class GenerateSceneDescriptionsResponse(BaseModel):
+    descriptions: List[SceneVisualDescription]
+    cost_usd: float = 0.0
+
+
+@router.post("/generate-scene-descriptions", response_model=GenerateSceneDescriptionsResponse)
+async def generate_scene_descriptions(request: GenerateSceneDescriptionsRequest):
+    """
+    Generate 1-2 line cinematic visual descriptions for each of the 8 scenes.
+
+    Input: { "story": {...} }
+    Output: { "descriptions": [{"scene_number": 1, "title": "...", "visual_description": "..."}, ...] }
+    """
+    try:
+        story = request.story
+
+        # Get scenes — prefer scenes, derive from beats if needed
+        scenes = story.scenes
+        if not scenes and story.beats:
+            scenes = [
+                beat_to_scene(b.model_dump(), b.number)
+                for b in story.beats
+            ]
+
+        if not scenes:
+            raise HTTPException(status_code=400, detail="Story has no scenes or beats")
+
+        # Build character descriptions for context
+        characters_context = "\n".join([
+            f"- {c.name} (id: {c.id}, {c.age} {c.gender}): {c.appearance}"
+            for c in story.characters
+        ])
+
+        # Build location descriptions for context
+        locations_context = "\n".join([
+            f"- {loc.id} ({loc.name}): {loc.description} ({loc.atmosphere})"
+            for loc in story.locations
+        ]) if story.locations else "No locations defined"
+
+        # Build scene summaries
+        scene_summaries = []
+        for s in scenes:
+            parts = [f"Scene {s.scene_number} — {s.title}:"]
+            if s.action:
+                parts.append(f"  Action: {s.action}")
+            if s.dialogue:
+                parts.append(f"  Dialogue: {s.dialogue}")
+            if s.image_prompt:
+                parts.append(f"  Image Prompt: {s.image_prompt}")
+            chars = s.characters_on_screen or []
+            if chars:
+                parts.append(f"  Characters: {', '.join(chars)}")
+            scene_summaries.append("\n".join(parts))
+
+        scenes_text = "\n\n".join(scene_summaries)
+
+        prompt = f"""You are generating cinematic visual descriptions for a vertical short film.
+
+STORY TITLE: {story.title}
+STYLE: {STYLE_DISPLAY.get(story.style, story.style)}
+
+CHARACTERS:
+{characters_context}
+
+LOCATIONS:
+{locations_context}
+
+SCENES:
+{scenes_text}
+
+For each scene, write a 1-2 sentence cinematic visual description suitable for generating a still image. Describe what the CAMERA SEES — character positioning, expressions, lighting, composition. Include specific character names.
+
+OUTPUT FORMAT (JSON array only, no markdown, no explanation):
+[
+  {{"scene_number": 1, "title": "Short 2-4 word title", "visual_description": "1-2 sentence cinematic description of what the camera sees..."}},
+  ...
+]
+
+RULES:
+- One entry per scene (exactly {len(scenes)} entries)
+- Focus on VISUAL details: framing, lighting, body language, spatial relationships
+- Include character NAMES (not IDs) in descriptions
+- Keep each description to 1-2 sentences
+- Make descriptions suitable for image generation prompts
+- Output ONLY the JSON array"""
+
+        response = await generate_text(
+            prompt=prompt,
+            system_prompt="You are a cinematographer writing shot descriptions. Output valid JSON only.",
+            model="gemini-2.0-flash"
+        )
+
+        # Clean up response
+        cleaned = response.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        if cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+        descriptions_data = json.loads(cleaned)
+
+        descriptions = [
+            SceneVisualDescription(
+                scene_number=d["scene_number"],
+                title=d.get("title", f"Scene {d['scene_number']}"),
+                visual_description=d["visual_description"],
+            )
+            for d in descriptions_data
+        ]
+
+        cost = estimate_story_cost(1)  # One Flash call
+
+        return GenerateSceneDescriptionsResponse(
+            descriptions=descriptions,
+            cost_usd=round(cost, 4),
+        )
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse AI response as JSON: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

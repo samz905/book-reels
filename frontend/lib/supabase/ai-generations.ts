@@ -170,3 +170,50 @@ export async function getFilmJob(filmId: string): Promise<AIFilmJob | null> {
   if (error) return null;
   return data;
 }
+
+// ============================================================
+// Generation Jobs (persistent status tracking)
+// ============================================================
+
+export interface GenJob {
+  id: string;
+  generation_id: string;
+  job_type: string;
+  target_id: string;
+  status: "generating" | "completed" | "failed";
+  result: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Check for completed (or failed) generation jobs for a given generation.
+ * Called on restore to recover results from jobs that completed while
+ * the client was disconnected.
+ */
+export async function getCompletedJobs(generationId: string): Promise<GenJob[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("gen_jobs")
+    .select("*")
+    .eq("generation_id", generationId)
+    .in("status", ["completed", "failed"]);
+  if (error) {
+    console.error("getCompletedJobs error:", error);
+    return [];
+  }
+  return data || [];
+}
+
+/**
+ * Delete processed gen_jobs after their results have been applied.
+ */
+export async function clearGenJobs(generationId: string): Promise<void> {
+  const supabase = getSupabase();
+  await supabase
+    .from("gen_jobs")
+    .delete()
+    .eq("generation_id", generationId)
+    .in("status", ["completed", "failed"]);
+}

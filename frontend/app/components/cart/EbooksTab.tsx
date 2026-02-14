@@ -12,36 +12,8 @@ interface EbooksTabProps {
 export default function EbooksTab({ ebooks, onRemove }: EbooksTabProps) {
   // Horizontal scroll state
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [startX, setStartX] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
-
-  // Handle mouse down - start drag
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!scrollRef.current) return;
-    setIsDragging(true);
-    setStartX(e.pageX - scrollRef.current.offsetLeft);
-    setScrollLeft(scrollRef.current.scrollLeft);
-  }, []);
-
-  // Handle mouse move - drag scroll
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (!isDragging || !scrollRef.current) return;
-      e.preventDefault();
-      const x = e.pageX - scrollRef.current.offsetLeft;
-      const walk = (x - startX) * 1.5;
-      scrollRef.current.scrollLeft = scrollLeft - walk;
-    },
-    [isDragging, startX, scrollLeft]
-  );
-
-  // Handle mouse up/leave - stop drag
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
 
   // Handle wheel - vertical to horizontal scroll with non-passive listener
   useEffect(() => {
@@ -127,14 +99,10 @@ export default function EbooksTab({ ebooks, onRemove }: EbooksTabProps) {
       {/* Ebooks row with scroll */}
       <div
         ref={scrollRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        className="overflow-x-auto scrollbar-hide cursor-grab active:cursor-grabbing"
+        className="overflow-x-auto scrollbar-hide"
         style={{ scrollBehavior: "auto" }}
       >
-        <div className="flex gap-[18px] min-w-max select-none pb-2">
+        <div className="flex gap-[18px] min-w-max pb-2">
           {ebooks.map((ebook) => (
           <div key={ebook.id} className="flex items-center gap-[18px] flex-shrink-0">
             {/* Remove button */}

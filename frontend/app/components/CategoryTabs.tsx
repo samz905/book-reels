@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useEffect } from "react";
 import { CATEGORIES, type Category } from "../data/mockStories";
 
 interface CategoryTabsProps {
@@ -13,34 +13,6 @@ export default function CategoryTabs({
   onCategoryChange,
 }: CategoryTabsProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [startX, setStartX] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
-
-  // Handle mouse down - start drag
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!scrollRef.current) return;
-    setIsDragging(true);
-    setStartX(e.pageX - scrollRef.current.offsetLeft);
-    setScrollLeft(scrollRef.current.scrollLeft);
-  }, []);
-
-  // Handle mouse move - drag scroll
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (!isDragging || !scrollRef.current) return;
-      e.preventDefault();
-      const x = e.pageX - scrollRef.current.offsetLeft;
-      const walk = (x - startX) * 1.5;
-      scrollRef.current.scrollLeft = scrollLeft - walk;
-    },
-    [isDragging, startX, scrollLeft]
-  );
-
-  // Handle mouse up/leave - stop drag
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
 
   // Handle wheel - vertical to horizontal scroll with non-passive listener
   useEffect(() => {
@@ -61,14 +33,10 @@ export default function CategoryTabs({
   return (
     <div
       ref={scrollRef}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
-      className="overflow-x-auto scrollbar-hide cursor-grab active:cursor-grabbing"
+      className="overflow-x-auto scrollbar-hide"
       style={{ scrollBehavior: "smooth" }}
     >
-      <nav className="flex items-center gap-1 min-w-max select-none">
+      <nav className="flex items-center gap-1 min-w-max">
         {CATEGORIES.map((category) => (
           <button
             key={category}

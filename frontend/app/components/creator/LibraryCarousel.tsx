@@ -18,31 +18,8 @@ export default function LibraryCarousel({
   isEmpty = false,
 }: LibraryCarouselProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [startX, setStartX] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!scrollRef.current) return;
-    setIsDragging(true);
-    setStartX(e.pageX - scrollRef.current.offsetLeft);
-    setScrollLeft(scrollRef.current.scrollLeft);
-  }, []);
-
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (!isDragging || !scrollRef.current) return;
-      e.preventDefault();
-      const x = e.pageX - scrollRef.current.offsetLeft;
-      const walk = (x - startX) * 1.5;
-      scrollRef.current.scrollLeft = scrollLeft - walk;
-    },
-    [isDragging, startX, scrollLeft]
-  );
-
-  const handleMouseUp = useCallback(() => setIsDragging(false), []);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -118,14 +95,10 @@ export default function LibraryCarousel({
       ) : (
         <div
           ref={scrollRef}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          className="overflow-x-auto scrollbar-hide cursor-grab active:cursor-grabbing"
+          className="overflow-x-auto scrollbar-hide"
           style={{ scrollBehavior: "smooth" }}
         >
-          <div className="flex gap-5 min-w-max select-none pb-2">
+          <div className="flex gap-5 min-w-max pb-2">
             {children}
           </div>
         </div>

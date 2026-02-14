@@ -39,7 +39,6 @@ const createEpisodes = (count: number, storyId: string, freeCount: number = 4): 
     number: i + 1,
     name: "Episode name",
     isFree: i < freeCount,
-    thumbnail: `https://picsum.photos/seed/${storyId}-ep${i + 1}/300/200`,
   }));
 };
 

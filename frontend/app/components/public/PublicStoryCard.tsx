@@ -15,36 +15,8 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
 
   // Horizontal scroll state for ebooks
   const ebooksScrollRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [startX, setStartX] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
-
-  // Handle mouse down - start drag
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!ebooksScrollRef.current) return;
-    setIsDragging(true);
-    setStartX(e.pageX - ebooksScrollRef.current.offsetLeft);
-    setScrollLeft(ebooksScrollRef.current.scrollLeft);
-  }, []);
-
-  // Handle mouse move - drag scroll
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (!isDragging || !ebooksScrollRef.current) return;
-      e.preventDefault();
-      const x = e.pageX - ebooksScrollRef.current.offsetLeft;
-      const walk = (x - startX) * 1.5;
-      ebooksScrollRef.current.scrollLeft = scrollLeft - walk;
-    },
-    [isDragging, startX, scrollLeft]
-  );
-
-  // Handle mouse up/leave - stop drag
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
 
   // Handle wheel - vertical to horizontal scroll with non-passive listener
   useEffect(() => {
@@ -253,14 +225,10 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
             {/* Horizontally scrollable ebooks container */}
             <div
               ref={ebooksScrollRef}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-              className="overflow-x-auto scrollbar-hide cursor-grab active:cursor-grabbing"
+              className="overflow-x-auto scrollbar-hide"
               style={{ scrollBehavior: "smooth" }}
             >
-              <div className="flex gap-6 min-w-max select-none">
+              <div className="flex gap-6 min-w-max">
                 {story.ebooks.map((ebook, index) => (
                   <div key={ebook.id} className="flex items-stretch">
                     {/* Ebook card - 354px wide with 322px content area */}

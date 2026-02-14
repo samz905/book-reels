@@ -7,18 +7,25 @@ import {
   createGeneration as supaCreateGeneration,
   updateGeneration as supaUpdateGeneration,
   getGeneration as supaGetGeneration,
-  listGenerations as supaListGenerations,
   upsertFilmJob as supaUpsertFilmJob,
-  AIGenerationSummary,
+  getCompletedJobs,
+  clearGenJobs,
 } from "@/lib/supabase/ai-generations";
+import { useAuth } from "@/app/context/AuthContext";
+import { getMyStories, getStoryCharacters, getStoryLocations, updateStoryCharacter, createStoryCharacter, updateStoryLocation, callGen } from "@/lib/api/creator";
+import type { StoryCharacterFE, StoryLocationFE } from "@/app/data/mockCreatorData";
+import StoryPickerModal from "@/app/components/creator/StoryPickerModal";
+import CreateEpisodeModal from "@/app/components/creator/CreateEpisodeModal";
+import CharacterModal from "@/app/components/creator/CharacterModal";
+import LocationModal from "@/app/components/creator/LocationModal";
+import CharacterLocationPicker, { type SelectedCharacter } from "./components/CharacterLocationPicker";
 
 // ============================================================
 // Types
 // ============================================================
 
 type Style = "cinematic" | "anime" | "animated" | "pixar";
-type VisualStep = "characters" | "setting" | "key_moment";
-type MoodboardStep = "protagonist" | "full";
+type VisualsTab = "characters" | "locations" | "scenes";
 
 interface Character {
   id: string;
@@ -27,6 +34,7 @@ interface Character {
   age: string;
   appearance: string;
   role: "protagonist" | "antagonist" | "supporting";
+  origin?: "story" | "ai";
 }
 
 interface Setting {
@@ -193,35 +201,14 @@ interface CharacterImageState {
   refImages: RefImageUpload[];  // User-uploaded reference images for refinement
 }
 
-interface SettingImageState {
+interface SceneImageState {
+  sceneNumber: number;
+  title: string;
+  visualDescription: string;
   image: MoodboardImage | null;
-  images: MoodboardImage[];
-  selectedIndex: number;
-  approved: boolean;
   isGenerating: boolean;
-  feedback: string;
-  promptUsed: string;
   error: string;
-  refImages: RefImageUpload[];
-}
-
-interface KeyMomentEntry {
-  beat_number: number;
-  beat_description: string;
-  image: MoodboardImage;
-  promptUsed: string;
-}
-
-interface KeyMomentImageState {
-  image: MoodboardImage | null;
-  beat_number: number;
-  beat_description: string;
-  isGenerating: boolean;
   feedback: string;
-  promptUsed: string;
-  // Multi-scene support (3 distinct key moments)
-  entries: KeyMomentEntry[];
-  selectedIndex: number;
 }
 
 // Phase 4: Film Generation
@@ -274,8 +261,6 @@ interface TotalCost {
   film: number;
 }
 
-// Generation persistence (uses AIGenerationSummary from Supabase helper)
-
 // ============================================================
 // Constants
 // ============================================================
@@ -308,10 +293,24 @@ const STYLE_DISPLAY_MAP: Record<string, string> = {
 // ============================================================
 
 export default function CreateEpisodePage() {
+  const { user } = useAuth();
+
+  // Story picker + episode modal (mandatory association)
+  const [showStoryPicker, setShowStoryPicker] = useState(false);
+  const [showCreateEpisodeModal, setShowCreateEpisodeModal] = useState(false);
+  const [pendingStoryId, setPendingStoryId] = useState<string | null>(null);
+  const [availableStories, setAvailableStories] = useState<{ id: string; title: string; cover: string; episodeCount: number }[]>([]);
+
+  // Story library chars/locs (for CharacterLocationPicker)
+  const [storyLibraryChars, setStoryLibraryChars] = useState<StoryCharacterFE[]>([]);
+  const [storyLibraryLocs, setStoryLibraryLocs] = useState<StoryLocationFE[]>([]);
+
+  // Pre-selected characters & location for script generation
+  const [selectedChars, setSelectedChars] = useState<SelectedCharacter[]>([]);
+  const [selectedLocation, setSelectedLocation] = useState<StoryLocationFE | null>(null);
+
   // Input state
-  const [scriptTab, setScriptTab] = useState<"generate" | "insert">("generate");
   const [idea, setIdea] = useState("");
-  const [rawScript, setRawScript] = useState("");
   const [style, setStyle] = useState<Style>("cinematic");
 
   // Story state
@@ -320,7 +319,7 @@ export default function CreateEpisodePage() {
   const [error, setError] = useState<string | null>(null);
 
   // Right pane tab state
-  const [rightTab, setRightTab] = useState<"assets" | "script">("assets");
+  const [rightTab, setRightTab] = useState<"world" | "script">("script");
 
   // Scene editing state (new format)
   const [editingSceneIndex, setEditingSceneIndex] = useState<number | null>(null);
@@ -349,27 +348,20 @@ export default function CreateEpisodePage() {
   const [editingLocIndex, setEditingLocIndex] = useState<number | null>(null);
   const [editLocDraft, setEditLocDraft] = useState<Location | null>(null);
 
-  // Visual Direction state (Phase 3)
-  const [visualStep, setVisualStep] = useState<VisualStep | null>(null);
-  const [moodboardStep, setMoodboardStep] = useState<MoodboardStep>("protagonist");
+  // Build Your Visuals state (Phase 2)
+  const [visualsActive, setVisualsActive] = useState(false);
+  const [visualsTab, setVisualsTab] = useState<VisualsTab>("characters");
   const [characterImages, setCharacterImages] = useState<Record<string, CharacterImageState>>({});
-  const [settingImage, setSettingImage] = useState<SettingImageState | null>(null);
   const [locationImages, setLocationImages] = useState<Record<string, LocationImageState>>({});
-  const [keyMoment, setKeyMoment] = useState<KeyMomentImageState | null>(null);
+  const [sceneImages, setSceneImages] = useState<Record<number, SceneImageState>>({});
+  const [isGeneratingSceneDescs, setIsGeneratingSceneDescs] = useState(false);
+  const [expandedSceneDescs, setExpandedSceneDescs] = useState<Set<number>>(new Set());
 
-  // Protagonist-first state
-  const [protagonistImage, setProtagonistImage] = useState<{
-    character_id: string;
-    character_name: string;
-    image: MoodboardImage;
-    images: MoodboardImage[];
-    selectedIndex: number;
-    refImages: RefImageUpload[];
-  } | null>(null);
-  const [protagonistLocked, setProtagonistLocked] = useState(false);
-  const [isGeneratingProtagonist, setIsGeneratingProtagonist] = useState(false);
-  const [protagonistFeedback, setProtagonistFeedback] = useState("");
-  const [protagonistError, setProtagonistError] = useState("");
+  // Modal state for visuals stage
+  const [editingVisualCharId, setEditingVisualCharId] = useState<string | null>(null);
+  const [editingVisualLocId, setEditingVisualLocId] = useState<string | null>(null);
+  const [isSavingVisualChar, setIsSavingVisualChar] = useState(false);
+  const [isSavingVisualLoc, setIsSavingVisualLoc] = useState(false);
 
   // Phase 4: Film Generation state
   const [film, setFilm] = useState<FilmState>({
@@ -425,8 +417,6 @@ export default function CreateEpisodePage() {
   const [generationId, setGenerationId] = useState<string | null>(null);
   const generationIdRef = useRef<string | null>(null);
   const isRestoringRef = useRef(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [pastGenerations, setPastGenerations] = useState<AIGenerationSummary[]>([]);
   const [isRestoringState, setIsRestoringState] = useState(false);
   const [draftSaveStatus, setDraftSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
 
@@ -460,7 +450,7 @@ export default function CreateEpisodePage() {
       // every API response) and auto-save (500ms debounce). Writing state here would
       // strip base64 images and overwrite the good data already in Supabase.
       const payload = JSON.stringify({
-        title: story?.title || "Untitled",
+        title: episodeNameRef.current || "Untitled",
         status: film.status === "ready" ? "ready" : film.status === "failed" ? "failed" : undefined,
         film_id: film.filmId,
         cost_total: totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film,
@@ -498,30 +488,42 @@ export default function CreateEpisodePage() {
       setGenerationId(activeGenId);
       setGenerationUrl(activeGenId);
       // Await creation so the row exists before any saves or sendBeacon can fire
-      await supaCreateGeneration(activeGenId, "Untitled", style, { idea, style, scriptTab: "generate", isGenerating: true }, associatedStoryIdRef.current);
+      await supaCreateGeneration(activeGenId, episodeNameRef.current || "Untitled", style, { idea, style, isGenerating: true }, associatedStoryIdRef.current);
     }
 
     try {
-      const response = await fetch(`${BACKEND_URL}/story/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idea, style }),
-      });
+      const payload = {
+        idea,
+        style,
+        characters: selectedChars.length > 0 ? selectedChars.map(c => ({
+          id: c.id,
+          name: c.name,
+          gender: c.gender,
+          age: c.age,
+          appearance: c.description,
+          role: c.episodeRole,
+        })) : undefined,
+        location: selectedLocation ? {
+          id: selectedLocation.id,
+          name: selectedLocation.name,
+          description: selectedLocation.description,
+          atmosphere: selectedLocation.atmosphere,
+        } : undefined,
+      };
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to generate story");
-      }
+      const data = await callGen<{ story: Story; cost_usd?: number }>(
+        "script",
+        "/story/generate",
+        payload,
+        { generationId: activeGenId }
+      );
 
-      const data = await response.json();
       setStory(data.story);
-      // Track story generation cost
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, story: prev.story + data.cost_usd }));
+      const scriptCost = data.cost_usd;
+      if (scriptCost) {
+        setTotalCost((prev) => ({ ...prev, story: prev.story + scriptCost }));
       }
-      // Save immediately with actual story data
       saveNow({ story: data.story }, "drafting");
-      fetchGenerationsList();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate story");
     } finally {
@@ -536,22 +538,33 @@ export default function CreateEpisodePage() {
     setSelectedBeatIndex(null);
 
     try {
-      const response = await fetch(`${BACKEND_URL}/story/regenerate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          idea,
-          style,
-          feedback: globalFeedback || null,
-        }),
-      });
+      const payload = {
+        idea,
+        style,
+        feedback: globalFeedback || null,
+        characters: selectedChars.length > 0 ? selectedChars.map(c => ({
+          id: c.id,
+          name: c.name,
+          gender: c.gender,
+          age: c.age,
+          appearance: c.description,
+          role: c.episodeRole,
+        })) : undefined,
+        location: selectedLocation ? {
+          id: selectedLocation.id,
+          name: selectedLocation.name,
+          description: selectedLocation.description,
+          atmosphere: selectedLocation.atmosphere,
+        } : undefined,
+      };
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to regenerate story");
-      }
+      const data = await callGen<{ story: Story; cost_usd?: number }>(
+        "script",
+        "/story/regenerate",
+        payload,
+        { generationId: generationIdRef.current! }
+      );
 
-      const data = await response.json();
       setStory(data.story);
       setGlobalFeedback("");
       saveNow({ story: data.story }, "drafting");
@@ -562,53 +575,7 @@ export default function CreateEpisodePage() {
     }
   };
 
-  const parseScript = async () => {
-    if (!rawScript.trim()) {
-      alert("Please paste your script.");
-      return;
-    }
-
-    setIsGenerating(true);
-    setError(null);
-    setStory(null);
-    resetVisualDirection();
-    setSelectedBeatIndex(null);
-
-    // Ensure we have a generation session
-    let activeGenId = generationIdRef.current;
-    if (!activeGenId) {
-      activeGenId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
-      generationIdRef.current = activeGenId;
-      setGenerationId(activeGenId);
-      setGenerationUrl(activeGenId);
-      await supaCreateGeneration(activeGenId, "Untitled", style, { rawScript, style, scriptTab: "insert", isGenerating: true }, associatedStoryIdRef.current);
-    }
-
-    try {
-      const response = await fetch(`${BACKEND_URL}/story/parse-script`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ script: rawScript, style }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to parse script");
-      }
-
-      const data = await response.json();
-      setStory(data.story);
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, story: prev.story + data.cost_usd }));
-      }
-      saveNow({ story: data.story, rawScript, scriptTab: "insert" }, "drafting");
-      fetchGenerationsList();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to parse script");
-    } finally {
-      setIsGenerating(false);
-    }
-  };
+  // parseScript removed — backend /story/parse-script endpoint kept for future use
 
   /** Save a scene edit and sync both scenes + beats on the story */
   const saveSceneEdit = (sceneIndex: number, updatedScene: Scene) => {
@@ -655,6 +622,52 @@ export default function CreateEpisodePage() {
     setStory({ ...story, scenes: updatedScenes, beats: updatedBeats });
     setEditingSceneIndex(null);
     setEditSceneDraft(null);
+  };
+
+  // Save character edit with name-change propagation to dialogue
+  const saveCharacterEdit = (charIndex: number, updatedChar: Character) => {
+    if (!story) return;
+    const oldName = story.characters[charIndex].name;
+    const newName = updatedChar.name;
+
+    // Update character list
+    const updatedChars = [...story.characters];
+    updatedChars[charIndex] = updatedChar;
+
+    // If name changed, propagate to dialogue in scenes and beats
+    let updatedScenes = [...getScenes(story)];
+    let updatedBeats = [...story.beats];
+
+    if (oldName !== newName && oldName.trim() && newName.trim()) {
+      const escaped = oldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const nameRegex = new RegExp(`\\b${escaped}\\b`, "g");
+
+      updatedScenes = updatedScenes.map((scene) => ({
+        ...scene,
+        dialogue: scene.dialogue ? scene.dialogue.replace(nameRegex, newName) : scene.dialogue,
+        characters_on_screen: scene.characters_on_screen.map((id) =>
+          id === story.characters[charIndex].id ? updatedChar.id : id
+        ),
+      }));
+
+      updatedBeats = updatedBeats.map((beat) => ({
+        ...beat,
+        blocks: beat.blocks.map((block) => ({
+          ...block,
+          text: block.text.replace(nameRegex, newName),
+          character: block.character?.replace(nameRegex, newName) ?? block.character,
+        })),
+        dialogue: beat.dialogue?.map((dl) => ({
+          ...dl,
+          character: dl.character.replace(nameRegex, newName),
+          line: dl.line.replace(nameRegex, newName),
+        })) ?? beat.dialogue,
+      }));
+    }
+
+    setStory({ ...story, characters: updatedChars, scenes: updatedScenes, beats: updatedBeats });
+    setEditingCharIndex(null);
+    setEditCharDraft(null);
   };
 
   const refineBeat = async () => {
@@ -715,20 +728,17 @@ export default function CreateEpisodePage() {
   // ============================================================
 
   const buildSnapshot = () => ({
-    scriptTab,
     idea,
-    rawScript,
     style,
     story,
+    selectedChars,
+    selectedLocation,
     isGenerating,
-    visualStep,
-    moodboardStep,
-    protagonistImage,
-    protagonistLocked,
-    isGeneratingProtagonist,
+    visualsActive,
+    visualsTab,
     characterImages,
     locationImages,
-    keyMoment,
+    sceneImages,
     promptPreview: {
       shots: promptPreview.shots,
       editedPrompts: promptPreview.editedPrompts,
@@ -752,16 +762,14 @@ export default function CreateEpisodePage() {
       film.status === "ready" ? "ready" :
       film.status === "failed" ? "failed" :
       promptPreview.shots.length > 0 ? "preflight" :
-      keyMoment?.entries.length ? "key_moments" :
-      protagonistLocked ? "moodboard" :
+      visualsActive ? "visuals" :
       story ? "drafting" : "drafting"
     );
     supaUpdateGeneration(gid, {
-      title: story?.title || "Untitled",
+      title: episodeNameRef.current || "Untitled",
       status: currentStatus,
       state: snapshot,
       film_id: film.filmId,
-      thumbnail_base64: protagonistImage?.image?.image_base64?.slice(0, 2000) || null,
       cost_total: totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film,
     }).catch(console.error);
   };
@@ -772,14 +780,11 @@ export default function CreateEpisodePage() {
     const gid = generationIdRef.current;
     if (!gid) return;
     const snapshot = { ...buildSnapshot(), ...overrides };
-    const storyData = (overrides.story as Story | undefined) || story;
-    const protImg = (overrides.protagonistImage as typeof protagonistImage) || protagonistImage;
     supaUpdateGeneration(gid, {
-      title: storyData?.title || "Untitled",
+      title: episodeNameRef.current || "Untitled",
       status: statusOverride || "drafting",
       state: snapshot,
       film_id: film.filmId,
-      thumbnail_base64: protImg?.image?.image_base64?.slice(0, 2000) || null,
       cost_total: totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film,
     }).catch(console.error);
   };
@@ -793,13 +798,38 @@ export default function CreateEpisodePage() {
     setTimeout(() => setDraftSaveStatus("idle"), 2500);
   };
 
-  const fetchGenerationsList = async () => {
+  // Fetch story library chars & locations for the picker
+  const fetchStoryLibrary = async (storyId: string) => {
     try {
-      const gens = await supaListGenerations();
-      setPastGenerations(gens);
-      return gens;
-    } catch { /* supabase may not be configured */ }
-    return [];
+      const [chars, locs] = await Promise.all([
+        getStoryCharacters(storyId),
+        getStoryLocations(storyId),
+      ]);
+      setStoryLibraryChars(chars);
+      setStoryLibraryLocs(locs);
+    } catch { /* ignore — story may not have any yet */ }
+  };
+
+  // Handle story selection from picker → show episode modal next
+  const handleStorySelected = (storyId: string) => {
+    setShowStoryPicker(false);
+    setPendingStoryId(storyId);
+    setShowCreateEpisodeModal(true);
+  };
+
+  // Handle episode creation from modal → navigate with full URL params
+  const handleEpisodeCreated = (episode: { name: string; number: number; isFree: boolean }) => {
+    setShowCreateEpisodeModal(false);
+    const storyId = pendingStoryId;
+    if (!storyId) return;
+    const params = new URLSearchParams({
+      storyId,
+      name: episode.name,
+      number: String(episode.number),
+      isFree: String(episode.isFree),
+    });
+    // Navigate — triggers full page re-init with proper params
+    window.location.href = `/create-episode?${params.toString()}`;
   };
 
   const restoreGeneration = async (genId: string) => {
@@ -818,48 +848,47 @@ export default function CreateEpisodePage() {
       generationIdRef.current = genId;
       setGenerationId(genId);
       setGenerationUrl(genId);
-      // Restore story association from DB column
+      // Restore story association from DB column + re-fetch library chars/locs
       if (data.story_id) {
         setAssociatedStoryId(data.story_id);
+        associatedStoryIdRef.current = data.story_id;
         fetch(`/api/stories/${data.story_id}`)
           .then(res => res.ok ? res.json() : null)
           .then(d => { if (d?.title) setAssociatedStoryName(d.title); })
           .catch(() => {});
+        fetchStoryLibrary(data.story_id);
       }
-      if (s.scriptTab) setScriptTab(s.scriptTab as "generate" | "insert");
       if (s.idea !== undefined) setIdea(s.idea as string);
-      if (s.rawScript !== undefined) setRawScript(s.rawScript as string);
       if (s.style) setStyle(s.style as Style);
+      if (s.selectedChars) setSelectedChars(s.selectedChars as SelectedCharacter[]);
+      if (s.selectedLocation !== undefined) setSelectedLocation(s.selectedLocation as StoryLocationFE | null);
       if (s.story !== undefined) setStory(s.story as Story | null);
-      if (s.visualStep !== undefined) setVisualStep(s.visualStep as VisualStep | null);
-      if (s.moodboardStep) setMoodboardStep(s.moodboardStep as MoodboardStep);
-      // Only restore protagonist if it has actual image data (not stripped/mid-generation)
-      const protImgRaw = s.protagonistImage as typeof protagonistImage;
-      const protHasRealImage = protImgRaw?.image && protImgRaw.image.image_base64 !== "[stripped]";
-      if (protHasRealImage) {
-        setProtagonistImage(protImgRaw);
-      }
-      if (s.protagonistLocked !== undefined) setProtagonistLocked(s.protagonistLocked as boolean);
+      // Restore new visuals state
+      if (s.visualsActive !== undefined) setVisualsActive(s.visualsActive as boolean);
+      if (s.visualsTab) setVisualsTab(s.visualsTab as VisualsTab);
+      // Backward compat: old snapshots with visualStep → map to visualsActive
+      if (s.visualStep && !s.visualsActive) setVisualsActive(true);
 
       // Helper: check if an image is real (not stripped by sendBeacon)
       const hasRealImage = (img: MoodboardImage | null) =>
         img && img.image_base64 && img.image_base64 !== "[stripped]";
 
-      // Clean character images: keep entries with real image/error, mark rest for retry
+      // Clean character images: keep entries with real image/error, reset idle ones
       const cleanedChars: Record<string, CharacterImageState> = {};
-      const retryCharIds: string[] = [];
       if (s.characterImages) {
         const raw = s.characterImages as Record<string, CharacterImageState>;
         for (const key in raw) {
           const ci = raw[key];
           if (hasRealImage(ci.image)) {
+            // Has a real image — keep it
             cleanedChars[key] = { ...ci, isGenerating: false };
           } else if (ci.error) {
+            // Had an error — keep error state but stop generating
             cleanedChars[key] = { ...ci, isGenerating: false };
           } else {
-            // Was mid-generation or image was stripped — retry
-            retryCharIds.push(key);
-            cleanedChars[key] = { ...ci, image: null, isGenerating: true };
+            // No image, no error — was never generated or was mid-generation
+            // Either way, reset to idle (user can re-trigger)
+            cleanedChars[key] = { ...ci, image: null, isGenerating: false };
           }
         }
       }
@@ -867,7 +896,6 @@ export default function CreateEpisodePage() {
 
       // Same for location images
       const cleanedLocs: Record<string, LocationImageState> = {};
-      const retryLocIds: string[] = [];
       if (s.locationImages) {
         const raw = s.locationImages as Record<string, LocationImageState>;
         for (const key in raw) {
@@ -877,32 +905,28 @@ export default function CreateEpisodePage() {
           } else if (li.error) {
             cleanedLocs[key] = { ...li, isGenerating: false };
           } else {
-            // Was mid-generation or image was stripped — retry
-            retryLocIds.push(key);
-            cleanedLocs[key] = { ...li, image: null, isGenerating: true };
+            // No image, no error — reset to idle
+            cleanedLocs[key] = { ...li, image: null, isGenerating: false };
           }
         }
       }
       setLocationImages(cleanedLocs);
 
-      // Key moment: restore if it has actual entries with real images; otherwise retry
-      const km = s.keyMoment as KeyMomentImageState | null;
-      let retryKeyMoment = false;
-      if (km && km.entries && km.entries.length > 0) {
-        // Check if any entries have stripped images
-        const allEntriesReal = km.entries.every((e) => hasRealImage(e.image));
-        if (allEntriesReal) {
-          setKeyMoment({ ...km, isGenerating: false });
-        } else {
-          // Some entries have stripped images — retry key moment generation
-          setKeyMoment({ ...km, entries: [], isGenerating: true });
-          retryKeyMoment = true;
+      // Restore scene images
+      if (s.sceneImages) {
+        const rawScenes = s.sceneImages as Record<number, SceneImageState>;
+        const cleanedScenes: Record<number, SceneImageState> = {};
+        for (const key in rawScenes) {
+          const si = rawScenes[key];
+          if (si.image && hasRealImage(si.image)) {
+            cleanedScenes[key] = { ...si, isGenerating: false };
+          } else {
+            cleanedScenes[key] = { ...si, image: null, isGenerating: false };
+          }
         }
-      } else if (km && km.isGenerating) {
-        // Was mid-generation — keep loading state for retry
-        setKeyMoment({ ...km, isGenerating: true });
-        retryKeyMoment = true;
+        setSceneImages(cleanedScenes);
       }
+
       if (s.promptPreview) setPromptPreview({ ...(s.promptPreview as PromptPreviewState), isLoading: false });
       if (s.clipsApproved !== undefined) setClipsApproved(s.clipsApproved as boolean);
       if (s.shotFeedback) setShotFeedback(s.shotFeedback as Record<number, string>);
@@ -939,193 +963,134 @@ export default function CreateEpisodePage() {
         startPolling(data.film_job.film_id);
       }
 
-      // ---- Auto-retry interrupted operations ----
-      // Uses captured snapshot values to avoid stale React closures
-      const storyData = s.story as Story | null;
-      const protImg = s.protagonistImage as typeof protagonistImage;
-
-      // 1. Interrupted story generation
-      if (s.isGenerating && !storyData && s.idea) {
-        const retryIdea = s.idea as string;
-        const retryStyle = (s.style || "cinematic") as string;
-        setIsGenerating(true);
-        (async () => {
-          try {
-            const response = await fetch(`${BACKEND_URL}/story/generate`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ idea: retryIdea, style: retryStyle }),
-            });
-            if (!response.ok) throw new Error("Failed to generate story");
-            const retryData = await response.json();
-            setStory(retryData.story);
-            if (retryData.cost_usd) {
-              setTotalCost((prev) => ({ ...prev, story: prev.story + retryData.cost_usd }));
+      // ---- Check gen_jobs for completed results (handles tab-close recovery) ----
+      const restoredGenId = data.id;
+      (async () => {
+        try {
+          const completedJobs = await getCompletedJobs(restoredGenId);
+          if (completedJobs.length === 0) {
+            // No completed jobs — if script was generating, reset to idle
+            if (s.isGenerating && !(s.story as Story | null)) {
+              setIsGenerating(false);
             }
-            saveNow({ story: retryData.story, isGenerating: false }, "drafting");
-          } catch (retryErr) {
-            setError(retryErr instanceof Error ? retryErr.message : "Failed to generate story");
-          } finally {
-            setIsGenerating(false);
+            return;
           }
-        })();
-      }
 
-      // 2. Protagonist missing real image: either mid-generation OR completed but stripped by sendBeacon
-      const protExistsButStripped = protImgRaw && !protHasRealImage;
-      if ((s.isGeneratingProtagonist || protExistsButStripped) && !protHasRealImage && storyData) {
-        setIsGeneratingProtagonist(true);
-        (async () => {
-          try {
-            const response = await fetch(`${BACKEND_URL}/moodboard/generate-protagonist`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ story: storyData }),
-            });
-            if (!response.ok) throw new Error("Failed to generate protagonist");
-            const pd = await response.json();
-            const protagonist = storyData.characters.find((c) => c.id === pd.character_id);
-            const newProt = {
-              character_id: pd.character_id,
-              character_name: protagonist?.name || "Protagonist",
-              image: pd.image,
-              images: [],
-              selectedIndex: 0,
-              refImages: [],
-            };
-            setProtagonistImage(newProt);
-            if (pd.cost_usd) setTotalCost((prev) => ({ ...prev, characters: prev.characters + pd.cost_usd }));
-            saveNow({ protagonistImage: newProt, isGeneratingProtagonist: false }, "moodboard");
-          } catch (err) {
-            setProtagonistError(err instanceof Error ? err.message : "Failed to generate protagonist");
-          } finally {
-            setIsGeneratingProtagonist(false);
-          }
-        })();
-      }
-
-      // 3. Interrupted character/location generation (moodboard parallel gen)
-      if (protHasRealImage && protImg?.image && storyData && (retryCharIds.length > 0 || retryLocIds.length > 0)) {
-        const protagonistRef = {
-          image_base64: protImg.image.image_base64,
-          mime_type: protImg.image.mime_type,
-        };
-
-        // Retry missing characters
-        for (const charId of retryCharIds) {
-          (async () => {
-            try {
-              const response = await fetch(`${BACKEND_URL}/moodboard/generate-character`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ story: storyData, character_id: charId, protagonist_image: protagonistRef }),
-              });
-              if (!response.ok) throw new Error("Failed to generate character image");
-              const cd = await response.json();
-              setCharacterImages((prev) => ({
-                ...prev,
-                [charId]: { ...prev[charId], image: cd.image, promptUsed: cd.prompt_used, isGenerating: false },
-              }));
-              if (cd.cost_usd) setTotalCost((prev) => ({ ...prev, characters: prev.characters + cd.cost_usd }));
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : "Failed to generate character image";
-              setCharacterImages((prev) => ({
-                ...prev,
-                [charId]: { ...prev[charId], isGenerating: false, error: msg },
-              }));
+          for (const job of completedJobs) {
+            if (job.status === "failed") {
+              // Show error for failed jobs
+              if (job.job_type === "script") {
+                setError(job.error_message || "Script generation failed");
+                setIsGenerating(false);
+              }
+              continue;
             }
-          })();
-        }
 
-        // Retry missing locations
-        for (const locId of retryLocIds) {
-          (async () => {
-            try {
-              const response = await fetch(`${BACKEND_URL}/moodboard/generate-location`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ story: storyData, location_id: locId, protagonist_image: protagonistRef }),
-              });
-              if (!response.ok) throw new Error("Failed to generate location image");
-              const ld = await response.json();
-              setLocationImages((prev) => ({
-                ...prev,
-                [locId]: { ...prev[locId], image: ld.image, promptUsed: ld.prompt_used, isGenerating: false },
-              }));
-              if (ld.cost_usd) setTotalCost((prev) => ({ ...prev, locations: prev.locations + ld.cost_usd }));
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : "Failed to generate location image";
-              setLocationImages((prev) => ({
-                ...prev,
-                [locId]: { ...prev[locId], isGenerating: false, error: msg },
-              }));
-            }
-          })();
-        }
-      }
+            const result = job.result as Record<string, unknown>;
+            if (!result) continue;
 
-      // 4. Interrupted key moment generation
-      if (retryKeyMoment && protHasRealImage && storyData) {
-        (async () => {
-          try {
-            // Build approved visuals from captured snapshot data
-            const characterImageMap: Record<string, { image_base64: string; mime_type: string }> = {};
-            if (protImg) characterImageMap[protImg.character_id] = { image_base64: protImg.image.image_base64, mime_type: protImg.image.mime_type };
-            for (const key in cleanedChars) {
-              if (cleanedChars[key].image) {
-                characterImageMap[key] = { image_base64: cleanedChars[key].image!.image_base64, mime_type: cleanedChars[key].image!.mime_type };
+            switch (job.job_type) {
+              case "script": {
+                // Script completed while tab was closed
+                const storyResult = result.story as Story;
+                if (storyResult) {
+                  setStory(storyResult);
+                  if (result.cost_usd) {
+                    setTotalCost((prev) => ({ ...prev, story: prev.story + (result.cost_usd as number) }));
+                  }
+                  saveNow({ story: storyResult, isGenerating: false }, "drafting");
+                }
+                setIsGenerating(false);
+                break;
+              }
+              case "character_image": {
+                const charId = job.target_id;
+                if (charId && result.image_base64) {
+                  setCharacterImages((prev) => ({
+                    ...prev,
+                    [charId]: {
+                      ...(prev[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+                      image: { type: "character" as const, image_base64: result.image_base64 as string, mime_type: (result.mime_type as string) || "image/png", prompt_used: (result.prompt_used as string) || "" },
+                      approved: true,
+                      isGenerating: false,
+                      error: "",
+                    },
+                  }));
+                }
+                break;
+              }
+              case "location_image": {
+                const locId = job.target_id;
+                if (locId && result.image_base64) {
+                  setLocationImages((prev) => ({
+                    ...prev,
+                    [locId]: {
+                      ...(prev[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+                      image: { type: "location" as const, image_base64: result.image_base64 as string, mime_type: (result.mime_type as string) || "image/png", prompt_used: (result.prompt_used as string) || "" },
+                      approved: true,
+                      isGenerating: false,
+                      error: "",
+                    },
+                  }));
+                }
+                break;
+              }
+              case "scene_descriptions": {
+                const descs = result.descriptions as Array<{ scene_number: number; title: string; visual_description: string }>;
+                if (descs) {
+                  const newSceneImages: Record<number, SceneImageState> = {};
+                  for (const desc of descs) {
+                    newSceneImages[desc.scene_number] = {
+                      sceneNumber: desc.scene_number,
+                      title: desc.title,
+                      visualDescription: desc.visual_description,
+                      image: null,
+                      isGenerating: false,
+                      error: "",
+                      feedback: "",
+                    };
+                  }
+                  setSceneImages(newSceneImages);
+                  setIsGeneratingSceneDescs(false);
+                }
+                break;
+              }
+              case "scene_images": {
+                const sceneImgs = result.scene_images as Array<{ scene_number: number; image: MoodboardImage }>;
+                if (sceneImgs) {
+                  setSceneImages((prev) => {
+                    const updated = { ...prev };
+                    for (const si of sceneImgs) {
+                      if (updated[si.scene_number]) {
+                        updated[si.scene_number] = { ...updated[si.scene_number], image: si.image, isGenerating: false };
+                      }
+                    }
+                    return updated;
+                  });
+                }
+                break;
+              }
+              case "scene_image": {
+                const sceneNum = parseInt(job.target_id);
+                if (!isNaN(sceneNum) && result.image) {
+                  setSceneImages((prev) => ({
+                    ...prev,
+                    [sceneNum]: { ...prev[sceneNum], image: result.image as MoodboardImage, isGenerating: false, feedback: "" },
+                  }));
+                }
+                break;
               }
             }
-            const locImgs: Record<string, { image_base64: string; mime_type: string }> = {};
-            const locDescs: Record<string, string> = {};
-            for (const loc of storyData.locations || []) {
-              if (cleanedLocs[loc.id]?.image) {
-                locImgs[loc.id] = { image_base64: cleanedLocs[loc.id].image!.image_base64, mime_type: cleanedLocs[loc.id].image!.mime_type };
-              }
-              locDescs[loc.id] = `${loc.description}. ${loc.atmosphere}`;
-            }
-            const approvedVisuals = {
-              character_images: Object.values(characterImageMap),
-              character_image_map: characterImageMap,
-              setting_image: Object.values(locImgs)[0] || undefined,
-              location_images: locImgs,
-              character_descriptions: storyData.characters.map((c) => `${c.name} (${c.age} ${c.gender}): ${c.appearance}`),
-              setting_description: Object.values(locDescs)[0] || "",
-              location_descriptions: locDescs,
-            };
-            const response = await fetch(`${BACKEND_URL}/moodboard/generate-key-moment`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ story: storyData, approved_visuals: approvedVisuals }),
-            });
-            if (!response.ok) throw new Error("Failed to generate key moment");
-            const kd = await response.json();
-            const entries = (kd.key_moments || [kd.key_moment]).map(
-              (kmItem: { beat_number: number; beat_description: string; image: MoodboardImage; prompt_used: string }) => ({
-                beat_number: kmItem.beat_number,
-                beat_description: kmItem.beat_description,
-                image: kmItem.image,
-                promptUsed: kmItem.prompt_used,
-              })
-            );
-            const primary = entries[0];
-            setKeyMoment({
-              image: primary.image,
-              beat_number: primary.beat_number,
-              beat_description: primary.beat_description,
-              isGenerating: false,
-              feedback: "",
-              promptUsed: primary.promptUsed,
-              entries,
-              selectedIndex: 0,
-            });
-            if (kd.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + kd.cost_usd }));
-          } catch (err) {
-            setError(err instanceof Error ? err.message : "Failed to generate key moment");
-            setKeyMoment((prev) => prev ? { ...prev, isGenerating: false } : null);
           }
-        })();
-      }
+
+          // Clean up processed jobs
+          await clearGenJobs(restoredGenId);
+          // Save updated state
+          saveNow({}, undefined);
+        } catch (err) {
+          console.error("Failed to check completed gen jobs:", err);
+        }
+      })();
     } catch (err) {
       console.error("Failed to restore generation:", err);
     } finally {
@@ -1138,9 +1103,7 @@ export default function CreateEpisodePage() {
     generationIdRef.current = null;
     setGenerationId(null);
     setGenerationUrl(null);
-    setScriptTab("generate");
     setIdea("");
-    setRawScript("");
     setStyle("cinematic");
     setStory(null);
     setIsGenerating(false);
@@ -1159,8 +1122,6 @@ export default function CreateEpisodePage() {
     setEditingLocIndex(null);
     setEditLocDraft(null);
     resetVisualDirection();
-    setProtagonistFeedback("");
-    setProtagonistError("");
     setFilm({
       filmId: null, status: "idle", currentShot: 0, totalShots: 0,
       phase: "filming", completedShots: [], finalVideoUrl: null, error: null,
@@ -1170,6 +1131,8 @@ export default function CreateEpisodePage() {
     setRegeneratingShotNum(null);
     setShotFeedback({});
     setPromptPreview({ shots: [], editedPrompts: {}, estimatedCostUsd: 0, isLoading: false });
+    setSelectedChars([]);
+    setSelectedLocation(null);
     setTotalCost({ story: 0, characters: 0, locations: 0, keyMoments: 0, film: 0 });
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
@@ -1177,727 +1140,362 @@ export default function CreateEpisodePage() {
     }
   };
 
-  const startNewGeneration = async () => {
-    // Save current generation if one exists
-    if (generationIdRef.current) await saveGeneration();
-
-    // Just reset to a clean slate — no Supabase row until first real action
-    resetAllState();
-    fetchGenerationsList();
-  };
-
   // ============================================================
-  // Visual Direction (Phase 3) Functions
+  // Build Your Visuals (Phase 2) Functions
   // ============================================================
 
-  const resetVisualDirection = () => {
-    setVisualStep(null);
-    setMoodboardStep("protagonist");
-    setCharacterImages({});
-    setSettingImage(null);
-    setLocationImages({});
-    setKeyMoment(null);
-    setProtagonistImage(null);
-    setProtagonistLocked(false);
-    setIsGeneratingProtagonist(false);
-  };
-
-  const startVisualDirection = async () => {
+  const startBuildVisuals = () => {
     if (!story) return;
+    setVisualsActive(true);
+    setVisualsTab("characters");
 
-    setVisualStep("characters");
-    setMoodboardStep("protagonist");
-    setProtagonistLocked(false);
-
-    // Generate protagonist first (style anchor)
-    await generateProtagonistImage();
-  };
-
-  // Generate protagonist without reference images (style anchor)
-  const generateProtagonistImage = async () => {
-    if (!story) return;
-
-    setIsGeneratingProtagonist(true);
-    setProtagonistError("");
-
-    try {
-      const response = await fetch(`${BACKEND_URL}/moodboard/generate-protagonist`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to generate protagonist image");
-      }
-
-      const data = await response.json();
-
-      // Find protagonist name
-      const protagonist = story.characters.find((c) => c.id === data.character_id);
-
-      const newProtImg = {
-        character_id: data.character_id,
-        character_name: protagonist?.name || "Protagonist",
-        image: data.image,
-        images: [],
-        selectedIndex: 0,
-        refImages: [],
-      };
-      setProtagonistImage(newProtImg);
-
-      // Track cost
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
-      }
-      saveNow({ protagonistImage: newProtImg, isGeneratingProtagonist: false }, "moodboard");
-    } catch (err) {
-      setProtagonistError(err instanceof Error ? err.message : "Failed to generate protagonist image");
-    } finally {
-      setIsGeneratingProtagonist(false);
-    }
-  };
-
-  const refineProtagonistImage = async () => {
-    if (!story || !protagonistImage || !protagonistFeedback.trim()) return;
-
-    setIsGeneratingProtagonist(true);
-    setProtagonistError("");
-
-    try {
-      const requestBody: Record<string, unknown> = {
-        story,
-        character_id: protagonistImage.character_id,
-        feedback: protagonistFeedback,
-        protagonist_image: {
-          image_base64: protagonistImage.image.image_base64,
-          mime_type: protagonistImage.image.mime_type,
-        },
-      };
-
-      // Include user-uploaded reference images if any
-      if (protagonistImage.refImages.length > 0) {
-        requestBody.reference_images = protagonistImage.refImages.map((r) => ({
-          image_base64: r.base64,
-          mime_type: r.mimeType,
-        }));
-      }
-
-      const response = await fetch(`${BACKEND_URL}/moodboard/refine-character`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to refine protagonist image");
-      }
-
-      const data = await response.json();
-
-      const refinedProt = {
-        ...protagonistImage,
-        image: data.image,
-        images: [data.image],
-        selectedIndex: 0,
-      };
-      setProtagonistImage(refinedProt);
-      setProtagonistFeedback("");
-
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
-      }
-      saveNow({ protagonistImage: refinedProt, isGeneratingProtagonist: false }, "moodboard");
-    } catch (err) {
-      setProtagonistError(err instanceof Error ? err.message : "Failed to refine protagonist image");
-    } finally {
-      setIsGeneratingProtagonist(false);
-    }
-  };
-
-  // Approve protagonist and generate everything else in parallel
-  const approveProtagonist = async () => {
-    if (!story || !protagonistImage) return;
-
-    setProtagonistLocked(true);
-    setMoodboardStep("full");
-
-    // Initialize other character states
-    const initialStates: Record<string, CharacterImageState> = {};
-    story.characters
-      .filter((char) => char.id !== protagonistImage.character_id)
-      .forEach((char) => {
-        initialStates[char.id] = {
-          image: null,
-          images: [],
-          selectedIndex: 0,
-          approved: false,
-          isGenerating: true,
-          feedback: "",
-          promptUsed: "",
-          error: "",
-          refImages: [],
-        };
-      });
-    setCharacterImages(initialStates);
-
-    // Initialize location states (replaces single setting)
-    const initialLocationStates: Record<string, LocationImageState> = {};
-    if (story.locations && story.locations.length > 0) {
-      story.locations.forEach((loc) => {
-        initialLocationStates[loc.id] = {
-          image: null,
-          images: [],
-          selectedIndex: 0,
-          approved: false,
-          isGenerating: true,
-          feedback: "",
-          promptUsed: "",
-          error: "",
-          refImages: [],
-        };
-      });
-      setLocationImages(initialLocationStates);
-    } else {
-      // Backward compat: no locations, use single setting
-      setSettingImage({
-        image: null,
-        images: [],
-        selectedIndex: 0,
-        approved: false,
-        isGenerating: true,
-        feedback: "",
-        promptUsed: "",
-        error: "",
-        refImages: [],
-      });
-    }
-
-    // Generate other characters and locations in parallel, using protagonist as reference
-    const protagonistRef = {
-      image_base64: protagonistImage.image.image_base64,
-      mime_type: protagonistImage.image.mime_type,
+    // Helper: find character image source by ID first, then fallback to name match
+    const findCharImgSource = (char: Character) => {
+      const nameLower = char.name.toLowerCase();
+      // Try ID match first (fastest, most reliable when IDs are preserved)
+      const byId = storyLibraryChars.find((c) => c.id === char.id)
+        || selectedChars.find((c) => c.id === char.id);
+      if (byId?.imageBase64) return byId;
+      // Fallback: match by name (handles cases where Gemini changed the ID)
+      const byName = storyLibraryChars.find((c) => c.name.toLowerCase() === nameLower)
+        || selectedChars.find((c) => c.name.toLowerCase() === nameLower);
+      if (byName?.imageBase64) return byName;
+      return null;
     };
 
-    const locationTasks = story.locations && story.locations.length > 0
-      ? story.locations.map((loc) => generateLocationWithRef(loc.id, protagonistRef))
-      : [generateSettingWithRef(protagonistRef)];
-
-    await Promise.all([
-      ...story.characters
-        .filter((char) => char.id !== protagonistImage.character_id)
-        .map((char) => generateCharacterImageWithRef(char.id, protagonistRef)),
-      ...locationTasks,
-    ]);
-  };
-
-  // Change protagonist look (with cascade warning)
-  const handleChangeProtagonistLook = () => {
-    const confirmed = window.confirm(
-      "Changing the main character will regenerate all other images to match the new style. Continue?"
-    );
-    if (confirmed) {
-      setProtagonistLocked(false);
-      setMoodboardStep("protagonist");
-      setCharacterImages({});
-      setSettingImage(null);
-      setLocationImages({});
-      setKeyMoment(null);
-      // Regenerate protagonist
-      generateProtagonistImage();
-    }
-  };
-
-  const generateCharacterImage = async (characterId: string) => {
-    if (!story) return;
-
-    setCharacterImages((prev) => ({
-      ...prev,
-      [characterId]: { ...prev[characterId], isGenerating: true, error: "" },
-    }));
-
-    try {
-      const response = await fetch(`${BACKEND_URL}/moodboard/generate-character`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story, character_id: characterId }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to generate character image");
+    const charStates: Record<string, CharacterImageState> = {};
+    story.characters.forEach((char) => {
+      const imgSource = findCharImgSource(char);
+      if (imgSource) {
+        charStates[char.id] = {
+          image: { type: "character", image_base64: imgSource.imageBase64!, mime_type: imgSource.imageMimeType, prompt_used: "" },
+          images: [], selectedIndex: 0, approved: true,
+          isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [],
+        };
+      } else {
+        charStates[char.id] = {
+          image: null, images: [], selectedIndex: 0, approved: false,
+          isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [],
+        };
       }
+    });
+    setCharacterImages(charStates);
 
-      const data = await response.json();
+    // Helper: find location image source by ID first, then fallback to name match
+    const findLocImgSource = (loc: Location) => {
+      const nameLower = (loc.name || "").toLowerCase();
+      const byId = storyLibraryLocs.find((l) => l.id === loc.id)
+        || (selectedLocation?.id === loc.id ? selectedLocation : null);
+      if (byId?.imageBase64) return byId;
+      const byName = storyLibraryLocs.find((l) => (l.name || "").toLowerCase() === nameLower)
+        || (selectedLocation && (selectedLocation.name || "").toLowerCase() === nameLower ? selectedLocation : null);
+      if (byName?.imageBase64) return byName;
+      return null;
+    };
 
+    const locStates: Record<string, LocationImageState> = {};
+    story.locations.forEach((loc) => {
+      const imgSource = findLocImgSource(loc);
+      if (imgSource) {
+        locStates[loc.id] = {
+          image: { type: "location", image_base64: imgSource.imageBase64!, mime_type: imgSource.imageMimeType, prompt_used: "" },
+          images: [], selectedIndex: 0, approved: true,
+          isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [],
+        };
+      } else {
+        locStates[loc.id] = {
+          image: null, images: [], selectedIndex: 0, approved: false,
+          isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [],
+        };
+      }
+    });
+    setLocationImages(locStates);
+    saveNow({}, "visuals");
+  };
+
+  // Character visuals modal save handler
+  const handleVisualCharSave = async (charId: string, data: {
+    name: string; age: string; gender: string; description: string;
+    role: string; visualStyle: string | null; imageBase64: string | null; imageMimeType: string;
+  }) => {
+    if (!story) return;
+    setIsSavingVisualChar(true);
+
+    // Update characterImages with the new image
+    if (data.imageBase64) {
       setCharacterImages((prev) => ({
         ...prev,
-        [characterId]: {
-          ...prev[characterId],
-          image: data.image,
-          promptUsed: data.prompt_used,
+        [charId]: {
+          ...(prev[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+          image: { type: "character" as const, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
+          approved: true,
           isGenerating: false,
+          error: "",
         },
       }));
-      // Track character image cost
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to generate character image";
-      setCharacterImages((prev) => ({
-        ...prev,
-        [characterId]: { ...prev[characterId], isGenerating: false, error: msg },
-      }));
     }
+
+    // If story-origin char, push visual changes back to story library
+    const char = story.characters.find((c) => c.id === charId);
+    if (char?.origin === "story" && associatedStoryId) {
+      try {
+        await updateStoryCharacter(associatedStoryId, charId, {
+          description: data.description,
+          image_base64: data.imageBase64,
+          image_mime_type: data.imageMimeType,
+        });
+      } catch { /* non-fatal */ }
+    }
+
+    setIsSavingVisualChar(false);
+    setEditingVisualCharId(null);
+    saveNow({}, "visuals");
   };
 
-  // Generate character with protagonist as style reference
-  const generateCharacterImageWithRef = async (characterId: string, protagonistRef: { image_base64: string; mime_type: string }) => {
+  // Location visuals modal save handler
+  const handleVisualLocSave = async (locId: string, data: {
+    name: string; description: string; atmosphere: string;
+    visualStyle: string | null; imageBase64: string | null; imageMimeType: string;
+  }) => {
     if (!story) return;
+    setIsSavingVisualLoc(true);
 
-    setCharacterImages((prev) => ({
-      ...prev,
-      [characterId]: { ...prev[characterId], isGenerating: true, error: "" },
-    }));
-
-    try {
-      const response = await fetch(`${BACKEND_URL}/moodboard/generate-character`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          story,
-          character_id: characterId,
-          protagonist_image: protagonistRef,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to generate character image");
-      }
-
-      const data = await response.json();
-
-      setCharacterImages((prev) => ({
+    if (data.imageBase64) {
+      setLocationImages((prev) => ({
         ...prev,
-        [characterId]: {
-          ...prev[characterId],
-          image: data.image,
-          promptUsed: data.prompt_used,
+        [locId]: {
+          ...(prev[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+          image: { type: "location" as const, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
+          approved: true,
           isGenerating: false,
+          error: "",
         },
       }));
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
-      }
+    }
+
+    // If story has this location and it's from library, update it
+    if (associatedStoryId) {
+      try {
+        await updateStoryLocation(associatedStoryId, locId, {
+          description: data.description,
+          atmosphere: data.atmosphere,
+          image_base64: data.imageBase64,
+          image_mime_type: data.imageMimeType,
+        });
+      } catch { /* non-fatal */ }
+    }
+
+    setIsSavingVisualLoc(false);
+    setEditingVisualLocId(null);
+    saveNow({}, "visuals");
+  };
+
+  // Save AI char to story library
+  const saveAiCharToStory = async (charId: string) => {
+    if (!story || !associatedStoryId) return;
+    const char = story.characters.find((c) => c.id === charId);
+    const charImg = characterImages[charId];
+    if (!char || !charImg?.image) return;
+
+    try {
+      await createStoryCharacter(associatedStoryId, {
+        name: char.name,
+        age: char.age,
+        gender: char.gender,
+        description: char.appearance,
+        role: char.role,
+        visual_style: style,
+        image_base64: charImg.image.image_base64,
+        image_mime_type: charImg.image.mime_type,
+      });
+      // Mark as story-origin now
+      const updated = { ...story };
+      updated.characters = updated.characters.map((c) =>
+        c.id === charId ? { ...c, origin: "story" as const } : c
+      );
+      setStory(updated);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to generate character image";
-      setCharacterImages((prev) => ({
-        ...prev,
-        [characterId]: { ...prev[characterId], isGenerating: false, error: msg },
-      }));
+      console.error("Failed to save char to story:", err);
     }
   };
 
-  // Generate setting with protagonist as style reference
-  const generateSettingWithRef = async (protagonistRef: { image_base64: string; mime_type: string }) => {
-    if (!story) return;
+  // Fetch scene visual descriptions from AI
+  const fetchSceneDescriptions = async () => {
+    if (!story || !generationIdRef.current) return;
+    setIsGeneratingSceneDescs(true);
 
-    setSettingImage((prev) => prev ? { ...prev, isGenerating: true, error: "" } : {
-      image: null,
-      images: [],
-      selectedIndex: 0,
-      approved: false,
-      isGenerating: true,
-      feedback: "",
-      promptUsed: "",
-      error: "",
-      refImages: [],
+    try {
+      const data = await callGen<{ descriptions: Array<{ scene_number: number; title: string; visual_description: string }>; cost_usd?: number }>(
+        "scene_descriptions",
+        "/story/generate-scene-descriptions",
+        { story },
+        { generationId: generationIdRef.current }
+      );
+
+      const newSceneImages: Record<number, SceneImageState> = {};
+      for (const desc of data.descriptions) {
+        newSceneImages[desc.scene_number] = {
+          sceneNumber: desc.scene_number,
+          title: desc.title,
+          visualDescription: desc.visual_description,
+          image: null,
+          isGenerating: false,
+          error: "",
+          feedback: "",
+        };
+      }
+      setSceneImages(newSceneImages);
+    } catch (err) {
+      console.error("Failed to fetch scene descriptions:", err);
+    } finally {
+      setIsGeneratingSceneDescs(false);
+    }
+  };
+
+  // Generate all 8 scene images in parallel
+  const generateAllSceneImages = async () => {
+    if (!story) return;
+    const approvedVisuals = buildApprovedVisuals();
+    if (!approvedVisuals) return;
+
+    // Mark all scenes as generating
+    setSceneImages((prev) => {
+      const updated = { ...prev };
+      Object.keys(updated).forEach((key) => {
+        const num = parseInt(key);
+        updated[num] = { ...updated[num], isGenerating: true, error: "" };
+      });
+      return updated;
     });
 
     try {
-      const response = await fetch(`${BACKEND_URL}/moodboard/generate-setting`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          story,
-          protagonist_image: protagonistRef,
-        }),
+      const sceneDescs = Object.values(sceneImages).map((si) => ({
+        scene_number: si.sceneNumber,
+        visual_description: si.visualDescription,
+      }));
+
+      const data = await callGen<{ scene_images: Array<{ scene_number: number; image: MoodboardImage; prompt_used: string }>; cost_usd?: number }>(
+        "scene_images",
+        "/moodboard/generate-scene-images",
+        { story, approved_visuals: approvedVisuals, scene_descriptions: sceneDescs },
+        { generationId: generationIdRef.current! }
+      );
+
+      setSceneImages((prev) => {
+        const updated = { ...prev };
+        for (const si of data.scene_images) {
+          if (updated[si.scene_number]) {
+            updated[si.scene_number] = {
+              ...updated[si.scene_number],
+              image: si.image,
+              isGenerating: false,
+            };
+          }
+        }
+        return updated;
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to generate setting image");
+      const scenesCost = data.cost_usd;
+      if (scenesCost) {
+        setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + scenesCost }));
       }
-
-      const data = await response.json();
-
-      setSettingImage({
-        image: data.image,
-        images: [data.image],
-        selectedIndex: 0,
-        approved: false,
-        isGenerating: false,
-        feedback: "",
-        promptUsed: data.prompt_used,
-        error: "",
-        refImages: [],
-      });
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, locations: prev.locations + data.cost_usd }));
-      }
+      saveNow({}, "visuals");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to generate setting image";
-      setSettingImage((prev) => prev ? { ...prev, isGenerating: false, error: msg } : null);
+      setSceneImages((prev) => {
+        const updated = { ...prev };
+        Object.keys(updated).forEach((key) => {
+          const num = parseInt(key);
+          if (updated[num].isGenerating) {
+            updated[num] = { ...updated[num], isGenerating: false, error: "Generation failed" };
+          }
+        });
+        return updated;
+      });
     }
   };
 
-  // Generate a specific location image with protagonist as style reference
-  const generateLocationWithRef = async (
-    locationId: string,
-    protagonistRef: { image_base64: string; mime_type: string }
-  ) => {
+  // Refine a single scene image with feedback
+  const refineSceneImage = async (sceneNumber: number) => {
     if (!story) return;
+    const scene = sceneImages[sceneNumber];
+    if (!scene || !scene.feedback.trim()) return;
 
-    setLocationImages((prev) => ({
+    const approvedVisuals = buildApprovedVisuals();
+    if (!approvedVisuals) return;
+
+    setSceneImages((prev) => ({
       ...prev,
-      [locationId]: {
-        ...(prev[locationId] || { image: null, images: [], selectedIndex: 0, approved: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-        isGenerating: true,
-        error: "",
-      },
+      [sceneNumber]: { ...prev[sceneNumber], isGenerating: true, error: "" },
     }));
 
     try {
-      const response = await fetch(`${BACKEND_URL}/moodboard/generate-location`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await callGen<{ image: MoodboardImage; cost_usd?: number }>(
+        "scene_image",
+        "/moodboard/refine-scene-image",
+        {
           story,
-          location_id: locationId,
-          protagonist_image: protagonistRef,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to generate location image");
-      }
-
-      const data = await response.json();
-      setLocationImages((prev) => ({
-        ...prev,
-        [locationId]: {
-          ...prev[locationId],
-          image: data.image,
-          promptUsed: data.prompt_used,
-          isGenerating: false,
+          approved_visuals: approvedVisuals,
+          scene_number: sceneNumber,
+          visual_description: scene.visualDescription,
+          feedback: scene.feedback,
         },
-      }));
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, locations: prev.locations + data.cost_usd }));
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to generate location image";
-      setLocationImages((prev) => ({
+        { generationId: generationIdRef.current!, targetId: String(sceneNumber) }
+      );
+
+      setSceneImages((prev) => ({
         ...prev,
-        [locationId]: { ...prev[locationId], isGenerating: false, error: msg },
-      }));
-    }
-  };
-
-  const refineCharacterImage = async (characterId: string) => {
-    if (!story) return;
-    const charState = characterImages[characterId];
-    if (!charState?.feedback.trim()) return;
-
-    setCharacterImages((prev) => ({
-      ...prev,
-      [characterId]: { ...prev[characterId], isGenerating: true, error: "" },
-    }));
-
-    try {
-      // Include protagonist reference if available
-      const requestBody: Record<string, unknown> = {
-        story,
-        character_id: characterId,
-        feedback: charState.feedback,
-      };
-
-      if (protagonistImage) {
-        requestBody.protagonist_image = {
-          image_base64: protagonistImage.image.image_base64,
-          mime_type: protagonistImage.image.mime_type,
-        };
-      }
-
-      // Include user-uploaded reference images if any
-      if (charState.refImages && charState.refImages.length > 0) {
-        requestBody.reference_images = charState.refImages.map((r) => ({
-          image_base64: r.base64,
-          mime_type: r.mimeType,
-        }));
-      }
-
-      const response = await fetch(`${BACKEND_URL}/moodboard/refine-character`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to refine character image");
-      }
-
-      const data = await response.json();
-
-      setCharacterImages((prev) => ({
-        ...prev,
-        [characterId]: {
-          ...prev[characterId],
+        [sceneNumber]: {
+          ...prev[sceneNumber],
           image: data.image,
-          promptUsed: data.prompt_used,
           isGenerating: false,
           feedback: "",
         },
       }));
-      // Track character refinement cost
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, characters: prev.characters + data.cost_usd }));
+      const refineCost = data.cost_usd;
+      if (refineCost) {
+        setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + refineCost }));
       }
+      saveNow({}, "visuals");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to refine character image";
-      setCharacterImages((prev) => ({
+      setSceneImages((prev) => ({
         ...prev,
-        [characterId]: { ...prev[characterId], isGenerating: false, error: msg },
+        [sceneNumber]: { ...prev[sceneNumber], isGenerating: false, error: "Refinement failed" },
       }));
     }
   };
 
-  // Retry (regenerate) character with protagonist reference
-  const retryCharacterImage = async (characterId: string) => {
-    if (!story || !protagonistImage) return;
-
-    const protagonistRef = {
-      image_base64: protagonistImage.image.image_base64,
-      mime_type: protagonistImage.image.mime_type,
-    };
-
-    await generateCharacterImageWithRef(characterId, protagonistRef);
-  };
-
-  // Retry (regenerate) setting with protagonist reference
-  const retrySettingImage = async () => {
-    if (!story || !protagonistImage) return;
-
-    const protagonistRef = {
-      image_base64: protagonistImage.image.image_base64,
-      mime_type: protagonistImage.image.mime_type,
-    };
-
-    await generateSettingWithRef(protagonistRef);
-  };
-
-  const approveCharacter = (characterId: string) => {
-    setCharacterImages((prev) => ({
-      ...prev,
-      [characterId]: { ...prev[characterId], approved: true },
-    }));
-  };
-
-
-  const refineSettingImage = async () => {
-    if (!story || !settingImage?.feedback.trim()) return;
-
-    setSettingImage((prev) => prev ? { ...prev, isGenerating: true, error: "" } : null);
-
-    try {
-      // Include protagonist reference if available
-      const requestBody: Record<string, unknown> = {
-        story,
-        feedback: settingImage.feedback,
-      };
-
-      if (protagonistImage) {
-        requestBody.protagonist_image = {
-          image_base64: protagonistImage.image.image_base64,
-          mime_type: protagonistImage.image.mime_type,
-        };
-      }
-
-      const response = await fetch(`${BACKEND_URL}/moodboard/refine-setting`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to refine setting image");
-      }
-
-      const data = await response.json();
-
-      setSettingImage((prev) => ({
-        image: data.image,
-        images: [data.image],
-        selectedIndex: 0,
-        approved: false,
-        isGenerating: false,
-        feedback: "",
-        promptUsed: data.prompt_used,
-        error: "",
-        refImages: prev?.refImages || [],
-      }));
-      // Track setting refinement cost
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, locations: prev.locations + data.cost_usd }));
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to refine setting image";
-      setSettingImage((prev) => prev ? { ...prev, isGenerating: false, error: msg } : null);
-    }
-  };
-
-  const refineLocationImage = async (locationId: string) => {
-    if (!story) return;
-    const locState = locationImages[locationId];
-    if (!locState?.feedback.trim()) return;
-
-    setLocationImages((prev) => ({
-      ...prev,
-      [locationId]: { ...prev[locationId], isGenerating: true, error: "" },
-    }));
-
-    try {
-      const requestBody: Record<string, unknown> = {
-        story,
-        location_id: locationId,
-        feedback: locState.feedback,
-      };
-
-      if (protagonistImage) {
-        requestBody.protagonist_image = {
-          image_base64: protagonistImage.image.image_base64,
-          mime_type: protagonistImage.image.mime_type,
-        };
-      }
-
-      // Include user-uploaded reference images if any
-      if (locState.refImages && locState.refImages.length > 0) {
-        requestBody.reference_images = locState.refImages.map((r) => ({
-          image_base64: r.base64,
-          mime_type: r.mimeType,
-        }));
-      }
-
-      const response = await fetch(`${BACKEND_URL}/moodboard/refine-location`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to refine location image");
-      }
-
-      const data = await response.json();
-
-      setLocationImages((prev) => ({
-        ...prev,
-        [locationId]: {
-          ...prev[locationId],
-          image: data.image,
-          promptUsed: data.prompt_used,
-          isGenerating: false,
-          feedback: "",
-        },
-      }));
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, locations: prev.locations + data.cost_usd }));
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to refine location image";
-      setLocationImages((prev) => ({
-        ...prev,
-        [locationId]: { ...prev[locationId], isGenerating: false, error: msg },
-      }));
-    }
-  };
-
-  // Build approved visuals payload from current state
+  // Updated buildApprovedVisuals — no protagonist dependency
   const buildApprovedVisuals = () => {
-    if (!story || !protagonistImage) return null;
+    if (!story) return null;
 
-    const allCharacterImages = [
-      {
-        image_base64: protagonistImage.image.image_base64,
-        mime_type: protagonistImage.image.mime_type,
-      },
-      ...story.characters
-        .filter((char) => char.id !== protagonistImage.character_id && characterImages[char.id]?.image)
-        .map((char) => ({
-          image_base64: characterImages[char.id].image!.image_base64,
-          mime_type: characterImages[char.id].image!.mime_type,
-        })),
-    ];
-
-    // Build character_image_map for per-scene selection
+    const allCharacterImages: { image_base64: string; mime_type: string }[] = [];
     const characterImageMap: Record<string, { image_base64: string; mime_type: string }> = {};
-    // Protagonist
-    const protagonist = story.characters.find((c) => c.id === protagonistImage.character_id);
-    if (protagonist) {
-      characterImageMap[protagonist.id] = {
-        image_base64: protagonistImage.image.image_base64,
-        mime_type: protagonistImage.image.mime_type,
-      };
-    }
-    // Other characters
-    story.characters
-      .filter((char) => char.id !== protagonistImage.character_id && characterImages[char.id]?.image)
-      .forEach((char) => {
-        characterImageMap[char.id] = {
-          image_base64: characterImages[char.id].image!.image_base64,
-          mime_type: characterImages[char.id].image!.mime_type,
-        };
-      });
+    story.characters.forEach((char) => {
+      const charState = characterImages[char.id];
+      if (charState?.image) {
+        const ref = { image_base64: charState.image.image_base64, mime_type: charState.image.mime_type };
+        allCharacterImages.push(ref);
+        characterImageMap[char.id] = ref;
+      }
+    });
 
-    // Build location images and descriptions
     const locImages: Record<string, { image_base64: string; mime_type: string }> = {};
     const locDescs: Record<string, string> = {};
-    if (story.locations && story.locations.length > 0) {
-      story.locations.forEach((loc) => {
-        const locState = locationImages[loc.id];
-        if (locState?.image) {
-          locImages[loc.id] = {
-            image_base64: locState.image.image_base64,
-            mime_type: locState.image.mime_type,
-          };
-        }
-        locDescs[loc.id] = `${loc.description}. ${loc.atmosphere}`;
-      });
-    }
+    story.locations.forEach((loc) => {
+      const locState = locationImages[loc.id];
+      if (locState?.image) {
+        locImages[loc.id] = { image_base64: locState.image.image_base64, mime_type: locState.image.mime_type };
+      }
+      locDescs[loc.id] = `${loc.description}. ${loc.atmosphere}`;
+    });
 
-    // Backward compat: setting_image from first location or old setting
+    // Backward compat: setting_image from first location
     let settingImg = undefined;
     let settingDesc = "";
     if (Object.keys(locImages).length > 0) {
       const firstLocId = Object.keys(locImages)[0];
       settingImg = locImages[firstLocId];
       settingDesc = locDescs[firstLocId] || "";
-    } else if (settingImage?.image) {
-      settingImg = {
-        image_base64: settingImage.image.image_base64,
-        mime_type: settingImage.image.mime_type,
-      };
-      settingDesc = story.setting
-        ? `${story.setting.location}, ${story.setting.time}. ${story.setting.atmosphere}`
-        : "";
     }
 
     return {
@@ -1913,140 +1511,15 @@ export default function CreateEpisodePage() {
     };
   };
 
-  const continueToKeyMoment = async () => {
-    if (!story || !protagonistImage) return;
-
-    // Check that all locations are ready (or fallback to setting)
-    const hasLocations = story.locations && story.locations.length > 0;
-    if (hasLocations) {
-      const allLocationsReady = story.locations.every((loc) => locationImages[loc.id]?.image);
-      if (!allLocationsReady) return;
-    } else if (!settingImage?.image) {
-      return;
-    }
-
-    setVisualStep("key_moment");
-    setKeyMoment({
-      image: null,
-      beat_number: 0,
-      beat_description: "",
-      isGenerating: true,
-      feedback: "",
-      promptUsed: "",
-      entries: [],
-      selectedIndex: 0,
-    });
-
-    const approvedVisuals = buildApprovedVisuals();
-    if (!approvedVisuals) return;
-
-    try {
-      const response = await fetch(`${BACKEND_URL}/moodboard/generate-key-moment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story, approved_visuals: approvedVisuals }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to generate key moment");
-      }
-
-      const data = await response.json();
-
-      // Build entries from the key_moments array (3 distinct scenes)
-      const entries: KeyMomentEntry[] = (data.key_moments || [data.key_moment]).map(
-        (km: { beat_number: number; beat_description: string; image: MoodboardImage; prompt_used: string }) => ({
-          beat_number: km.beat_number,
-          beat_description: km.beat_description,
-          image: km.image,
-          promptUsed: km.prompt_used,
-        })
-      );
-
-      const primary = entries[0];
-      const newKeyMoment = {
-        image: primary.image,
-        beat_number: primary.beat_number,
-        beat_description: primary.beat_description,
-        isGenerating: false,
-        feedback: "",
-        promptUsed: primary.promptUsed,
-        entries,
-        selectedIndex: 0,
-      };
-      setKeyMoment(newKeyMoment);
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + data.cost_usd }));
-      }
-      saveNow({ keyMoment: newKeyMoment }, "key_moments");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate key moment");
-      setKeyMoment((prev) => prev ? { ...prev, isGenerating: false } : null);
-    }
+  const resetVisualDirection = () => {
+    setVisualsActive(false);
+    setVisualsTab("characters");
+    setCharacterImages({});
+    setLocationImages({});
+    setSceneImages({});
   };
 
-  const refineKeyMoment = async () => {
-    if (!story || !keyMoment?.feedback.trim() || !protagonistImage) return;
-
-    setKeyMoment((prev) => prev ? { ...prev, isGenerating: true } : null);
-
-    const approvedVisuals = buildApprovedVisuals();
-    if (!approvedVisuals) return;
-
-    try {
-      const response = await fetch(`${BACKEND_URL}/moodboard/refine-key-moment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          story,
-          approved_visuals: approvedVisuals,
-          feedback: keyMoment.feedback,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to refine key moment");
-      }
-
-      const data = await response.json();
-
-      setKeyMoment((prev) => {
-        // Replace the currently selected entry with the refined version
-        const newEntry: KeyMomentEntry = {
-          beat_number: data.key_moment.beat_number,
-          beat_description: data.key_moment.beat_description,
-          image: data.key_moment.image,
-          promptUsed: data.key_moment.prompt_used,
-        };
-        const entries = [...(prev?.entries || [])];
-        const idx = prev?.selectedIndex || 0;
-        if (entries.length > idx) {
-          entries[idx] = newEntry;
-        } else {
-          entries.push(newEntry);
-        }
-        return {
-          image: data.key_moment.image,
-          beat_number: data.key_moment.beat_number,
-          beat_description: data.key_moment.beat_description,
-          isGenerating: false,
-          feedback: "",
-          promptUsed: data.key_moment.prompt_used,
-          entries,
-          selectedIndex: idx,
-        };
-      });
-      // Track key moment refinement cost
-      if (data.cost_usd) {
-        setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + data.cost_usd }));
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to refine key moment");
-      setKeyMoment((prev) => prev ? { ...prev, isGenerating: false } : null);
-    }
-  };
+  // (old startVisualDirection removed — replaced by startBuildVisuals above)
 
 
   // ============================================================
@@ -2069,7 +1542,7 @@ export default function CreateEpisodePage() {
     // Use refs to avoid stale closure issues
     if (!generationIdRef.current || isRestoringRef.current) return;
     // Only save if we have meaningful state
-    if (!story && !protagonistImage) return;
+    if (!story && !visualsActive) return;
 
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
@@ -2078,17 +1551,15 @@ export default function CreateEpisodePage() {
     return () => { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    generationId, story, protagonistImage, protagonistLocked, moodboardStep,
-    characterImages, locationImages, keyMoment, promptPreview,
-    visualStep, film, clipsApproved, totalCost,
+    generationId, story, visualsActive, visualsTab,
+    characterImages, locationImages, sceneImages, promptPreview,
+    film, clipsApproved, totalCost,
   ]);
 
   // On mount: only restore if URL has ?g= param. Otherwise start fresh.
   // Works like ChatGPT/Claude: bare URL = blank slate, ?g=xxx = restore that generation.
   useEffect(() => {
     const init = async () => {
-      fetchGenerationsList();
-
       const urlParams = new URLSearchParams(window.location.search);
       const urlGenId = urlParams.get("g");
       const urlStoryId = urlParams.get("storyId");
@@ -2103,6 +1574,8 @@ export default function CreateEpisodePage() {
           .then(res => res.ok ? res.json() : null)
           .then(data => { if (data?.title) setAssociatedStoryName(data.title); })
           .catch(() => {});
+        // Fetch story library chars & locations
+        fetchStoryLibrary(urlStoryId);
       }
       if (urlEpName) { setEpisodeName(urlEpName); episodeNameRef.current = urlEpName; }
       if (urlEpNumber) setEpisodeNumber(parseInt(urlEpNumber, 10));
@@ -2110,23 +1583,33 @@ export default function CreateEpisodePage() {
       if (urlGenId) {
         await restoreGeneration(urlGenId);
       }
-      // No ?g= param → fresh blank state. User starts generating to create an entry.
+
+      // No storyId and no restore → show story picker (all episodes must be linked to a story)
+      if (!urlStoryId && !urlGenId) {
+        if (user?.id) {
+          try {
+            const stories = await getMyStories(user.id);
+            setAvailableStories(stories.map(s => ({ id: s.id, title: s.title, cover: s.cover, episodeCount: s.episodeCount })));
+          } catch { /* ignore */ }
+        }
+        setShowStoryPicker(true);
+      }
     };
     init().catch(console.error);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const startFilmGeneration = async () => {
-    if (!story || !keyMoment?.image || !protagonistImage) return;
+    if (!story) return;
 
     const approvedVisuals = buildApprovedVisuals();
     if (!approvedVisuals) return;
 
-    // Build key moment image for video reference
-    const keyMomentImage = {
-      image_base64: keyMoment.image.image_base64,
-      mime_type: keyMoment.image.mime_type,
-    };
+    // Use spike scene image (scene 4) as key_moment_image for backward compat with film pipeline
+    const spikeScene = sceneImages[4] || sceneImages[Object.keys(sceneImages)[0] as unknown as number];
+    const keyMomentImage = spikeScene?.image
+      ? { image_base64: spikeScene.image.image_base64, mime_type: spikeScene.image.mime_type }
+      : undefined;
 
     setFilm({
       filmId: null,
@@ -2185,7 +1668,7 @@ export default function CreateEpisodePage() {
   // --- Prompt Preview (Pre-Flight Check) ---
 
   const fetchPromptPreviews = async () => {
-    if (!story || !protagonistImage) return;
+    if (!story) return;
 
     const approvedVisuals = buildApprovedVisuals();
     if (!approvedVisuals) return;
@@ -2193,17 +1676,17 @@ export default function CreateEpisodePage() {
     setPromptPreview((prev) => ({ ...prev, isLoading: true }));
 
     try {
-      const selectedEntry = keyMoment?.entries[keyMoment.selectedIndex];
+      const spikeScene = sceneImages[4] || sceneImages[Object.keys(sceneImages)[0] as unknown as number];
       const response = await fetch(`${BACKEND_URL}/film/preview-prompts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           story,
           approved_visuals: approvedVisuals,
-          key_moment_image: selectedEntry?.image
-            ? { image_base64: selectedEntry.image.image_base64, mime_type: selectedEntry.image.mime_type }
+          key_moment_image: spikeScene?.image
+            ? { image_base64: spikeScene.image.image_base64, mime_type: spikeScene.image.mime_type }
             : { image_base64: "", mime_type: "image/png" },
-          beat_numbers: keyMoment?.entries.map((e) => e.beat_number) || [],
+          beat_numbers: [],
         }),
       });
 
@@ -2232,32 +1715,33 @@ export default function CreateEpisodePage() {
   };
 
   const startFilmWithEditedPrompts = async () => {
-    if (!story || !keyMoment?.entries.length || !protagonistImage) return;
+    if (!story) return;
 
     const approvedVisuals = buildApprovedVisuals();
     if (!approvedVisuals) return;
 
-    // Build a map from beat_number -> key moment image for per-shot references
-    const keyMomentByBeat: Record<number, { image_base64: string; mime_type: string }> = {};
-    for (const entry of keyMoment.entries) {
-      keyMomentByBeat[entry.beat_number] = {
-        image_base64: entry.image.image_base64,
-        mime_type: entry.image.mime_type,
-      };
-    }
+    // Use spike scene image as overall key_moment_image for backward compat
+    const spikeScene = sceneImages[4] || sceneImages[Object.keys(sceneImages)[0] as unknown as number];
+    const keyMomentImage = spikeScene?.image
+      ? { image_base64: spikeScene.image.image_base64, mime_type: spikeScene.image.mime_type }
+      : undefined;
 
-    // Use the selected key moment as the overall key_moment_image (backward compat)
-    const selectedEntry = keyMoment.entries[keyMoment.selectedIndex];
-    const keyMomentImage = {
-      image_base64: selectedEntry.image.image_base64,
-      mime_type: selectedEntry.image.mime_type,
-    };
+    // Build per-shot scene image references
+    const sceneImageByBeat: Record<number, { image_base64: string; mime_type: string }> = {};
+    for (const key in sceneImages) {
+      const si = sceneImages[key as unknown as number];
+      if (si?.image) {
+        sceneImageByBeat[si.sceneNumber] = {
+          image_base64: si.image.image_base64,
+          mime_type: si.image.mime_type,
+        };
+      }
+    }
 
     const editedShots = promptPreview.shots.map((shot) => ({
       beat_number: shot.beat_number,
       veo_prompt: promptPreview.editedPrompts[shot.beat_number] || shot.veo_prompt,
-      // Attach the corresponding key moment image as the sole reference for this shot
-      reference_image: keyMomentByBeat[shot.beat_number] || null,
+      reference_image: sceneImageByBeat[shot.beat_number] || null,
     }));
 
     setFilm({
@@ -2382,7 +1866,7 @@ export default function CreateEpisodePage() {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                name: episodeNameRef.current || story?.title || "Untitled Episode",
+                name: episodeNameRef.current || "Untitled Episode",
                 media_url: data.final_video_url || null,
                 status: "draft",
               }),
@@ -2600,11 +2084,11 @@ export default function CreateEpisodePage() {
         {/* Step Indicator + Save Draft */}
         <div className="relative flex items-center justify-center gap-2 mb-8">
           {[
-            { num: 1, label: "Create Your Script", active: !visualStep && film.status === "idle" },
-            { num: 2, label: "Build Your Visuals", active: !!visualStep && film.status === "idle" },
+            { num: 1, label: "Create Your Script", active: !visualsActive && film.status === "idle" },
+            { num: 2, label: "Build Your Visuals", active: visualsActive && film.status === "idle" },
             { num: 3, label: "Create Your Video", active: film.status !== "idle" },
           ].map((step, i) => {
-            const isCompleted = step.num === 1 ? (!!visualStep || film.status !== "idle")
+            const isCompleted = step.num === 1 ? (visualsActive || film.status !== "idle")
               : step.num === 2 ? film.status !== "idle"
               : film.status === "ready";
             return (
@@ -2664,37 +2148,11 @@ export default function CreateEpisodePage() {
           )}
         </div>
 
-        {/* Script Input Tabs (only visible during Step 1) */}
-        {!visualStep && film.status === "idle" && (
-          <div className="flex gap-6 mb-6">
-            <button
-              onClick={() => setScriptTab("generate")}
-              className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
-                scriptTab === "generate"
-                  ? "text-white border-white"
-                  : "text-white/50 border-transparent hover:text-white/70"
-              }`}
-            >
-              Generate with AI
-            </button>
-            <button
-              onClick={() => setScriptTab("insert")}
-              className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
-                scriptTab === "insert"
-                  ? "text-white border-white"
-                  : "text-white/50 border-transparent hover:text-white/70"
-              }`}
-            >
-              Insert Your Script
-            </button>
-          </div>
-        )}
-
+        {!visualsActive && film.status === "idle" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column: Input Form */}
           <div className="bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
-            {scriptTab === "generate" ? (
-              <>
+            <>
                 <h2 className="text-xl font-semibold text-white mb-2">
                   Your Episode Idea
                 </h2>
@@ -2714,6 +2172,42 @@ export default function CreateEpisodePage() {
                 <div className="flex items-center gap-3 mb-6">
                   <span className="text-xs text-[#ADADAD] bg-[#262626] px-3 py-1.5 rounded-full">Episode Length: ~60s</span>
                 </div>
+
+                {/* Visual Style selector */}
+                <div className="mb-6">
+                  <label className="block text-white text-sm font-medium mb-2">Visual Style</label>
+                  <div className="flex flex-wrap gap-2">
+                    {STYLE_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => { if (!story) { setStyle(opt.value); setSelectedChars([]); setSelectedLocation(null); } }}
+                        disabled={!!story}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          style === opt.value
+                            ? "bg-[#262550] border border-[#B8B6FC] text-[#B8B6FC]"
+                            : "bg-[#262626] border border-[#262626] text-[#ADADAD] hover:border-[#444]"
+                        } ${story ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  {story && (
+                    <p className="text-[#ADADAD] text-xs mt-1.5">Style locked after script generation</p>
+                  )}
+                </div>
+
+                {/* Character & Location picker (from story library) */}
+                <CharacterLocationPicker
+                  storyCharacters={storyLibraryChars}
+                  storyLocations={storyLibraryLocs}
+                  selectedStyle={style}
+                  selectedCharacters={selectedChars}
+                  selectedLocation={selectedLocation}
+                  onCharactersChange={setSelectedChars}
+                  onLocationChange={setSelectedLocation}
+                  disabled={!!story}
+                />
 
                 <button
                   onClick={generateStory}
@@ -2738,52 +2232,6 @@ export default function CreateEpisodePage() {
                   )}
                 </button>
               </>
-            ) : (
-              <>
-                <h2 className="text-xl font-semibold text-white mb-2">
-                  Your Episode Script
-                </h2>
-                <p className="text-sm text-[#ADADAD] mb-6">
-                  Recommended: organize your script into 3 main scenes of no more than 1 min in length
-                </p>
-
-                <div className="mb-6">
-                  <textarea
-                    value={rawScript}
-                    onChange={(e) => setRawScript(e.target.value)}
-                    placeholder="Paste your script here..."
-                    className="w-full h-64 bg-[#262626] rounded-2xl px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none font-mono text-sm leading-relaxed"
-                  />
-                </div>
-
-                <div className="flex items-center gap-3 mb-6">
-                  <span className="text-xs text-[#ADADAD] bg-[#262626] px-3 py-1.5 rounded-full">Episode Length: ~60s</span>
-                </div>
-
-                <button
-                  onClick={parseScript}
-                  disabled={isGenerating || !rawScript.trim()}
-                  className="w-full py-4 rounded-xl font-semibold text-white bg-gradient-to-r from-[#9C99FF] to-[#7370FF] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-                >
-                  {isGenerating ? (
-                    <>
-                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      Generating Scenes...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      Generate Scenes
-                    </>
-                  )}
-                </button>
-              </>
-            )}
 
             {error && (
               <div className="mt-4 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">
@@ -2792,30 +2240,38 @@ export default function CreateEpisodePage() {
             )}
           </div>
 
-          {/* Right Column: Story Structure */}
-          <div className="bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
-            <h2 className="text-xl font-semibold text-white mb-4">Story Structure</h2>
-
+          {/* Right Column */}
+          <div className="bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6 flex flex-col min-h-0">
             {/* Tab switcher */}
             {story && !isGenerating && (
-              <div className="flex gap-1 bg-[#1A1E2F] rounded-lg p-1 mb-6">
-                <button
-                  onClick={() => setRightTab("assets")}
-                  className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
-                    rightTab === "assets" ? "bg-[#B8B6FC] text-black" : "text-[#ADADAD] hover:text-white"
-                  }`}
-                >
-                  Assets
-                </button>
-                <button
-                  onClick={() => setRightTab("script")}
-                  className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
-                    rightTab === "script" ? "bg-[#B8B6FC] text-black" : "text-[#ADADAD] hover:text-white"
-                  }`}
-                >
-                  Script
-                </button>
-              </div>
+              <>
+                <div className="flex border-b border-[#1A1E2F] mb-5">
+                  <button
+                    onClick={() => setRightTab("script")}
+                    className={`flex-1 text-center text-lg font-bold pb-3 transition-colors ${
+                      rightTab === "script" ? "text-white border-b-2 border-white" : "text-[#ADADAD] hover:text-white"
+                    }`}
+                  >
+                    Script
+                  </button>
+                  <button
+                    onClick={() => setRightTab("world")}
+                    className={`flex-1 text-center text-lg font-bold pb-3 transition-colors ${
+                      rightTab === "world" ? "text-white border-b-2 border-white" : "text-[#ADADAD] hover:text-white"
+                    }`}
+                  >
+                    World
+                  </button>
+                </div>
+                {rightTab === "script" && (
+                  <p className="text-white font-semibold text-sm mb-1">
+                    Episode Scenes{" "}
+                    <span className="text-[#ADADAD] font-normal text-xs">
+                      ({getScenes(story).length} scenes, total of up to 1 min in length)
+                    </span>
+                  </p>
+                )}
+              </>
             )}
 
             {!story && !isGenerating && (
@@ -2823,7 +2279,7 @@ export default function CreateEpisodePage() {
                 <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
-                <p>{scriptTab === "generate" ? "Enter your idea and click Generate Script" : "Paste your script and click Generate Scenes"}</p>
+                <p>Enter your idea and click Generate Script</p>
               </div>
             )}
 
@@ -2838,39 +2294,16 @@ export default function CreateEpisodePage() {
             )}
 
             {story && !isGenerating && (
-              <div className="space-y-4">
-                {/* Editable title */}
-                <div className="flex items-center gap-2 mb-2">
-                  {editingTitle ? (
-                    <input
-                      autoFocus
-                      value={story.title}
-                      onChange={(e) => setStory({ ...story, title: e.target.value })}
-                      onBlur={() => setEditingTitle(false)}
-                      onKeyDown={(e) => { if (e.key === "Enter") setEditingTitle(false); }}
-                      className="text-lg font-semibold text-white bg-[#262626] rounded px-2 py-1 w-full focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                    />
-                  ) : (
-                    <h3
-                      className="text-lg font-semibold text-white cursor-pointer hover:text-[#B8B6FC] transition-colors"
-                      onClick={() => setEditingTitle(true)}
-                      title="Click to edit title"
-                    >
-                      {story.title}
-                    </h3>
-                  )}
-                  {/* Style selection will come later */}
-                </div>
-
-                {/* ===== ASSETS TAB ===== */}
-                {rightTab === "assets" && (
-                  <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
+              <div className="flex-1 min-h-0 flex flex-col">
+                {/* ===== WORLD TAB ===== */}
+                {rightTab === "world" && (
+                  <div className="space-y-4 flex-1 overflow-y-auto pr-2">
                     {/* Characters */}
                     <div>
                       <h4 className="text-sm font-semibold text-white mb-3">Characters ({story.characters.length})</h4>
-                      <div className="space-y-2">
+                      <div className="divide-y divide-[#262626]">
                         {story.characters.map((char, ci) => (
-                          <div key={char.id} className="bg-[#1A1E2F] rounded-xl p-4">
+                          <div key={char.id} className="py-3 first:pt-0">
                             {editingCharIndex === ci && editCharDraft ? (
                               <div className="space-y-2">
                                 <div className="flex gap-2">
@@ -2880,21 +2313,35 @@ export default function CreateEpisodePage() {
                                 </div>
                                 <textarea value={editCharDraft.appearance} onChange={(e) => setEditCharDraft({ ...editCharDraft, appearance: e.target.value })} className="w-full bg-[#262626] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none" rows={2} placeholder="Appearance..." />
                                 <div className="flex gap-2">
-                                  <button onClick={() => { const updated = [...story.characters]; updated[ci] = editCharDraft; setStory({ ...story, characters: updated }); setEditingCharIndex(null); setEditCharDraft(null); }} className="px-3 py-1 bg-[#B8B6FC] text-black text-xs font-medium rounded hover:opacity-90">Save</button>
+                                  <button onClick={() => saveCharacterEdit(ci, editCharDraft)} className="px-3 py-1 bg-[#B8B6FC] text-black text-xs font-medium rounded hover:opacity-90">Save</button>
                                   <button onClick={() => { setEditingCharIndex(null); setEditCharDraft(null); }} className="px-3 py-1 bg-[#333] text-[#ADADAD] text-xs rounded hover:text-white">Cancel</button>
                                 </div>
                               </div>
                             ) : (
-                              <div className="flex items-start justify-between">
-                                <div>
+                              <div className="flex items-start gap-3">
+                                {(() => {
+                                  const src = storyLibraryChars.find(c => c.id === char.id) || selectedChars.find(c => c.id === char.id) || storyLibraryChars.find(c => c.name.toLowerCase() === char.name.toLowerCase()) || selectedChars.find(c => c.name.toLowerCase() === char.name.toLowerCase());
+                                  return src?.imageBase64 ? (
+                                    <img src={`data:${src.imageMimeType};base64,${src.imageBase64}`} alt={char.name} className="w-10 h-14 rounded-lg object-cover flex-shrink-0" />
+                                  ) : null;
+                                })()}
+                                <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2">
                                     <span className="text-white font-medium text-sm">{char.name}</span>
                                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/50 uppercase">{char.role}</span>
+                                    {char.origin === "story" && (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#B8B6FC]/15 text-[#B8B6FC] flex items-center gap-0.5">
+                                        <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+                                        Library
+                                      </span>
+                                    )}
                                   </div>
                                   <span className="text-white/40 text-xs">{char.age} {char.gender}</span>
                                   <p className="text-white/60 text-xs mt-1">{char.appearance}</p>
                                 </div>
-                                <button onClick={() => { setEditingCharIndex(ci); setEditCharDraft({ ...char }); }} className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10 flex-shrink-0">Edit</button>
+                                {char.origin !== "story" && (
+                                  <button onClick={() => { setEditingCharIndex(ci); setEditCharDraft({ ...char }); }} className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10 flex-shrink-0">Edit</button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -2906,9 +2353,9 @@ export default function CreateEpisodePage() {
                     {story.locations && story.locations.length > 0 && (
                       <div>
                         <h4 className="text-sm font-semibold text-white mb-3">Settings ({story.locations.length})</h4>
-                        <div className="space-y-2">
+                        <div className="divide-y divide-[#262626]">
                           {story.locations.map((loc, li) => (
-                            <div key={loc.id} className="bg-[#1A1E2F] rounded-xl p-4">
+                            <div key={loc.id} className="py-3 first:pt-0">
                               {editingLocIndex === li && editLocDraft ? (
                                 <div className="space-y-2">
                                   <input value={editLocDraft.name} onChange={(e) => setEditLocDraft({ ...editLocDraft, name: e.target.value })} className="w-full bg-[#262626] text-white text-sm font-medium rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]" placeholder="Location name..." />
@@ -2939,7 +2386,7 @@ export default function CreateEpisodePage() {
 
                 {/* ===== SCRIPT TAB ===== */}
                 {rightTab === "script" && (
-                  <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
+                  <div className="divide-y divide-[#262626] flex-1 overflow-y-auto pr-2">
                     {getScenes(story).map((scene, index) => {
                       const isEditing = editingSceneIndex === index;
                       const isSelected = selectedBeatIndex === index;
@@ -2949,21 +2396,13 @@ export default function CreateEpisodePage() {
                       return (
                         <div
                           key={scene.scene_number}
-                          className={`bg-[#1A1E2F] rounded-xl p-4 transition-all ${
-                            isSelected || isEditing ? "ring-2 ring-[#B8B6FC]" : "hover:bg-[#242836]"
-                          }`}
+                          className="py-4 first:pt-0"
                         >
                           {/* Scene header */}
                           <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 bg-[#B8B6FC] rounded-full flex items-center justify-center text-black font-bold text-sm flex-shrink-0">
-                                {scene.scene_number}
-                              </div>
-                              <div>
-                                <span className="text-white font-semibold text-sm">{scene.title || `Scene ${scene.scene_number}`}</span>
-                                <span className="text-white/30 text-xs ml-2">{scene.duration}</span>
-                              </div>
-                              {/* scene_change badge removed — derived automatically from setting_id */}
+                            <div>
+                              <span className="text-white font-semibold text-sm">Scene {scene.scene_number}{scene.title ? `: ${scene.title}` : ""}</span>
+                              <span className="text-white/30 text-xs ml-2">{scene.duration}</span>
                             </div>
                             {!isEditing && (
                               <button
@@ -2973,7 +2412,7 @@ export default function CreateEpisodePage() {
                                   setEditSceneDraft({ ...scene });
                                   setSelectedBeatIndex(null);
                                 }}
-                                className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10"
+                                className="text-xs text-[#B8B6FC] hover:text-[#9C99FF] font-semibold uppercase tracking-wide"
                               >
                                 Edit
                               </button>
@@ -3183,7 +2622,7 @@ export default function CreateEpisodePage() {
                           Regenerate All
                         </button>
                         <button
-                          onClick={startVisualDirection}
+                          onClick={startBuildVisuals}
                           className="flex-1 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
                         >
                           Approve & Continue
@@ -3196,802 +2635,445 @@ export default function CreateEpisodePage() {
             )}
           </div>
         </div>
+        )}
 
-        {/* Section 3: Visual Direction */}
-        {visualStep && (
-          <div className="mt-8 bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
-            <h2 className="text-xl font-semibold text-white mb-6">3. Visual Direction</h2>
-
-            {/* Step Indicator */}
-            <div className="flex items-center gap-4 mb-8">
-              <div className={`flex items-center gap-2 ${visualStep === "characters" && moodboardStep === "protagonist" ? "text-[#B8B6FC]" : "text-white/50"}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                  visualStep === "characters" && moodboardStep === "protagonist" ? "bg-[#B8B6FC] text-black" :
-                  (moodboardStep === "full" || visualStep === "key_moment") ? "bg-green-500 text-white" : "bg-[#262626]"
-                }`}>
-                  {(moodboardStep === "full" || visualStep === "key_moment") ? "✓" : "3a"}
-                </div>
-                <span className="text-sm font-medium">Protagonist</span>
-              </div>
-              <div className="flex-1 h-px bg-white/10" />
-              <div className={`flex items-center gap-2 ${visualStep === "characters" && moodboardStep === "full" ? "text-[#B8B6FC]" : "text-white/50"}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                  visualStep === "characters" && moodboardStep === "full" ? "bg-[#B8B6FC] text-black" :
-                  visualStep === "key_moment" ? "bg-green-500 text-white" : "bg-[#262626]"
-                }`}>
-                  {visualStep === "key_moment" ? "✓" : "3b"}
-                </div>
-                <span className="text-sm font-medium">Moodboard</span>
-              </div>
-              <div className="flex-1 h-px bg-white/10" />
-              <div className={`flex items-center gap-2 ${visualStep === "key_moment" ? "text-[#B8B6FC]" : "text-white/50"}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                  visualStep === "key_moment" ? "bg-[#B8B6FC] text-black" : "bg-[#262626]"
-                }`}>
-                  3c
-                </div>
-                <span className="text-sm font-medium">Key Moment</span>
-              </div>
+        {/* Section 2: Build Your Visuals */}
+        {visualsActive && story && (
+          <>
+            {/* Sub-tab breadcrumb navigation */}
+            <div className="flex items-center gap-2 mb-6">
+              {(["characters", "locations", "scenes"] as VisualsTab[]).map((tab, idx) => {
+                const labels = { characters: "Your Characters", locations: "Your Locations", scenes: "Your Scenes" };
+                const isActive = visualsTab === tab;
+                return (
+                  <div key={tab} className="flex items-center gap-2">
+                    {idx > 0 && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-white/30">
+                        <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    )}
+                    <button
+                      onClick={() => setVisualsTab(tab)}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                        isActive
+                          ? "bg-[#1A1E2F] text-white"
+                          : "text-white/40 hover:text-white/70"
+                      }`}
+                    >
+                      {labels[tab]}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
 
-            {/* Step 3a: Protagonist Look (Style Anchor) */}
-            {visualStep === "characters" && moodboardStep === "protagonist" && story && (
-              <div>
-                <div className="text-center mb-6">
-                  <h3 className="text-lg font-medium text-white mb-2">First, let&apos;s nail the look</h3>
-                  <p className="text-sm text-[#ADADAD]">Your main character sets the style for the entire film</p>
-                </div>
+            <div className="bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-8">
+              {/* ─── Characters Tab ─── */}
+              {visualsTab === "characters" && (
+                <div>
+                  <h2 className="text-2xl font-bold text-white mb-6">Characters In This Episode</h2>
 
-                <div className="max-w-sm mx-auto">
-                  <div className="bg-[#1A1E2F] rounded-xl overflow-hidden">
-                    <div className="aspect-[9/16] relative bg-[#262626]">
-                      {isGeneratingProtagonist ? (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center">
-                          <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                          </svg>
-                          <span className="text-[#ADADAD] text-sm">Creating your main character...</span>
-                        </div>
-                      ) : protagonistImage ? (
-                        <img
-                          src={`data:${protagonistImage.image.mime_type};base64,${protagonistImage.image.image_base64}`}
-                          alt={protagonistImage.character_name}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : protagonistError ? (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
-                          <span className="text-red-400 text-sm mb-3">{protagonistError}</span>
-                          <button
-                            onClick={generateProtagonistImage}
-                            className="px-4 py-2 bg-[#B8B6FC]/20 text-[#B8B6FC] text-sm rounded-lg hover:bg-[#B8B6FC]/30 transition-colors"
-                          >
-                            ↻ Retry
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
+                  {/* Horizontal scrollable card row with nav arrows */}
+                  <div className="relative group/carousel">
+                    {/* Left arrow */}
+                    <button
+                      onClick={() => {
+                        const el = document.getElementById("char-scroll");
+                        if (el) el.scrollBy({ left: -280, behavior: "smooth" });
+                      }}
+                      className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-[#1A1E2F] border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                    </button>
+                    {/* Right arrow */}
+                    <button
+                      onClick={() => {
+                        const el = document.getElementById("char-scroll");
+                        if (el) el.scrollBy({ left: 280, behavior: "smooth" });
+                      }}
+                      className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-[#1A1E2F] border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
+                    </button>
 
-                    {protagonistImage && !isGeneratingProtagonist && (
-                      <div className="p-4">
-                        <h4 className="text-white font-medium text-center mb-4">{protagonistImage.character_name}</h4>
-                        {protagonistImage.image.prompt_used && (
-                          <details className="mb-3">
-                            <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">View prompt</summary>
-                            <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
-                              {protagonistImage.image.prompt_used}
-                            </pre>
-                          </details>
-                        )}
-                        <div className="mt-2 mb-3">
-                          <input
-                            type="text"
-                            placeholder="Feedback for refinement..."
-                            value={protagonistFeedback}
-                            onChange={(e) => setProtagonistFeedback(e.target.value)}
-                            className="w-full bg-[#262626] text-white text-xs rounded-lg px-3 py-2 mb-2 placeholder-[#555] focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                          />
-                          {protagonistFeedback.trim() && (
-                            <button
-                              onClick={refineProtagonistImage}
-                              className="w-full text-xs py-1.5 rounded-lg bg-[#B8B6FC]/20 text-[#B8B6FC] hover:bg-[#B8B6FC]/30 transition-colors"
-                            >
-                              Refine with Feedback
-                            </button>
-                          )}
-                          {/* Reference image upload for refinement */}
-                          <div className="mt-2">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              {protagonistImage.refImages.map((ref, idx) => (
-                                <div key={idx} className="relative w-8 h-8 rounded overflow-hidden">
-                                  <img src={`data:${ref.mimeType};base64,${ref.base64}`} alt={ref.name} className="w-full h-full object-cover" />
-                                  <button
-                                    onClick={() => setProtagonistImage({ ...protagonistImage, refImages: protagonistImage.refImages.filter((_, i) => i !== idx) })}
-                                    className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center text-white text-[8px] leading-none"
-                                  >x</button>
-                                </div>
-                              ))}
-                              {protagonistImage.refImages.length < 5 && (
-                                <label className="w-8 h-8 rounded border border-dashed border-white/20 flex items-center justify-center cursor-pointer hover:border-[#B8B6FC]/50 transition-colors">
-                                  <span className="text-white/40 text-xs">+</span>
-                                  <input
-                                    type="file"
-                                    accept="image/*"
-                                    multiple
-                                    className="hidden"
-                                    onChange={(e) => handleRefImageUpload(
-                                      e.target.files, 5,
-                                      (imgs) => setProtagonistImage({ ...protagonistImage, refImages: imgs }),
-                                      protagonistImage.refImages
-                                    )}
+                    <div id="char-scroll" className="flex gap-5 overflow-x-auto scrollbar-hide pb-2" style={{ scrollbarWidth: "none" }}>
+                      {story.characters.map((char) => {
+                        const imgState = characterImages[char.id];
+                        const hasImage = !!imgState?.image;
+                        return (
+                          <div key={char.id} className="flex-shrink-0 w-[220px]">
+                            <div className="group relative aspect-[9/16] bg-[#1A1E2F] rounded-2xl overflow-hidden">
+                              {hasImage && imgState?.image ? (
+                                <>
+                                  <img
+                                    src={`data:${imgState.image.mime_type};base64,${imgState.image.image_base64}`}
+                                    alt={char.name}
+                                    className="w-full h-full object-cover"
                                   />
-                                </label>
+                                  <div
+                                    className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                    onClick={() => setEditingVisualCharId(char.id)}
+                                  >
+                                    <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
+                                      <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                                        <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                                      </svg>
+                                    </div>
+                                  </div>
+                                  {char.origin === "story" && (
+                                    <div className="absolute top-2 left-2 px-2 py-0.5 bg-[#262550]/80 rounded text-[10px] text-[#B8B6FC] font-medium">
+                                      Library
+                                    </div>
+                                  )}
+                                </>
+                              ) : imgState?.isGenerating ? (
+                                <div className="w-full h-full flex flex-col items-center justify-center">
+                                  <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                  </svg>
+                                  <span className="text-[#ADADAD] text-xs">Generating...</span>
+                                </div>
+                              ) : (
+                                <div
+                                  className="w-full h-full flex items-end justify-start p-4 cursor-pointer hover:bg-[#262550]/30 transition-colors"
+                                  onClick={() => setEditingVisualCharId(char.id)}
+                                >
+                                  <button className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium rounded-full transition-colors">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2z" /></svg>
+                                    Generate Character
+                                  </button>
+                                </div>
                               )}
-                              <span className="text-[10px] text-white/30">Refs ({protagonistImage.refImages.length}/5)</span>
+                              {imgState?.error && (
+                                <div className="absolute bottom-0 left-0 right-0 bg-red-500/80 px-2 py-1">
+                                  <span className="text-white text-[10px]">{imgState.error}</span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="mt-3">
+                              <p className="text-white text-sm font-medium truncate">{char.name}</p>
+                              <p className="text-[#ADADAD] text-xs">Role: {char.role === "protagonist" ? "Main Character" : char.role === "antagonist" ? "Antagonist" : "Supporting"}</p>
                             </div>
                           </div>
-                        </div>
-                        <div className="flex gap-3">
-                          <button
-                            onClick={generateProtagonistImage}
-                            className="flex-1 py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333]"
-                          >
-                            ↻ Try Different Look
-                          </button>
-                          <button
-                            onClick={approveProtagonist}
-                            className="flex-1 py-2 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white text-sm rounded-lg hover:opacity-90"
-                          >
-                            Looks Good →
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Footer navigation */}
+                  <div className="mt-10 flex items-center justify-between">
+                    <button
+                      onClick={() => setVisualsActive(false)}
+                      className="text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
+                    >
+                      &larr; Back to Create Your Script
+                    </button>
+                    <button
+                      onClick={() => setVisualsTab("locations")}
+                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
+                    >
+                      Approve &amp; Continue
+                    </button>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Step 3b: Full Moodboard (with locked protagonist) */}
-            {visualStep === "characters" && moodboardStep === "full" && story && protagonistImage && (
-              <div>
-                <div className="text-center mb-6">
-                  <h3 className="text-lg font-medium text-white mb-2">Here&apos;s your world</h3>
-                  <p className="text-sm text-[#ADADAD]">All visuals match your main character&apos;s style</p>
+              {/* ─── Locations Tab ─── */}
+              {visualsTab === "locations" && (
+                <div>
+                  <h2 className="text-2xl font-bold text-white mb-6">Locations In This Episode</h2>
+
+                  <div className="relative group/carousel">
+                    <button
+                      onClick={() => {
+                        const el = document.getElementById("loc-scroll");
+                        if (el) el.scrollBy({ left: -320, behavior: "smooth" });
+                      }}
+                      className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-[#1A1E2F] border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                    </button>
+                    <button
+                      onClick={() => {
+                        const el = document.getElementById("loc-scroll");
+                        if (el) el.scrollBy({ left: 320, behavior: "smooth" });
+                      }}
+                      className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-[#1A1E2F] border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
+                    </button>
+
+                    <div id="loc-scroll" className="flex gap-5 overflow-x-auto scrollbar-hide pb-2" style={{ scrollbarWidth: "none" }}>
+                      {story.locations.map((loc) => {
+                        const imgState = locationImages[loc.id];
+                        const hasImage = !!imgState?.image;
+                        return (
+                          <div key={loc.id} className="flex-shrink-0 w-[300px]">
+                            <div className="group relative aspect-video bg-[#1A1E2F] rounded-2xl overflow-hidden">
+                              {hasImage && imgState?.image ? (
+                                <>
+                                  <img
+                                    src={`data:${imgState.image.mime_type};base64,${imgState.image.image_base64}`}
+                                    alt={loc.name || loc.description}
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <div
+                                    className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                    onClick={() => setEditingVisualLocId(loc.id)}
+                                  >
+                                    <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
+                                      <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                                        <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                                      </svg>
+                                    </div>
+                                  </div>
+                                </>
+                              ) : imgState?.isGenerating ? (
+                                <div className="w-full h-full flex flex-col items-center justify-center">
+                                  <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                  </svg>
+                                  <span className="text-[#ADADAD] text-xs">Generating...</span>
+                                </div>
+                              ) : (
+                                <div
+                                  className="w-full h-full flex items-end justify-start p-4 cursor-pointer hover:bg-[#262550]/30 transition-colors"
+                                  onClick={() => setEditingVisualLocId(loc.id)}
+                                >
+                                  <button className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium rounded-full transition-colors">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2z" /></svg>
+                                    Generate Location
+                                  </button>
+                                </div>
+                              )}
+                              {imgState?.error && (
+                                <div className="absolute bottom-0 left-0 right-0 bg-red-500/80 px-2 py-1">
+                                  <span className="text-white text-[10px]">{imgState.error}</span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="mt-3">
+                              <p className="text-white text-sm font-medium truncate">{loc.name || "Location"}</p>
+                              <p className="text-[#ADADAD] text-xs truncate">{loc.atmosphere}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="mt-10 flex items-center justify-between">
+                    <button
+                      onClick={() => setVisualsTab("characters")}
+                      className="text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
+                    >
+                      &larr; Back to Your Characters
+                    </button>
+                    <button
+                      onClick={() => {
+                        setVisualsTab("scenes");
+                        if (Object.keys(sceneImages).length === 0) {
+                          fetchSceneDescriptions();
+                        }
+                      }}
+                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
+                    >
+                      Approve &amp; Continue
+                    </button>
+                  </div>
                 </div>
+              )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {/* Protagonist - LOCKED */}
-                  <div className="bg-[#1A1E2F] rounded-xl overflow-hidden">
-                    <div className="aspect-[9/16] relative bg-[#262626]">
-                      <img
-                        src={`data:${protagonistImage.image.mime_type};base64,${protagonistImage.image.image_base64}`}
-                        alt={protagonistImage.character_name}
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute top-3 right-3 w-8 h-8 bg-[#B8B6FC] rounded-full flex items-center justify-center">
-                        <span className="text-black text-sm">🔒</span>
-                      </div>
-                      <a
-                        href={`data:${protagonistImage.image.mime_type};base64,${protagonistImage.image.image_base64}`}
-                        download={`${protagonistImage.character_name.replace(/\s+/g, '_')}_ref.png`}
-                        className="absolute bottom-3 right-3 w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-black/80 transition-colors"
-                        title="Download reference image"
+              {/* ─── Scenes Tab ─── */}
+              {visualsTab === "scenes" && (
+                <div>
+                  <h2 className="text-2xl font-bold text-white mb-6">Your Episode Storyboard</h2>
+
+                  {/* Loading scene descriptions */}
+                  {isGeneratingSceneDescs && Object.keys(sceneImages).length === 0 && (
+                    <div className="flex items-center justify-center py-16">
+                      <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mr-3" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      <span className="text-[#ADADAD]">Generating scene descriptions...</span>
+                    </div>
+                  )}
+
+                  {/* Generate All button */}
+                  {Object.keys(sceneImages).length > 0 && !Object.values(sceneImages).some(s => s.image) && !Object.values(sceneImages).some(s => s.isGenerating) && (
+                    <div className="text-center mb-6">
+                      <button
+                        onClick={generateAllSceneImages}
+                        className="px-8 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-semibold hover:opacity-90 transition-opacity"
                       >
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                      </a>
+                        Generate All Scene Images
+                      </button>
                     </div>
-                    <div className="p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-white font-medium">{protagonistImage.character_name}</h4>
-                        <span className="text-xs px-2 py-1 rounded-full bg-[#B8B6FC]/20 text-[#B8B6FC]">
-                          style anchor
-                        </span>
-                      </div>
-                      <p className="text-[#ADADAD] text-xs text-center">Locked - defines the style</p>
-                      {protagonistImage.image.prompt_used && (
-                        <details className="mt-2">
-                          <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">View prompt</summary>
-                          <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
-                            {protagonistImage.image.prompt_used}
-                          </pre>
-                        </details>
-                      )}
-                    </div>
-                  </div>
+                  )}
 
-                  {/* Other Characters */}
-                  {story.characters
-                    .filter((char) => char.id !== protagonistImage.character_id)
-                    .map((char) => {
-                      const charState = characterImages[char.id];
-                      if (!charState) return null;
-
-                      return (
-                        <div key={char.id} className="bg-[#1A1E2F] rounded-xl overflow-hidden">
-                          <div className="aspect-[9/16] relative bg-[#262626]">
-                            {charState.isGenerating ? (
-                              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                </svg>
-                                <span className="text-[#ADADAD] text-sm">Generating...</span>
-                              </div>
-                            ) : charState.image ? (
-                              <>
-                                <img
-                                  src={`data:${charState.image.mime_type};base64,${charState.image.image_base64}`}
-                                  alt={char.name}
-                                  className="w-full h-full object-cover"
-                                />
-                                {charState.approved && (
-                                  <div className="absolute top-3 right-3 w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                    </svg>
-                                  </div>
-                                )}
-                                <a
-                                  href={`data:${charState.image.mime_type};base64,${charState.image.image_base64}`}
-                                  download={`${char.name.replace(/\s+/g, '_')}_ref.png`}
-                                  className="absolute bottom-3 right-3 w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-black/80 transition-colors"
-                                  title="Download reference image"
-                                >
-                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                                </a>
-                              </>
-                            ) : charState.error ? (
-                              <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
-                                <span className="text-red-400 text-sm mb-3">{charState.error}</span>
-                                <button
-                                  onClick={() => retryCharacterImage(char.id)}
-                                  className="px-4 py-2 bg-[#B8B6FC]/20 text-[#B8B6FC] text-sm rounded-lg hover:bg-[#B8B6FC]/30 transition-colors"
-                                >
-                                  ↻ Retry
-                                </button>
-                              </div>
-                            ) : null}
-                          </div>
-
-                          <div className="p-4">
-                            <div className="flex items-center justify-between mb-2">
-                              <h4 className="text-white font-medium">{char.name}</h4>
-                              <span className="text-xs px-2 py-1 rounded-full bg-white/10 text-white/70">
-                                {char.role}
-                              </span>
-                            </div>
-
-                            {!charState.approved && !charState.isGenerating && charState.image && (
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => retryCharacterImage(char.id)}
-                                  className="flex-1 py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333]"
-                                >
-                                  ↻ Retry
-                                </button>
-                                <button
-                                  onClick={() => approveCharacter(char.id)}
-                                  className="flex-1 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-500"
-                                >
-                                  Approve
-                                </button>
-                              </div>
-                            )}
-
-                            {!charState.approved && !charState.isGenerating && charState.image && (
-                              <div className="mt-2">
-                                <input
-                                  type="text"
-                                  placeholder="Feedback for refinement..."
-                                  value={charState.feedback}
-                                  onChange={(e) =>
-                                    setCharacterImages((prev) => ({
-                                      ...prev,
-                                      [char.id]: { ...prev[char.id], feedback: e.target.value },
-                                    }))
-                                  }
-                                  className="w-full bg-[#262626] text-white text-xs rounded-lg px-3 py-2 mb-2 placeholder-[#555] focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                                />
-                                {charState.feedback.trim() && (
-                                  <button
-                                    onClick={() => refineCharacterImage(char.id)}
-                                    className="w-full text-xs py-1.5 rounded-lg bg-[#B8B6FC]/20 text-[#B8B6FC] hover:bg-[#B8B6FC]/30 transition-colors"
-                                  >
-                                    Refine with Feedback
-                                  </button>
-                                )}
-                                {/* Reference image upload for refinement */}
-                                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                                  {charState.refImages.map((ref, idx) => (
-                                    <div key={idx} className="relative w-8 h-8 rounded overflow-hidden">
-                                      <img src={`data:${ref.mimeType};base64,${ref.base64}`} alt={ref.name} className="w-full h-full object-cover" />
-                                      <button
-                                        onClick={() => setCharacterImages((prev) => ({
-                                          ...prev,
-                                          [char.id]: { ...prev[char.id], refImages: prev[char.id].refImages.filter((_, i) => i !== idx) },
-                                        }))}
-                                        className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center text-white text-[8px] leading-none"
-                                      >x</button>
-                                    </div>
-                                  ))}
-                                  {charState.refImages.length < 5 && (
-                                    <label className="w-8 h-8 rounded border border-dashed border-white/20 flex items-center justify-center cursor-pointer hover:border-[#B8B6FC]/50 transition-colors">
-                                      <span className="text-white/40 text-xs">+</span>
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        multiple
-                                        className="hidden"
-                                        onChange={(e) => handleRefImageUpload(
-                                          e.target.files, 5,
-                                          (imgs) => setCharacterImages((prev) => ({ ...prev, [char.id]: { ...prev[char.id], refImages: imgs } })),
-                                          charState.refImages
-                                        )}
-                                      />
-                                    </label>
-                                  )}
-                                  <span className="text-[10px] text-white/30">Refs ({charState.refImages.length}/5)</span>
+                  {/* Scene grid (4x2) */}
+                  {Object.keys(sceneImages).length > 0 && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+                      {Object.values(sceneImages)
+                        .sort((a, b) => a.sceneNumber - b.sceneNumber)
+                        .map((scene) => (
+                          <div key={scene.sceneNumber} className="bg-[#1A1E2F] rounded-2xl overflow-hidden">
+                            <div className="aspect-[9/16] bg-[#0A0A0F] relative">
+                              {scene.isGenerating ? (
+                                <div className="w-full h-full flex flex-col items-center justify-center">
+                                  <svg className="animate-spin h-6 w-6 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                  </svg>
+                                  <span className="text-[#ADADAD] text-[10px]">Generating...</span>
                                 </div>
-                              </div>
-                            )}
-
-                            {charState.approved && (
-                              <p className="text-green-400 text-sm text-center">✓ Approved</p>
-                            )}
-
-                            {charState.promptUsed && (
-                              <details className="mt-2">
-                                <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">View prompt</summary>
-                                <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
-                                  {charState.promptUsed}
-                                </pre>
-                              </details>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                  {/* Locations (replaces single Setting) */}
-                  {story.locations && story.locations.length > 0 ? (
-                    story.locations.map((loc) => {
-                      const locState = locationImages[loc.id];
-                      if (!locState) return null;
-                      return (
-                        <div key={loc.id} className="bg-[#1A1E2F] rounded-xl overflow-hidden">
-                          <div className="aspect-[9/16] relative bg-[#262626]">
-                            {locState.isGenerating ? (
-                              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                </svg>
-                                <span className="text-[#ADADAD] text-sm">Generating...</span>
-                              </div>
-                            ) : locState.image ? (
-                              <>
+                              ) : scene.image ? (
                                 <img
-                                  src={`data:${locState.image.mime_type};base64,${locState.image.image_base64}`}
-                                  alt={loc.description}
+                                  src={`data:${scene.image.mime_type};base64,${scene.image.image_base64}`}
+                                  alt={`Scene ${scene.sceneNumber}`}
                                   className="w-full h-full object-cover"
                                 />
-                                {locState.approved && (
-                                  <div className="absolute top-3 right-3 w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                    </svg>
-                                  </div>
-                                )}
-                                <a
-                                  href={`data:${locState.image.mime_type};base64,${locState.image.image_base64}`}
-                                  download={`location_${loc.id}_ref.png`}
-                                  className="absolute bottom-3 right-3 w-7 h-7 bg-black/60 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-black/80 transition-colors"
-                                  title="Download reference image"
-                                >
-                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                                </a>
-                              </>
-                            ) : locState.error ? (
-                              <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
-                                <span className="text-red-400 text-sm mb-3">{locState.error}</span>
-                                <button
-                                  onClick={async () => {
-                                    if (!protagonistImage) return;
-                                    await generateLocationWithRef(loc.id, {
-                                      image_base64: protagonistImage.image.image_base64,
-                                      mime_type: protagonistImage.image.mime_type,
-                                    });
-                                  }}
-                                  className="px-4 py-2 bg-[#B8B6FC]/20 text-[#B8B6FC] text-sm rounded-lg hover:bg-[#B8B6FC]/30 transition-colors"
-                                >
-                                  ↻ Retry
-                                </button>
-                              </div>
-                            ) : null}
-                          </div>
-
-                          <div className="p-4">
-                            <div className="flex items-center justify-between mb-2">
-                              <h4 className="text-white font-medium truncate" title={loc.description}>
-                                {loc.description.length > 30 ? loc.description.slice(0, 30) + "..." : loc.description}
+                              ) : scene.error ? (
+                                <div className="w-full h-full flex items-center justify-center p-2">
+                                  <span className="text-red-400 text-[10px] text-center">{scene.error}</span>
+                                </div>
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <span className="text-white/20 text-xs">No image</span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="p-3">
+                              <h4 className="text-white text-xs font-semibold mb-1">
+                                Scene {scene.sceneNumber} Shot &mdash; {scene.title}
                               </h4>
-                              <span className="text-xs px-2 py-1 rounded-full bg-white/10 text-white/70 ml-2 whitespace-nowrap">
-                                location
-                              </span>
-                            </div>
-
-                            {!locState.approved && !locState.isGenerating && locState.image && (
-                              <div className="flex gap-2">
+                              <p className={`text-[#ADADAD] text-[10px] ${expandedSceneDescs.has(scene.sceneNumber) ? "" : "line-clamp-3"}`}>{scene.visualDescription}</p>
+                              {scene.visualDescription && scene.visualDescription.length > 120 && (
                                 <button
-                                  onClick={async () => {
-                                    if (!protagonistImage) return;
-                                    await generateLocationWithRef(loc.id, {
-                                      image_base64: protagonistImage.image.image_base64,
-                                      mime_type: protagonistImage.image.mime_type,
-                                    });
-                                  }}
-                                  className="flex-1 py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333]"
+                                  onClick={() => setExpandedSceneDescs(prev => {
+                                    const next = new Set(prev);
+                                    if (next.has(scene.sceneNumber)) next.delete(scene.sceneNumber);
+                                    else next.add(scene.sceneNumber);
+                                    return next;
+                                  })}
+                                  className="text-[#B8B6FC] text-[10px] mb-2 hover:underline"
                                 >
-                                  ↻ Retry
+                                  {expandedSceneDescs.has(scene.sceneNumber) ? "Show less" : "Read more"}
                                 </button>
-                                <button
-                                  onClick={() => setLocationImages((prev) => ({
-                                    ...prev,
-                                    [loc.id]: { ...prev[loc.id], approved: true },
-                                  }))}
-                                  className="flex-1 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-500"
-                                >
-                                  Approve
-                                </button>
-                              </div>
-                            )}
-
-                            {!locState.approved && !locState.isGenerating && locState.image && (
-                              <div className="mt-2">
-                                <input
-                                  type="text"
-                                  placeholder="Feedback for refinement..."
-                                  value={locState.feedback}
-                                  onChange={(e) =>
-                                    setLocationImages((prev) => ({
+                              )}
+                              {(!scene.visualDescription || scene.visualDescription.length <= 120) && <div className="mb-2" />}
+                              {scene.image && !scene.isGenerating && (
+                                <div className="space-y-2">
+                                  <input
+                                    type="text"
+                                    value={scene.feedback}
+                                    onChange={(e) => setSceneImages(prev => ({
                                       ...prev,
-                                      [loc.id]: { ...prev[loc.id], feedback: e.target.value },
-                                    }))
-                                  }
-                                  className="w-full bg-[#262626] text-white text-xs rounded-lg px-3 py-2 mb-2 placeholder-[#555] focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                                />
-                                {locState.feedback.trim() && (
+                                      [scene.sceneNumber]: { ...prev[scene.sceneNumber], feedback: e.target.value },
+                                    }))}
+                                    placeholder="Your feedback to refine this scene shot"
+                                    className="w-full bg-[#0A0A0F] text-white text-[10px] rounded-lg px-2 py-1.5 placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                                  />
                                   <button
-                                    onClick={() => refineLocationImage(loc.id)}
-                                    className="w-full text-xs py-1.5 rounded-lg bg-[#B8B6FC]/20 text-[#B8B6FC] hover:bg-[#B8B6FC]/30 transition-colors"
+                                    onClick={() => refineSceneImage(scene.sceneNumber)}
+                                    disabled={!scene.feedback.trim()}
+                                    className="w-full py-1.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-medium rounded-lg border border-emerald-500/30 hover:bg-emerald-500/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                                   >
-                                    Refine with Feedback
+                                    Refine This Shot
                                   </button>
-                                )}
-                                {/* Reference image upload for refinement */}
-                                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                                  {locState.refImages.map((ref, idx) => (
-                                    <div key={idx} className="relative w-8 h-8 rounded overflow-hidden">
-                                      <img src={`data:${ref.mimeType};base64,${ref.base64}`} alt={ref.name} className="w-full h-full object-cover" />
-                                      <button
-                                        onClick={() => setLocationImages((prev) => ({
-                                          ...prev,
-                                          [loc.id]: { ...prev[loc.id], refImages: prev[loc.id].refImages.filter((_, i) => i !== idx) },
-                                        }))}
-                                        className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center text-white text-[8px] leading-none"
-                                      >x</button>
-                                    </div>
-                                  ))}
-                                  {locState.refImages.length < 5 && (
-                                    <label className="w-8 h-8 rounded border border-dashed border-white/20 flex items-center justify-center cursor-pointer hover:border-[#B8B6FC]/50 transition-colors">
-                                      <span className="text-white/40 text-xs">+</span>
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        multiple
-                                        className="hidden"
-                                        onChange={(e) => handleRefImageUpload(
-                                          e.target.files, 5,
-                                          (imgs) => setLocationImages((prev) => ({ ...prev, [loc.id]: { ...prev[loc.id], refImages: imgs } })),
-                                          locState.refImages
-                                        )}
-                                      />
-                                    </label>
-                                  )}
-                                  <span className="text-[10px] text-white/30">Refs ({locState.refImages.length}/5)</span>
                                 </div>
-                              </div>
-                            )}
-
-                            {locState.approved && (
-                              <p className="text-green-400 text-sm text-center">Approved</p>
-                            )}
-
-                            {locState.promptUsed && (
-                              <details className="mt-2">
-                                <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">View prompt</summary>
-                                <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
-                                  {locState.promptUsed}
-                                </pre>
-                              </details>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })
-                  ) : settingImage ? (
-                    /* Backward compat: single Setting card */
-                    <div className="bg-[#1A1E2F] rounded-xl overflow-hidden">
-                      <div className="aspect-[9/16] relative bg-[#262626]">
-                        {settingImage.isGenerating ? (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center">
-                            <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                            </svg>
-                            <span className="text-[#ADADAD] text-sm">Generating...</span>
-                          </div>
-                        ) : settingImage.image ? (
-                          <>
-                            <img
-                              src={`data:${settingImage.image.mime_type};base64,${settingImage.image.image_base64}`}
-                              alt="Setting"
-                              className="w-full h-full object-cover"
-                            />
-                            {settingImage.approved && (
-                              <div className="absolute top-3 right-3 w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                              </div>
-                            )}
-                          </>
-                        ) : settingImage.error ? (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
-                            <span className="text-red-400 text-sm mb-3">{settingImage.error}</span>
-                            <button
-                              onClick={retrySettingImage}
-                              className="px-4 py-2 bg-[#B8B6FC]/20 text-[#B8B6FC] text-sm rounded-lg hover:bg-[#B8B6FC]/30 transition-colors"
-                            >
-                              ↻ Retry
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-
-                      <div className="p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="text-white font-medium">Setting</h4>
-                          <span className="text-xs px-2 py-1 rounded-full bg-white/10 text-white/70">
-                            environment
-                          </span>
-                        </div>
-
-                        {!settingImage.approved && !settingImage.isGenerating && settingImage.image && (
-                          <div className="flex gap-2">
-                            <button
-                              onClick={retrySettingImage}
-                              className="flex-1 py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333]"
-                            >
-                              ↻ Retry
-                            </button>
-                            <button
-                              onClick={() => setSettingImage((prev) => prev ? { ...prev, approved: true } : null)}
-                              className="flex-1 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-500"
-                            >
-                              Approve
-                            </button>
-                          </div>
-                        )}
-
-                        {!settingImage.approved && !settingImage.isGenerating && settingImage.image && (
-                          <div className="mt-2">
-                            <input
-                              type="text"
-                              placeholder="Feedback for refinement..."
-                              value={settingImage.feedback}
-                              onChange={(e) =>
-                                setSettingImage((prev) => prev ? { ...prev, feedback: e.target.value } : null)
-                              }
-                              className="w-full bg-[#262626] text-white text-xs rounded-lg px-3 py-2 mb-2 placeholder-[#555] focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                            />
-                            {settingImage.feedback.trim() && (
-                              <button
-                                onClick={refineSettingImage}
-                                className="w-full text-xs py-1.5 rounded-lg bg-[#B8B6FC]/20 text-[#B8B6FC] hover:bg-[#B8B6FC]/30 transition-colors"
-                              >
-                                Refine with Feedback
-                              </button>
-                            )}
-                          </div>
-                        )}
-
-                        {settingImage.approved && (
-                          <p className="text-green-400 text-sm text-center">Approved</p>
-                        )}
-
-                        {settingImage.promptUsed && (
-                          <details className="mt-2">
-                            <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">View prompt</summary>
-                            <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
-                              {settingImage.promptUsed}
-                            </pre>
-                          </details>
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-
-                {/* Change protagonist link */}
-                <div className="mt-6 pt-6 border-t border-white/10">
-                  <div className="flex items-center justify-between">
-                    <button
-                      onClick={handleChangeProtagonistLook}
-                      className="text-sm text-[#ADADAD] hover:text-white"
-                    >
-                      ← Change Main Character Look
-                    </button>
-                    <button
-                      onClick={continueToKeyMoment}
-                      disabled={
-                        // All locations (or setting) must be approved
-                        (story.locations && story.locations.length > 0
-                          ? !story.locations.every((loc) => locationImages[loc.id]?.approved)
-                          : !settingImage?.approved) ||
-                        // All non-protagonist characters must be approved
-                        story.characters
-                          .filter((c) => c.id !== protagonistImage.character_id)
-                          .some((c) => !characterImages[c.id]?.approved)
-                      }
-                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Continue to Key Moment →
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-
-            {/* Step 3: Key Moments (3 distinct scenes) */}
-            {visualStep === "key_moment" && (
-              <div>
-                <h3 className="text-lg font-medium text-white mb-4">Key Moments</h3>
-                <p className="text-sm text-[#ADADAD] mb-6">
-                  3 distinct scenes from your story — each with the relevant characters and setting. Click to select, refine with feedback.
-                </p>
-
-                {keyMoment?.isGenerating && keyMoment.entries.length === 0 && (
-                  <div className="text-center py-16">
-                    <svg className="animate-spin h-12 w-12 mx-auto mb-4 text-[#B8B6FC]" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    <p className="text-[#ADADAD]">Generating 3 key moment images...</p>
-                  </div>
-                )}
-
-                {keyMoment && keyMoment.entries.length > 0 && (
-                  <>
-                    {/* 3-image grid */}
-                    <div className="grid grid-cols-3 gap-4 mb-6">
-                      {keyMoment.entries.map((entry, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => setKeyMoment((prev) => prev ? {
-                            ...prev,
-                            image: entry.image,
-                            beat_number: entry.beat_number,
-                            beat_description: entry.beat_description,
-                            promptUsed: entry.promptUsed,
-                            selectedIndex: idx,
-                          } : null)}
-                          className={`relative rounded-xl overflow-hidden border-2 transition-all ${
-                            idx === keyMoment.selectedIndex
-                              ? "border-[#B8B6FC] ring-2 ring-[#B8B6FC]/30"
-                              : "border-transparent opacity-70 hover:opacity-100"
-                          }`}
-                        >
-                          <div className="aspect-[9/16] relative bg-[#262626]">
-                            <img
-                              src={`data:${entry.image.mime_type};base64,${entry.image.image_base64}`}
-                              alt={`Scene ${entry.beat_number}`}
-                              className="w-full h-full object-cover"
-                            />
-                            <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px]">
-                              Scene {entry.beat_number}
+                              )}
                             </div>
-                            {idx === keyMoment.selectedIndex && (
-                              <div className="absolute top-2 right-2 w-6 h-6 bg-[#B8B6FC] rounded-full flex items-center justify-center">
-                                <svg className="w-3.5 h-3.5 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                </svg>
-                              </div>
-                            )}
-                            {/* Download button */}
-                            <a
-                              href={`data:${entry.image.mime_type};base64,${entry.image.image_base64}`}
-                              download={`key_moment_scene_${entry.beat_number}.png`}
-                              onClick={(e) => e.stopPropagation()}
-                              className="absolute bottom-2 right-2 w-7 h-7 bg-black/60 hover:bg-black/80 rounded-full flex items-center justify-center transition-colors"
-                              title="Download image"
-                            >
-                              <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V3" />
-                              </svg>
-                            </a>
                           </div>
-                          <div className="p-2 bg-[#1A1E2F]">
-                            <p className="text-white text-[11px] line-clamp-2 text-left">{entry.beat_description}</p>
-                          </div>
-                        </button>
-                      ))}
+                        ))}
                     </div>
+                  )}
 
-                    {/* Selected scene details */}
-                    <div className="max-w-md mx-auto bg-[#1A1E2F] rounded-xl p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-xs px-2 py-1 rounded-full bg-[#B8B6FC]/20 text-[#B8B6FC]">
-                          Selected
-                        </span>
-                        <span className="text-xs text-[#ADADAD]">Scene {keyMoment.beat_number}</span>
-                      </div>
-                      <p className="text-white text-sm mb-3">{keyMoment.beat_description}</p>
-
-                      {keyMoment.promptUsed && (
-                        <details className="mb-3">
-                          <summary className="text-xs text-[#ADADAD] cursor-pointer hover:text-white">
-                            View prompt
-                          </summary>
-                          <pre className="mt-2 text-xs text-white/70 whitespace-pre-wrap font-mono bg-[#262626] rounded-lg p-2 max-h-32 overflow-y-auto">
-                            {keyMoment.promptUsed}
-                          </pre>
-                        </details>
-                      )}
-
-                      {!keyMoment.isGenerating && (
-                        <>
-                          <textarea
-                            value={keyMoment.feedback}
-                            onChange={(e) => setKeyMoment((prev) => prev ? { ...prev, feedback: e.target.value } : null)}
-                            placeholder="Feedback to refine this scene..."
-                            className="w-full h-14 bg-[#262626] rounded-lg px-3 py-2 text-white text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none mb-2"
-                          />
-                          <button
-                            onClick={refineKeyMoment}
-                            disabled={!keyMoment.feedback.trim()}
-                            className="w-full py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333] disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Refine Selected Scene
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </>
-                )}
-
-                {keyMoment && keyMoment.entries && keyMoment.entries.length > 0 && !keyMoment.isGenerating && film.status === "idle" && (
-                  <div className="mt-6 pt-6 border-t border-white/10 flex items-center justify-between">
+                  <div className="mt-10 flex items-center justify-between">
                     <button
-                      onClick={() => { setVisualStep("characters"); setMoodboardStep("full"); }}
-                      className="text-sm text-[#ADADAD] hover:text-white transition-colors"
+                      onClick={() => setVisualsTab("locations")}
+                      className="text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
                     >
-                      ← Back to Moodboard
+                      &larr; Back to Your Locations
                     </button>
                     <button
                       onClick={fetchPromptPreviews}
-                      disabled={promptPreview.isLoading}
-                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50"
+                      disabled={promptPreview.isLoading || !Object.values(sceneImages).every(s => s.image)}
+                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {promptPreview.isLoading ? "Generating Prompts..." : "Preview Prompts →"}
+                      {promptPreview.isLoading ? "Generating Prompts..." : "Approve & Continue"}
                     </button>
                   </div>
-                )}
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Character Modal for Visuals stage */}
+        {editingVisualCharId && story && (
+          <CharacterModal
+            isOpen={!!editingVisualCharId}
+            onClose={() => setEditingVisualCharId(null)}
+            onSave={async (data) => {
+              await handleVisualCharSave(editingVisualCharId, data);
+              setEditingVisualCharId(null);
+            }}
+            character={(() => {
+              const char = story.characters.find(c => c.id === editingVisualCharId);
+              const imgState = characterImages[editingVisualCharId];
+              if (!char) return undefined;
+              return {
+                id: char.id,
+                name: char.name,
+                age: char.age,
+                gender: char.gender,
+                description: char.appearance,
+                role: char.role,
+                visualStyle: story.style,
+                imageBase64: imgState?.image?.image_base64 || null,
+                imageMimeType: imgState?.image?.mime_type || "image/png",
+              } as StoryCharacterFE;
+            })()}
+            existingCharacters={storyLibraryChars}
+            isSaving={isSavingVisualChar}
+            hideRole={false}
+            lockedStyle={story.style}
+            readOnlyFields={story.characters.find(c => c.id === editingVisualCharId)?.origin === "story" ? ["name", "age"] : []}
+            generationContext={generationIdRef.current ? { generationId: generationIdRef.current, targetId: editingVisualCharId } : undefined}
+          />
+        )}
+
+        {/* Location Modal for Visuals stage */}
+        {editingVisualLocId && story && (
+          <LocationModal
+            isOpen={!!editingVisualLocId}
+            onClose={() => setEditingVisualLocId(null)}
+            onSave={async (data) => {
+              await handleVisualLocSave(editingVisualLocId, data);
+              setEditingVisualLocId(null);
+            }}
+            location={(() => {
+              const loc = story.locations.find(l => l.id === editingVisualLocId);
+              const imgState = locationImages[editingVisualLocId];
+              if (!loc) return undefined;
+              return {
+                id: loc.id,
+                name: loc.name,
+                description: loc.description,
+                atmosphere: loc.atmosphere,
+                visualStyle: story.style,
+                imageBase64: imgState?.image?.image_base64 || null,
+                imageMimeType: imgState?.image?.mime_type || "image/png",
+              } as StoryLocationFE;
+            })()}
+            isSaving={isSavingVisualLoc}
+            lockedStyle={story.style}
+            generationContext={generationIdRef.current ? { generationId: generationIdRef.current, targetId: editingVisualLocId } : undefined}
+          />
         )}
 
         {/* Section 3.5: Pre-Flight Check (Prompt Preview) */}
@@ -4027,20 +3109,20 @@ export default function CreateEpisodePage() {
                       </button>
                     </div>
 
-                    {/* Key moment reference image for this shot */}
+                    {/* Scene storyboard image for this shot */}
                     <div className="flex items-center gap-2 mb-3">
                       {(() => {
-                        const entry = keyMoment?.entries.find((e) => e.beat_number === shot.beat_number);
-                        if (!entry) return <span className="text-[10px] text-[#555]">No key moment ref</span>;
+                        const si = sceneImages[shot.beat_number];
+                        if (!si?.image) return <span className="text-[10px] text-[#555]">No scene ref</span>;
                         return (
                           <>
                             <img
-                              src={`data:${entry.image.mime_type};base64,${entry.image.image_base64}`}
+                              src={`data:${si.image.mime_type};base64,${si.image.image_base64}`}
                               className="w-10 h-14 object-cover rounded border border-[#B8B6FC]/30"
-                              title={`Key moment — Scene ${entry.beat_number}`}
+                              title={`Scene ${shot.beat_number} storyboard`}
                             />
                             <span className="text-[10px] text-[#555] ml-1">
-                              Key moment ref (1 image)
+                              Scene ref (1 image)
                             </span>
                           </>
                         );
@@ -4129,14 +3211,14 @@ export default function CreateEpisodePage() {
               <h2 className="text-xl font-semibold text-white">4. Creating Your Film</h2>
               {(film.status === "ready" || film.status === "failed") && (
                 <button
-                  onClick={() => { setVisualStep("characters"); setMoodboardStep("full"); }}
+                  onClick={() => { setVisualsActive(true); setVisualsTab("scenes"); }}
                   className="text-sm text-[#ADADAD] hover:text-white transition-colors"
                 >
-                  ← Moodboard
+                  ← Visuals
                 </button>
               )}
             </div>
-            {story && <p className="text-[#ADADAD] mb-6">&ldquo;{story.title}&rdquo;</p>}
+            {/* Story title removed — episode name shown in header */}
 
             {/* Generating State — card grid with lazy-loading clips */}
             {(film.status === "generating" || film.status === "assembling") && (
@@ -4453,126 +3535,6 @@ export default function CreateEpisodePage() {
 
       <Footer />
 
-      {/* Sidebar toggle button */}
-      <button
-        onClick={() => { setSidebarOpen(!sidebarOpen); if (!sidebarOpen) fetchGenerationsList(); }}
-        className="fixed bottom-6 left-6 z-50 w-12 h-12 bg-[#1A1E2F] rounded-full border border-white/10 flex items-center justify-center hover:bg-[#262626] shadow-lg transition-colors"
-        title="Past Generations"
-      >
-        <svg className="w-5 h-5 text-white/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-      </button>
-
-      {/* Sidebar overlay */}
-      {sidebarOpen && (
-        <>
-          <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setSidebarOpen(false)} />
-          <div className="fixed left-0 top-0 bottom-0 w-80 bg-[#0F0E13] border-r border-white/10 z-50 overflow-y-auto">
-            <div className="p-4">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-white font-semibold text-lg">Generations</h2>
-                <button
-                  onClick={() => setSidebarOpen(false)}
-                  className="text-white/50 hover:text-white text-xl leading-none"
-                >
-                  &times;
-                </button>
-              </div>
-
-              <button
-                onClick={() => { startNewGeneration(); setSidebarOpen(false); }}
-                className="w-full mb-5 py-2.5 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-lg font-medium hover:opacity-90 transition-opacity"
-              >
-                + New Generation
-              </button>
-
-              {pastGenerations.length === 0 && (
-                <p className="text-[#555] text-sm text-center py-8">No generations yet</p>
-              )}
-
-              <div className="space-y-3">
-                {pastGenerations.map((gen) => {
-                  const isActive = gen.id === generationId;
-                  const statusColors: Record<string, string> = {
-                    drafting: "bg-white/10 text-white/50",
-                    moodboard: "bg-blue-500/20 text-blue-300",
-                    key_moments: "bg-blue-500/20 text-blue-300",
-                    preflight: "bg-blue-500/20 text-blue-300",
-                    filming: "bg-amber-500/20 text-amber-300",
-                    ready: "bg-green-500/20 text-green-300",
-                    failed: "bg-red-500/20 text-red-300",
-                    interrupted: "bg-orange-500/20 text-orange-300",
-                  };
-                  const statusLabels: Record<string, string> = {
-                    drafting: "Draft",
-                    moodboard: "Moodboard",
-                    key_moments: "Key Moments",
-                    preflight: "Pre-Flight",
-                    filming: "Generating...",
-                    ready: "Complete",
-                    failed: "Failed",
-                    interrupted: "Interrupted",
-                  };
-                  return (
-                    <button
-                      key={gen.id}
-                      onClick={() => {
-                        if (!isActive) restoreGeneration(gen.id);
-                        setSidebarOpen(false);
-                      }}
-                      className={`w-full text-left p-3 rounded-xl transition-colors ${
-                        isActive
-                          ? "bg-[#B8B6FC]/15 border border-[#B8B6FC]/30"
-                          : "bg-[#1A1E2F] hover:bg-[#262626] border border-transparent"
-                      }`}
-                    >
-                      {/* 16:9 thumbnail */}
-                      <div className="w-full aspect-video rounded-lg overflow-hidden bg-[#262626] mb-2.5">
-                        {gen.thumbnail_base64 ? (
-                          <img
-                            src={`data:image/png;base64,${gen.thumbnail_base64}`}
-                            className="w-full h-full object-cover"
-                            alt=""
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <svg className="w-8 h-8 text-white/15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            </svg>
-                          </div>
-                        )}
-                      </div>
-                      <p className="text-white text-sm font-medium truncate mb-1.5">
-                        {gen.title || "Untitled"}
-                      </p>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[11px] text-white/40">
-                          {STYLE_DISPLAY_MAP[gen.style] || gen.style}
-                        </span>
-                        <span className="text-white/15">|</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${statusColors[gen.status] || statusColors.drafting}`}>
-                          {statusLabels[gen.status] || gen.status}
-                        </span>
-                        {gen.cost_total > 0 && (
-                          <>
-                            <span className="text-white/15">|</span>
-                            <span className="text-[10px] text-white/30">${gen.cost_total.toFixed(2)}</span>
-                          </>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-white/25 mt-1">
-                        {new Date(gen.created_at).toLocaleDateString()}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-
       {/* Loading overlay during state restore */}
       {isRestoringState && (
         <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center">
@@ -4585,6 +3547,32 @@ export default function CreateEpisodePage() {
           </div>
         </div>
       )}
+
+      {/* Story picker — non-dismissible when no story is associated */}
+      <StoryPickerModal
+        isOpen={showStoryPicker}
+        onClose={() => {
+          if (associatedStoryId) setShowStoryPicker(false);
+        }}
+        onSelect={handleStorySelected}
+        stories={availableStories}
+        title="Choose a Story"
+        description="Every episode must belong to a story. Pick one to get started."
+      />
+
+      {/* Episode creation modal — shown after story is picked */}
+      <CreateEpisodeModal
+        isOpen={showCreateEpisodeModal}
+        onClose={() => {
+          setShowCreateEpisodeModal(false);
+          // If no story associated yet, go back to story picker
+          if (!associatedStoryId) setShowStoryPicker(true);
+        }}
+        onSave={handleEpisodeCreated}
+        nextEpisodeNumber={
+          (availableStories.find(s => s.id === pendingStoryId)?.episodeCount || 0) + 1
+        }
+      />
     </div>
   );
 }

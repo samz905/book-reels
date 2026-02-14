@@ -181,7 +181,6 @@ async function seedDatabase() {
               number: episode.number,
               name: episode.name,
               is_free: episode.is_free,
-              thumbnail_url: episode.thumbnail_url,
               media_url: episode.media_url,
               status: episode.status,
             });

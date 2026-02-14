@@ -1155,3 +1155,313 @@ async def refine_key_moment(request: RefineKeyMomentRequest):
         import traceback
         print(f"Error refining key moment: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Scene Images Endpoints (all 8 scenes)
+# ============================================================
+
+class SceneImageDescription(BaseModel):
+    scene_number: int
+    visual_description: str
+
+
+class GenerateSceneImagesRequest(BaseModel):
+    story: Story
+    approved_visuals: ApprovedVisuals
+    scene_descriptions: List[SceneImageDescription]
+
+
+class SceneImageResult(BaseModel):
+    scene_number: int
+    image: MoodboardImage
+    prompt_used: str
+
+
+class GenerateSceneImagesResponse(BaseModel):
+    scene_images: List[SceneImageResult]
+    cost_usd: float = 0.0
+
+
+@router.post("/generate-scene-images", response_model=GenerateSceneImagesResponse)
+async def generate_scene_images(request: GenerateSceneImagesRequest):
+    """
+    Generate reference images for all scenes using approved character/location visuals.
+
+    For each scene description, selects the relevant character and location references
+    from approved_visuals, builds a prompt, and generates the image.
+    All scenes are generated in parallel.
+
+    Input: {
+        "story": {...},
+        "approved_visuals": {...},
+        "scene_descriptions": [{"scene_number": 1, "visual_description": "..."}, ...]
+    }
+    Output: { "scene_images": [{"scene_number": 1, "image": {...}, "prompt_used": "..."}, ...] }
+    """
+    try:
+        story = request.story
+        approved = request.approved_visuals
+        style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
+
+        # Build a lookup: scene_number -> Beat (prefer scenes converted to beats, fallback to beats)
+        beat_lookup: Dict[int, Beat] = {}
+        for beat in story.beats:
+            beat_lookup[beat.number] = beat
+        # If no beats but scenes exist, derive beats from scenes
+        if not beat_lookup and story.scenes:
+            from .story import scene_to_beat, Scene as StoryScene
+            for scene in story.scenes:
+                beat_data = scene_to_beat(scene)
+                beat_lookup[scene.scene_number] = Beat(**beat_data)
+
+        async def generate_one_scene(desc: SceneImageDescription) -> SceneImageResult:
+            """Generate a single scene image."""
+            beat = beat_lookup.get(desc.scene_number)
+
+            # Build per-scene reference images
+            refs: List[dict] = []
+
+            # Add character refs relevant to this scene
+            if beat and beat.characters_in_scene and approved.character_image_map:
+                for char_id in beat.characters_in_scene:
+                    if char_id in approved.character_image_map:
+                        char_ref = approved.character_image_map[char_id]
+                        refs.append({"image_base64": char_ref.image_base64, "mime_type": char_ref.mime_type})
+            # Fallback: use all character images if no per-beat info
+            if not refs:
+                for char_img in approved.character_images[:5]:
+                    refs.append({"image_base64": char_img.image_base64, "mime_type": char_img.mime_type})
+
+            # Add location image for this scene
+            location_id = beat.location_id if beat else None
+            location_img = None
+            if location_id and location_id in approved.location_images:
+                location_img = approved.location_images[location_id]
+            elif approved.location_images:
+                location_img = next(iter(approved.location_images.values()))
+            elif approved.setting_image:
+                location_img = approved.setting_image
+
+            if location_img:
+                refs.append({"image_base64": location_img.image_base64, "mime_type": location_img.mime_type})
+
+            # Build character appearance context for prompt
+            chars_in_scene = beat.characters_in_scene if beat and beat.characters_in_scene else [c.id for c in story.characters]
+            char_lines = []
+            for cid in chars_in_scene:
+                char = next((c for c in story.characters if c.id == cid), None)
+                if char:
+                    char_lines.append(f"- {char.name} ({char.age} {char.gender}): {char.appearance}")
+            chars_description = "\n".join(char_lines) if char_lines else "Characters present in scene"
+
+            # Get location description
+            setting_desc = ""
+            if location_id and approved.location_descriptions:
+                setting_desc = approved.location_descriptions.get(location_id, "")
+            if not setting_desc and approved.setting_description:
+                setting_desc = approved.setting_description
+
+            prompt = f"""{style_prefix}
+
+SCENE {desc.scene_number}: {desc.visual_description}
+
+SETTING: {setting_desc}
+
+CHARACTERS IN SCENE:
+{chars_description}
+
+Show the full scene with characters in action, not a close-up portrait.
+Medium or wide shot showing body language and environment context.
+Dynamic cinematic composition.
+
+Portrait orientation, 9:16 aspect ratio."""
+
+            print(f"  Scene {desc.scene_number}: {len(refs)} refs, prompt: {prompt[:150]}...")
+
+            result = await generate_image_with_references(
+                prompt=prompt,
+                reference_images=refs,
+                aspect_ratio="9:16",
+            )
+
+            return SceneImageResult(
+                scene_number=desc.scene_number,
+                image=MoodboardImage(
+                    type="key_moment",
+                    image_base64=result["image_base64"],
+                    mime_type=result["mime_type"],
+                    prompt_used=prompt,
+                ),
+                prompt_used=prompt,
+            )
+
+        # Generate all scenes in parallel
+        print(f"Generating {len(request.scene_descriptions)} scene images in parallel...")
+        results = await asyncio.gather(
+            *[generate_one_scene(desc) for desc in request.scene_descriptions],
+            return_exceptions=True,
+        )
+
+        # Filter out failures
+        scene_images: List[SceneImageResult] = []
+        for r in results:
+            if isinstance(r, SceneImageResult):
+                scene_images.append(r)
+            else:
+                print(f"  Scene image generation failed: {r}")
+
+        if not scene_images:
+            raise ValueError("All scene image generations failed")
+
+        total_cost = len(scene_images) * COST_IMAGE_GENERATION
+        return GenerateSceneImagesResponse(
+            scene_images=scene_images,
+            cost_usd=total_cost,
+        )
+
+    except Exception as e:
+        import traceback
+        print(f"Error generating scene images: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Refine Scene Image Endpoint
+# ============================================================
+
+class RefineSceneImageRequest(BaseModel):
+    story: Story
+    approved_visuals: ApprovedVisuals
+    scene_number: int
+    visual_description: str
+    feedback: str
+
+
+class RefineSceneImageResponse(BaseModel):
+    scene_number: int
+    image: MoodboardImage
+    prompt_used: str
+    cost_usd: float = 0.0
+
+
+@router.post("/refine-scene-image", response_model=RefineSceneImageResponse)
+async def refine_scene_image(request: RefineSceneImageRequest):
+    """
+    Refine a single scene image with feedback.
+    Uses approved character and location IMAGES for visual consistency.
+
+    Input: {
+        "story": {...},
+        "approved_visuals": {...},
+        "scene_number": 3,
+        "visual_description": "...",
+        "feedback": "make the lighting warmer"
+    }
+    Output: { "scene_number": 3, "image": {...}, "prompt_used": "..." }
+    """
+    try:
+        story = request.story
+        approved = request.approved_visuals
+        style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
+
+        # Find the matching beat
+        beat = None
+        for b in story.beats:
+            if b.number == request.scene_number:
+                beat = b
+                break
+        # Fallback: derive from scenes
+        if not beat and story.scenes:
+            from .story import scene_to_beat, Scene as StoryScene
+            for scene in story.scenes:
+                if scene.scene_number == request.scene_number:
+                    beat_data = scene_to_beat(scene)
+                    beat = Beat(**beat_data)
+                    break
+
+        # Build per-scene reference images
+        refs: List[dict] = []
+
+        # Add character refs relevant to this scene
+        if beat and beat.characters_in_scene and approved.character_image_map:
+            for char_id in beat.characters_in_scene:
+                if char_id in approved.character_image_map:
+                    char_ref = approved.character_image_map[char_id]
+                    refs.append({"image_base64": char_ref.image_base64, "mime_type": char_ref.mime_type})
+        # Fallback: use all character images
+        if not refs:
+            for char_img in approved.character_images[:5]:
+                refs.append({"image_base64": char_img.image_base64, "mime_type": char_img.mime_type})
+
+        # Add location image
+        location_id = beat.location_id if beat else None
+        location_img = None
+        if location_id and location_id in approved.location_images:
+            location_img = approved.location_images[location_id]
+        elif approved.location_images:
+            location_img = next(iter(approved.location_images.values()))
+        elif approved.setting_image:
+            location_img = approved.setting_image
+
+        if location_img:
+            refs.append({"image_base64": location_img.image_base64, "mime_type": location_img.mime_type})
+
+        # Build character appearance context
+        chars_in_scene = beat.characters_in_scene if beat and beat.characters_in_scene else [c.id for c in story.characters]
+        char_lines = []
+        for cid in chars_in_scene:
+            char = next((c for c in story.characters if c.id == cid), None)
+            if char:
+                char_lines.append(f"- {char.name} ({char.age} {char.gender}): {char.appearance}")
+        chars_description = "\n".join(char_lines) if char_lines else "Characters present in scene"
+
+        # Get location description
+        setting_desc = ""
+        if location_id and approved.location_descriptions:
+            setting_desc = approved.location_descriptions.get(location_id, "")
+        if not setting_desc and approved.setting_description:
+            setting_desc = approved.setting_description
+
+        prompt = f"""{style_prefix}
+
+SCENE {request.scene_number}: {request.visual_description}
+
+SETTING: {setting_desc}
+
+CHARACTERS IN SCENE:
+{chars_description}
+
+Show the full scene with characters in action, not a close-up portrait.
+Medium or wide shot showing body language and environment context.
+Dynamic cinematic composition.
+
+Portrait orientation, 9:16 aspect ratio.
+
+Additional direction: {request.feedback}"""
+
+        print(f"Refining scene {request.scene_number} with feedback: {request.feedback}")
+        print(f"  {len(refs)} refs, prompt: {prompt[:200]}...")
+
+        result = await generate_image_with_references(
+            prompt=prompt,
+            reference_images=refs,
+            aspect_ratio="9:16",
+        )
+
+        return RefineSceneImageResponse(
+            scene_number=request.scene_number,
+            image=MoodboardImage(
+                type="key_moment",
+                image_base64=result["image_base64"],
+                mime_type=result["mime_type"],
+                prompt_used=prompt,
+            ),
+            prompt_used=prompt,
+            cost_usd=COST_IMAGE_GENERATION,
+        )
+
+    except Exception as e:
+        import traceback
+        print(f"Error refining scene image: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))

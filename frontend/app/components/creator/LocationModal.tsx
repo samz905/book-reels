@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { StoryLocationFE, StoryCharacterFE } from "@/app/data/mockCreatorData";
 import { VISUAL_STYLES } from "@/app/data/mockCreatorData";
-import { generateLocationImage } from "@/lib/api/creator";
+import { generateLocationImage, GenerationContext } from "@/lib/api/creator";
 
 interface LocationModalProps {
   isOpen: boolean;
@@ -20,6 +20,9 @@ interface LocationModalProps {
   location?: StoryLocationFE;
   existingCharacters?: StoryCharacterFE[];
   isSaving?: boolean;
+  lockedStyle?: string;
+  /** When provided, image generation is tracked via gen_jobs for persistence */
+  generationContext?: GenerationContext;
 }
 
 export default function LocationModal({
@@ -29,6 +32,8 @@ export default function LocationModal({
   location,
   existingCharacters = [],
   isSaving = false,
+  lockedStyle,
+  generationContext,
 }: LocationModalProps) {
   const isEditing = !!location;
 
@@ -55,7 +60,7 @@ export default function LocationModal({
         setName(location.name);
         setDescription(location.description);
         setAtmosphere(location.atmosphere);
-        setVisualStyle(location.visualStyle || "cinematic");
+        setVisualStyle(lockedStyle || location.visualStyle || "cinematic");
         setRefCharId("");
         setImageBase64(location.imageBase64);
         setImageMimeType(location.imageMimeType);
@@ -63,7 +68,7 @@ export default function LocationModal({
         setName("");
         setDescription("");
         setAtmosphere("");
-        setVisualStyle("cinematic");
+        setVisualStyle(lockedStyle || "cinematic");
         setRefCharId("");
         setImageBase64(null);
         setImageMimeType("image/png");
@@ -119,15 +124,18 @@ export default function LocationModal({
         ? existingCharacters.find((c) => c.id === refCharId)
         : null;
 
-      const result = await generateLocationImage({
-        name: name.trim(),
-        description: description.trim(),
-        atmosphere: atmosphere.trim() || undefined,
-        visual_style: refChar ? undefined : visualStyle,
-        reference_image: refChar?.imageBase64
-          ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
-          : undefined,
-      });
+      const result = await generateLocationImage(
+        {
+          name: name.trim(),
+          description: description.trim(),
+          atmosphere: atmosphere.trim() || undefined,
+          visual_style: refChar ? undefined : (lockedStyle || visualStyle),
+          reference_image: refChar?.imageBase64
+            ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
+            : undefined,
+        },
+        generationContext
+      );
 
       setImageBase64(result.image_base64);
       setImageMimeType(result.mime_type);
@@ -292,8 +300,8 @@ export default function LocationModal({
           </div>
         )}
 
-        {/* Visual Style (hidden when ref char selected) */}
-        {!refCharId && (
+        {/* Visual Style (hidden when ref char selected OR lockedStyle is set) */}
+        {!refCharId && !lockedStyle && (
           <div className="mb-6">
             <label className="block text-white text-sm mb-2">Visual Style</label>
             <div className="flex flex-wrap gap-2">

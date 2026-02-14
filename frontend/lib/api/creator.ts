@@ -46,7 +46,6 @@ export function mapDbEpisodeToFrontend(dbEpisode: DbEpisode): FrontendEpisode {
     number: dbEpisode.number,
     name: dbEpisode.name,
     isFree: dbEpisode.is_free,
-    thumbnail: dbEpisode.thumbnail_url || undefined,
     status: dbEpisode.status,
   };
 }
@@ -68,12 +67,13 @@ export function mapDbStoryToFrontend(
 ): FrontendStory {
   const episodes = dbStory.episodes || [];
   const ebooks = dbStory.ebooks || [];
+  const publishedCount = episodes.filter(e => e.status === "published").length;
 
   return {
     id: dbStory.id,
     title: dbStory.title,
     type: dbStory.type,
-    episodeCount: episodes.length,
+    episodeCount: publishedCount,
     viewCount: dbStory.view_count,
     description: dbStory.description,
     cover: dbStory.cover_url || "",
@@ -255,7 +255,6 @@ export async function createEpisode(
     number: number;
     name: string;
     is_free?: boolean;
-    thumbnail_url?: string | null;
     media_url?: string | null;
     status?: "draft" | "published";
   }
@@ -528,16 +527,57 @@ export async function deleteStoryLocation(storyId: string, locationId: string): 
   await handleResponse<{ success: boolean }>(response);
 }
 
-// ============ AI Image Generation (calls FastAPI directly) ============
+// ============ Generation context (for persistent job tracking) ============
 
-export async function generateCharacterImage(data: {
-  name: string;
-  age: string;
-  gender?: string;
-  description: string;
-  visual_style?: string;
-  reference_image?: { image_base64: string; mime_type: string };
-}): Promise<{ image_base64: string; mime_type: string; cost_usd: number }> {
+export interface GenerationContext {
+  generationId: string;
+  targetId?: string;
+}
+
+/**
+ * Call a backend generation endpoint through the /api/gen proxy.
+ * The proxy persists job status to Supabase so results survive tab closure.
+ */
+export async function callGen<T>(
+  jobType: string,
+  backendPath: string,
+  payload: unknown,
+  ctx: GenerationContext
+): Promise<T> {
+  const response = await fetch("/api/gen", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      generation_id: ctx.generationId,
+      job_type: jobType,
+      target_id: ctx.targetId || "",
+      backend_path: backendPath,
+      payload,
+    }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || `Generation failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+// ============ AI Image Generation ============
+
+export async function generateCharacterImage(
+  data: {
+    name: string;
+    age: string;
+    gender?: string;
+    description: string;
+    visual_style?: string;
+    reference_image?: { image_base64: string; mime_type: string };
+  },
+  ctx?: GenerationContext
+): Promise<{ image_base64: string; mime_type: string; cost_usd: number }> {
+  if (ctx) {
+    return callGen("character_image", "/assets/generate-character-image", data, ctx);
+  }
   const response = await fetch(`${BACKEND_URL}/assets/generate-character-image`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -550,13 +590,19 @@ export async function generateCharacterImage(data: {
   return response.json();
 }
 
-export async function generateLocationImage(data: {
-  name: string;
-  description: string;
-  atmosphere?: string;
-  visual_style?: string;
-  reference_image?: { image_base64: string; mime_type: string };
-}): Promise<{ image_base64: string; mime_type: string; cost_usd: number }> {
+export async function generateLocationImage(
+  data: {
+    name: string;
+    description: string;
+    atmosphere?: string;
+    visual_style?: string;
+    reference_image?: { image_base64: string; mime_type: string };
+  },
+  ctx?: GenerationContext
+): Promise<{ image_base64: string; mime_type: string; cost_usd: number }> {
+  if (ctx) {
+    return callGen("location_image", "/assets/generate-location-image", data, ctx);
+  }
   const response = await fetch(`${BACKEND_URL}/assets/generate-location-image`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
