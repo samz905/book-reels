@@ -56,7 +56,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
   const allowedFields: (keyof StoryLocationUpdate)[] = [
     "name", "description", "atmosphere",
-    "visual_style", "image_base64", "image_url", "image_mime_type",
+    "visual_style", "image_base64", "image_url", "image_mime_type", "saved_to_story",
   ];
   const updateData: StoryLocationUpdate = {};
   for (const field of allowedFields) {

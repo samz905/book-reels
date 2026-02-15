@@ -1368,7 +1368,7 @@ class RefineSceneImageRequest(BaseModel):
     approved_visuals: ApprovedVisuals
     scene_number: int
     visual_description: str
-    feedback: str
+    feedback: str = ""
 
 
 class RefineSceneImageResponse(BaseModel):
@@ -1470,11 +1470,12 @@ Show the full scene with characters in action, not a close-up portrait.
 Medium or wide shot showing body language and environment context.
 Dynamic cinematic composition.
 
-Portrait orientation, 9:16 aspect ratio.
+Portrait orientation, 9:16 aspect ratio."""
 
-Additional direction: {request.feedback}"""
+        if request.feedback.strip():
+            prompt += f"\n\nAdditional direction: {request.feedback}"
 
-        print(f"Refining scene {request.scene_number} with feedback: {request.feedback}")
+        print(f"Generating scene {request.scene_number}" + (f" with feedback: {request.feedback}" if request.feedback.strip() else ""))
         print(f"  {len(refs)} refs, prompt: {prompt[:200]}...")
 
         result = await generate_image_with_references(

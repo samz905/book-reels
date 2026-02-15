@@ -68,6 +68,7 @@ export interface StoryCharacterFE {
   imageBase64: string | null;
   imageUrl: string | null;
   imageMimeType: string;
+  savedToStory: boolean;
 }
 
 export interface StoryLocationFE {
@@ -79,6 +80,21 @@ export interface StoryLocationFE {
   imageBase64: string | null;
   imageUrl: string | null;
   imageMimeType: string;
+  savedToStory: boolean;
+}
+
+export interface EpisodeStoryboardFE {
+  id: string;
+  generationId: string;
+  sceneNumber: number;
+  title: string;
+  visualDescription: string;
+  status: 'pending' | 'generating' | 'completed' | 'failed';
+  imageUrl: string | null;
+  imageBase64: string | null;
+  imageMimeType: string;
+  promptUsed: string | null;
+  errorMessage: string | null;
 }
 
 export const VISUAL_STYLES = [

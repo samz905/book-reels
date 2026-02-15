@@ -23,10 +23,12 @@ async def _retry_on_resource_exhausted(fn, *args, **kwargs):
             return fn(*args, **kwargs)
         except Exception as e:
             error_str = str(e)
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+            is_retryable = ("429" in error_str or "RESOURCE_EXHAUSTED" in error_str
+                            or "503" in error_str or "UNAVAILABLE" in error_str)
+            if is_retryable:
                 if attempt < MAX_RETRIES:
                     delay = RETRY_BASE_DELAY * (2 ** attempt)
-                    print(f"  Rate limited (429). Retrying in {delay}s... (attempt {attempt + 1}/{MAX_RETRIES})")
+                    print(f"  Transient error. Retrying in {delay}s... (attempt {attempt + 1}/{MAX_RETRIES})")
                     await asyncio.sleep(delay)
                     continue
             raise

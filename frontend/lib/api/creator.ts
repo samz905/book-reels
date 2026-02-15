@@ -8,6 +8,7 @@ import type {
   StoryFull,
   StoryCharacter as DbStoryCharacter,
   StoryLocation as DbStoryLocation,
+  EpisodeStoryboard as DbEpisodeStoryboard,
 } from "@/types/database";
 import type {
   CreatorProfile,
@@ -18,6 +19,7 @@ import type {
   Ebook as FrontendEbook,
   StoryCharacterFE,
   StoryLocationFE,
+  EpisodeStoryboardFE,
 } from "@/app/data/mockCreatorData";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
@@ -366,6 +368,7 @@ export function mapDbCharacterToFrontend(db: DbStoryCharacter): StoryCharacterFE
     imageBase64: db.image_base64,
     imageUrl: db.image_url,
     imageMimeType: db.image_mime_type,
+    savedToStory: db.saved_to_story,
   };
 }
 
@@ -379,6 +382,23 @@ export function mapDbLocationToFrontend(db: DbStoryLocation): StoryLocationFE {
     imageBase64: db.image_base64,
     imageUrl: db.image_url,
     imageMimeType: db.image_mime_type,
+    savedToStory: db.saved_to_story,
+  };
+}
+
+export function mapDbStoryboardToFrontend(db: DbEpisodeStoryboard): EpisodeStoryboardFE {
+  return {
+    id: db.id,
+    generationId: db.generation_id,
+    sceneNumber: db.scene_number,
+    title: db.title,
+    visualDescription: db.visual_description,
+    status: db.status as EpisodeStoryboardFE['status'],
+    imageUrl: db.image_url,
+    imageBase64: db.image_base64,
+    imageMimeType: db.image_mime_type,
+    promptUsed: db.prompt_used,
+    errorMessage: db.error_message,
   };
 }
 
@@ -429,6 +449,7 @@ export async function updateStoryCharacter(
     image_base64?: string | null;
     image_url?: string | null;
     image_mime_type?: string;
+    saved_to_story?: boolean;
   }
 ): Promise<StoryCharacterFE> {
   const response = await fetch(`/api/stories/${storyId}/characters/${characterId}`, {
@@ -492,6 +513,7 @@ export async function updateStoryLocation(
     image_base64?: string | null;
     image_url?: string | null;
     image_mime_type?: string;
+    saved_to_story?: boolean;
   }
 ): Promise<StoryLocationFE> {
   const response = await fetch(`/api/stories/${storyId}/locations/${locationId}`, {
@@ -506,6 +528,72 @@ export async function updateStoryLocation(
 
 export async function deleteStoryLocation(storyId: string, locationId: string): Promise<void> {
   const response = await fetch(`/api/stories/${storyId}/locations/${locationId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  await handleResponse<{ success: boolean }>(response);
+}
+
+// ============ Storyboard CRUD ============
+
+export async function getEpisodeStoryboards(generationId: string): Promise<EpisodeStoryboardFE[]> {
+  const response = await fetch(`/api/generations/${generationId}/storyboards`, {
+    credentials: "include",
+  });
+  const data = await handleResponse<DbEpisodeStoryboard[]>(response);
+  return data.map(mapDbStoryboardToFrontend);
+}
+
+export async function upsertEpisodeStoryboards(
+  generationId: string,
+  rows: Array<{
+    scene_number: number;
+    title?: string;
+    visual_description?: string;
+    status?: string;
+    image_url?: string | null;
+    image_base64?: string | null;
+    image_mime_type?: string;
+    prompt_used?: string | null;
+    error_message?: string | null;
+  }>
+): Promise<EpisodeStoryboardFE[]> {
+  const response = await fetch(`/api/generations/${generationId}/storyboards`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(rows),
+  });
+  const data = await handleResponse<DbEpisodeStoryboard[]>(response);
+  return data.map(mapDbStoryboardToFrontend);
+}
+
+export async function updateEpisodeStoryboard(
+  generationId: string,
+  storyboardId: string,
+  data: {
+    title?: string;
+    visual_description?: string;
+    status?: string;
+    image_url?: string | null;
+    image_base64?: string | null;
+    image_mime_type?: string;
+    prompt_used?: string | null;
+    error_message?: string | null;
+  }
+): Promise<EpisodeStoryboardFE> {
+  const response = await fetch(`/api/generations/${generationId}/storyboards/${storyboardId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
+  });
+  const db = await handleResponse<DbEpisodeStoryboard>(response);
+  return mapDbStoryboardToFrontend(db);
+}
+
+export async function deleteEpisodeStoryboard(generationId: string, storyboardId: string): Promise<void> {
+  const response = await fetch(`/api/generations/${generationId}/storyboards/${storyboardId}`, {
     method: "DELETE",
     credentials: "include",
   });

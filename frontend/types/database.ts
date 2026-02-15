@@ -304,6 +304,7 @@ export interface Database {
           image_base64: string | null;
           image_url: string | null;
           image_mime_type: string;
+          saved_to_story: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -319,6 +320,7 @@ export interface Database {
           image_base64?: string | null;
           image_url?: string | null;
           image_mime_type?: string;
+          saved_to_story?: boolean;
         };
         Update: {
           name?: string;
@@ -330,6 +332,7 @@ export interface Database {
           image_base64?: string | null;
           image_url?: string | null;
           image_mime_type?: string;
+          saved_to_story?: boolean;
         };
       };
       story_locations: {
@@ -343,6 +346,7 @@ export interface Database {
           image_base64: string | null;
           image_url: string | null;
           image_mime_type: string;
+          saved_to_story: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -356,6 +360,7 @@ export interface Database {
           image_base64?: string | null;
           image_url?: string | null;
           image_mime_type?: string;
+          saved_to_story?: boolean;
         };
         Update: {
           name?: string;
@@ -365,6 +370,47 @@ export interface Database {
           image_base64?: string | null;
           image_url?: string | null;
           image_mime_type?: string;
+          saved_to_story?: boolean;
+        };
+      };
+      episode_storyboards: {
+        Row: {
+          id: string;
+          generation_id: string;
+          scene_number: number;
+          title: string;
+          visual_description: string;
+          status: string;
+          image_url: string | null;
+          image_base64: string | null;
+          image_mime_type: string;
+          prompt_used: string | null;
+          error_message: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          generation_id: string;
+          scene_number: number;
+          title?: string;
+          visual_description?: string;
+          status?: string;
+          image_url?: string | null;
+          image_base64?: string | null;
+          image_mime_type?: string;
+          prompt_used?: string | null;
+          error_message?: string | null;
+        };
+        Update: {
+          title?: string;
+          visual_description?: string;
+          status?: string;
+          image_url?: string | null;
+          image_base64?: string | null;
+          image_mime_type?: string;
+          prompt_used?: string | null;
+          error_message?: string | null;
         };
       };
       cart_items: {
@@ -435,6 +481,10 @@ export type StoryCharacterUpdate = Database["public"]["Tables"]["story_character
 export type StoryLocation = Database["public"]["Tables"]["story_locations"]["Row"];
 export type StoryLocationInsert = Database["public"]["Tables"]["story_locations"]["Insert"];
 export type StoryLocationUpdate = Database["public"]["Tables"]["story_locations"]["Update"];
+
+export type EpisodeStoryboard = Database["public"]["Tables"]["episode_storyboards"]["Row"];
+export type EpisodeStoryboardInsert = Database["public"]["Tables"]["episode_storyboards"]["Insert"];
+export type EpisodeStoryboardUpdate = Database["public"]["Tables"]["episode_storyboards"]["Update"];
 
 export type CartItem = Database["public"]["Tables"]["cart_items"]["Row"];
 export type CartItemInsert = Database["public"]["Tables"]["cart_items"]["Insert"];

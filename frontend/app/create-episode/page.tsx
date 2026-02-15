@@ -12,10 +12,10 @@ import {
   type GenJob,
 } from "@/lib/supabase/ai-generations";
 import { useAuth } from "@/app/context/AuthContext";
-import { getMyStories, getStoryCharacters, getStoryLocations, updateStoryCharacter, createStoryCharacter, updateStoryLocation, createStoryLocation, createStory, submitJob } from "@/lib/api/creator";
+import { getMyStories, getStoryCharacters, getStoryLocations, updateStoryCharacter, createStoryCharacter, updateStoryLocation, createStoryLocation, createStory, submitJob, getEpisodeStoryboards, upsertEpisodeStoryboards } from "@/lib/api/creator";
 import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 import { useGenJobs } from "@/lib/hooks/useGenJobs";
-import type { StoryCharacterFE, StoryLocationFE } from "@/app/data/mockCreatorData";
+import type { StoryCharacterFE, StoryLocationFE, EpisodeStoryboardFE } from "@/app/data/mockCreatorData";
 import StoryPickerModal from "@/app/components/creator/StoryPickerModal";
 import CreateEpisodeModal from "@/app/components/creator/CreateEpisodeModal";
 import CharacterModal from "@/app/components/creator/CharacterModal";
@@ -373,6 +373,7 @@ export default function CreateEpisodePage() {
   const [locationImages, setLocationImages] = useState<Record<string, LocationImageState>>({});
   const [sceneImages, setSceneImages] = useState<Record<number, SceneImageState>>({});
   const [isGeneratingSceneDescs, setIsGeneratingSceneDescs] = useState(false);
+  const [sceneDescError, setSceneDescError] = useState("");
   const [expandedSceneDescs, setExpandedSceneDescs] = useState<Set<number>>(new Set());
 
   // Modal state for visuals stage
@@ -463,9 +464,12 @@ export default function CreateEpisodePage() {
         break;
       case "scene_descriptions":
         setIsGeneratingSceneDescs(false);
+        setSceneDescError(errMsg);
         break;
       case "scene_images":
-      case "key_moment":
+      case "key_moment": {
+        // Capture generating scene numbers before state update
+        const failedSceneNums = Object.keys(sceneImages).map(Number).filter((n) => sceneImages[n]?.isGenerating);
         setSceneImages((prev) => {
           const updated = { ...prev };
           for (const key of Object.keys(updated)) {
@@ -476,13 +480,30 @@ export default function CreateEpisodePage() {
           }
           return updated;
         });
+        // Update DB status to failed
+        const genId1 = generationIdRef.current;
+        if (genId1 && failedSceneNums.length > 0) {
+          upsertEpisodeStoryboards(genId1, failedSceneNums.map((n) => ({
+            scene_number: n, status: "failed", error_message: errMsg,
+          }))).catch(() => {});
+        }
         break;
-      case "scene_image":
+      }
+      case "scene_image": {
+        const failedNum = parseInt(job.target_id);
         setSceneImages((prev) => ({
           ...prev,
-          [parseInt(job.target_id)]: { ...prev[parseInt(job.target_id)], isGenerating: false, error: errMsg },
+          [failedNum]: { ...prev[failedNum], isGenerating: false, error: errMsg },
         }));
+        // Update DB status to failed
+        const genId2 = generationIdRef.current;
+        if (genId2 && !isNaN(failedNum)) {
+          upsertEpisodeStoryboards(genId2, [{
+            scene_number: failedNum, status: "failed", error_message: errMsg,
+          }]).catch(() => {});
+        }
         break;
+      }
       case "protagonist":
       case "character_image":
       case "refine_character":
@@ -698,20 +719,54 @@ export default function CreateEpisodePage() {
             newSceneImages[desc.scene_number] = { sceneNumber: desc.scene_number, title: desc.title, visualDescription: desc.visual_description, image: null, isGenerating: false, error: "", feedback: "" };
           }
           setSceneImages(newSceneImages);
+          // Persist scene descriptions to episode_storyboards DB table
+          const genId = generationIdRef.current;
+          if (genId) {
+            upsertEpisodeStoryboards(genId, descs.map((d) => ({
+              scene_number: d.scene_number, title: d.title,
+              visual_description: d.visual_description, status: "pending",
+            }))).catch((e) => console.warn("DB storyboard upsert failed:", e));
+          }
         }
         setIsGeneratingSceneDescs(false);
         break;
       }
       case "scene_images": {
-        const sceneImgs = result.scene_images as Array<{ scene_number: number; image: MoodboardImage }>;
+        const sceneImgs = result.scene_images as Array<{ scene_number: number; image: MoodboardImage; prompt_used?: string }>;
         if (sceneImgs) {
+          const successNums = new Set(sceneImgs.map(si => si.scene_number));
           setSceneImages((prev) => {
             const updated = { ...prev };
             for (const si of sceneImgs) {
-              if (updated[si.scene_number]) updated[si.scene_number] = { ...updated[si.scene_number], image: si.image, isGenerating: false };
+              if (updated[si.scene_number]) updated[si.scene_number] = { ...updated[si.scene_number], image: si.image, isGenerating: false, error: "" };
+            }
+            // Mark scenes that were generating but NOT in results as failed
+            for (const [key, scene] of Object.entries(updated)) {
+              const num = parseInt(key);
+              if (scene.isGenerating && !successNums.has(num)) {
+                updated[num] = { ...scene, isGenerating: false, error: "Generation failed — click Regenerate to retry" };
+              }
             }
             return updated;
           });
+          // Persist completed images to episode_storyboards DB table
+          const genId = generationIdRef.current;
+          if (genId) {
+            upsertEpisodeStoryboards(genId, sceneImgs.map((si) => ({
+              scene_number: si.scene_number, status: "completed",
+              image_url: si.image.image_url || null,
+              image_base64: si.image.image_base64 || null,
+              image_mime_type: si.image.mime_type,
+              prompt_used: si.prompt_used || null,
+            }))).catch((e) => console.warn("DB storyboard image save failed:", e));
+            // Mark failed scenes in DB too
+            const failedNums = Object.keys(sceneImages).map(Number).filter(n => sceneImages[n]?.isGenerating && !successNums.has(n));
+            if (failedNums.length > 0) {
+              upsertEpisodeStoryboards(genId, failedNums.map(n => ({
+                scene_number: n, status: "failed", error_message: "Generation failed",
+              }))).catch(() => {});
+            }
+          }
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
         saveNow({}, "visuals");
@@ -722,6 +777,17 @@ export default function CreateEpisodePage() {
         const img = result.image as MoodboardImage | undefined;
         if (!isNaN(sceneNum) && img) {
           setSceneImages((prev) => ({ ...prev, [sceneNum]: { ...prev[sceneNum], image: img, isGenerating: false, feedback: "" } }));
+          // Persist refined image to episode_storyboards DB table
+          const genId = generationIdRef.current;
+          if (genId) {
+            upsertEpisodeStoryboards(genId, [{
+              scene_number: sceneNum, status: "completed",
+              image_url: img.image_url || null,
+              image_base64: img.image_base64 || null,
+              image_mime_type: img.mime_type,
+              prompt_used: (result.prompt_used as string) || null,
+            }]).catch((e) => console.warn("DB storyboard refine save failed:", e));
+          }
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
         saveNow({}, "visuals");
@@ -1144,17 +1210,6 @@ export default function CreateEpisodePage() {
   // Generation Persistence
   // ============================================================
 
-  // Strip base64 data from images before saving — only URLs persist
-  // Strip base64 from images before saving — keep base64 only if no URL exists (upload failed)
-  const stripImg = (img: MoodboardImage | null): MoodboardImage | null =>
-    img ? {
-      type: img.type,
-      image_url: img.image_url,
-      mime_type: img.mime_type,
-      prompt_used: img.prompt_used,
-      ...(img.image_url ? {} : img.image_base64 ? { image_base64: img.image_base64 } : {}),
-    } : null;
-
   const buildSnapshot = () => ({
     idea,
     style,
@@ -1187,11 +1242,14 @@ export default function CreateEpisodePage() {
         refImages: v.refImages.map((r) => ({ url: r.url, mimeType: r.mimeType, name: r.name })),
       }])
     ),
+    // Scene images are DB-authoritative (episode_storyboards table).
+    // JSONB keeps scene metadata (needed by backward compat restore) but no image data.
     sceneImages: Object.fromEntries(
       Object.entries(sceneImages).map(([k, v]) => [k, {
-        ...v,
-        isGenerating: false,
-        image: stripImg(v.image),
+        sceneNumber: v.sceneNumber,
+        title: v.title,
+        visualDescription: v.visualDescription,
+        feedback: v.feedback,
       }])
     ),
     promptPreview: {
@@ -1328,6 +1386,10 @@ export default function CreateEpisodePage() {
           setStoryLibraryLocs(dbLocs);
         } catch { /* non-fatal — fall back to JSONB */ }
       }
+      // Fetch storyboards from DB (linked to generation, not story)
+      let dbStoryboards: EpisodeStoryboardFE[] = [];
+      try { dbStoryboards = await getEpisodeStoryboards(genId); } catch { /* non-fatal */ }
+
       const restoredName = (s.episodeName as string | null) || data.title || null;
       setEpisodeName(restoredName);
       episodeNameRef.current = restoredName;
@@ -1428,20 +1490,42 @@ export default function CreateEpisodePage() {
       }
       setLocationImages(cleanedLocs);
 
-      // Restore scene images (still JSONB-based — no DB table for these)
-      if (s.sceneImages) {
-        const rawScenes = s.sceneImages as Record<number, SceneImageState>;
-        const cleanedScenes: Record<number, SceneImageState> = {};
-        for (const key in rawScenes) {
-          const si = rawScenes[key];
-          if (si.image && hasRealImage(si.image)) {
-            cleanedScenes[key] = { ...si, isGenerating: false };
+      // ── DB-authoritative: build scene image states from episode_storyboards table ──
+      const jsonbScenes = (s.sceneImages || {}) as Record<number, Partial<SceneImageState>>;
+      const cleanedScenes: Record<number, SceneImageState> = {};
+
+      for (const dbSb of dbStoryboards) {
+        const js = jsonbScenes[dbSb.sceneNumber] || {};
+        const hasImg = dbSb.imageUrl || dbSb.imageBase64;
+        cleanedScenes[dbSb.sceneNumber] = {
+          sceneNumber: dbSb.sceneNumber,
+          title: dbSb.title,
+          visualDescription: dbSb.visualDescription,
+          image: hasImg ? {
+            type: "key_moment" as const,
+            image_url: dbSb.imageUrl || undefined,
+            image_base64: dbSb.imageBase64 || undefined,
+            mime_type: dbSb.imageMimeType || "image/png",
+            prompt_used: dbSb.promptUsed || "",
+          } : null,
+          isGenerating: dbSb.status === "generating",
+          error: dbSb.status === "failed" ? (dbSb.errorMessage || "Generation failed") : "",
+          feedback: (js.feedback as string) || "",
+        };
+      }
+      // Backward compat: JSONB-only entries for old generations without DB rows
+      for (const [key, si] of Object.entries(jsonbScenes)) {
+        const num = parseInt(key);
+        if (!cleanedScenes[num]) {
+          const rawSi = si as SceneImageState;
+          if (rawSi.image && hasRealImage(rawSi.image)) {
+            cleanedScenes[num] = { ...rawSi, isGenerating: false };
           } else {
-            cleanedScenes[key] = { ...si, image: null, isGenerating: false };
+            cleanedScenes[num] = { ...rawSi, image: null, isGenerating: false };
           }
         }
-        setSceneImages(cleanedScenes);
       }
+      setSceneImages(cleanedScenes);
 
       // Prefetch base64 for URL-only images (needed by buildApprovedVisuals)
       const prefetchBase64 = async () => {
@@ -1890,32 +1974,20 @@ export default function CreateEpisodePage() {
     saveNow({ locationImages: updatedLocationImages }, "visuals");
   };
 
-  // Save AI char to story library
-  const saveAiCharToStory = async (charId: string) => {
-    if (!story || !associatedStoryId) return;
-    const char = story.characters.find((c) => c.id === charId);
-    const charImg = characterImages[charId];
-    if (!char || !charImg?.image) return;
-
+  // Save an AI-generated char or loc to the story library
+  const handleSaveToLibrary = async (type: "character" | "location", id: string) => {
+    const sid = associatedStoryIdRef.current;
+    if (!sid) return;
     try {
-      await createStoryCharacter(associatedStoryId, {
-        name: char.name,
-        age: char.age,
-        gender: char.gender,
-        description: char.appearance,
-        role: char.role,
-        visual_style: style,
-        image_base64: charImg.image.image_base64 || null,
-        image_mime_type: charImg.image.mime_type,
-      });
-      // Mark as story-origin now
-      const updated = { ...story };
-      updated.characters = updated.characters.map((c) =>
-        c.id === charId ? { ...c, origin: "story" as const } : c
-      );
-      setStory(updated);
-    } catch (err) {
-      console.error("Failed to save char to story:", err);
+      if (type === "character") {
+        await updateStoryCharacter(sid, id, { saved_to_story: true });
+        setStoryLibraryChars(prev => prev.map(c => c.id === id ? { ...c, savedToStory: true } : c));
+      } else {
+        await updateStoryLocation(sid, id, { saved_to_story: true });
+        setStoryLibraryLocs(prev => prev.map(l => l.id === id ? { ...l, savedToStory: true } : l));
+      }
+    } catch (e) {
+      console.warn("Failed to save to library:", e);
     }
   };
 
@@ -1923,6 +1995,7 @@ export default function CreateEpisodePage() {
   const fetchSceneDescriptions = async () => {
     if (!story || !generationIdRef.current) return;
     setIsGeneratingSceneDescs(true);
+    setSceneDescError("");
 
     try {
       await submitJob(
@@ -1935,14 +2008,17 @@ export default function CreateEpisodePage() {
     } catch (err) {
       console.error("Failed to submit scene descriptions job:", err);
       setIsGeneratingSceneDescs(false);
+      setSceneDescError("Failed to submit job. Please try again.");
     }
   };
 
-  // Generate all 8 scene images in parallel
+  // Generate all scene images — each scene submitted as its own job for real-time loading
   const generateAllSceneImages = async () => {
     if (!story) return;
     const approvedVisuals = buildApprovedVisuals();
     if (!approvedVisuals) return;
+
+    const scenes = Object.values(sceneImages);
 
     // Mark all scenes as generating
     setSceneImages((prev) => {
@@ -1954,30 +2030,34 @@ export default function CreateEpisodePage() {
       return updated;
     });
 
-    try {
-      const sceneDescs = Object.values(sceneImages).map((si) => ({
-        scene_number: si.sceneNumber,
-        visual_description: si.visualDescription,
-      }));
+    // Persist generating status to DB
+    const genId = generationIdRef.current;
+    if (genId) {
+      upsertEpisodeStoryboards(genId, scenes.map((si) => ({
+        scene_number: si.sceneNumber, status: "generating",
+      }))).catch(() => {});
+    }
 
-      await submitJob(
-        "scene_images",
-        "/moodboard/generate-scene-images",
-        { story, approved_visuals: approvedVisuals, scene_descriptions: sceneDescs },
-        { generationId: generationIdRef.current! }
-      );
-      // Result handled by Realtime useEffect — images uploaded by backend
-    } catch (err) {
-      setSceneImages((prev) => {
-        const updated = { ...prev };
-        Object.keys(updated).forEach((key) => {
-          const num = parseInt(key);
-          if (updated[num].isGenerating) {
-            updated[num] = { ...updated[num], isGenerating: false, error: "Generation failed" };
-          }
-        });
-        return updated;
-      });
+    // Submit each scene as a separate job — results arrive via Realtime individually
+    for (const scene of scenes) {
+      try {
+        await submitJob(
+          "scene_image",
+          "/moodboard/refine-scene-image",
+          {
+            story,
+            approved_visuals: approvedVisuals,
+            scene_number: scene.sceneNumber,
+            visual_description: scene.visualDescription,
+          },
+          { generationId: generationIdRef.current!, targetId: String(scene.sceneNumber) }
+        );
+      } catch (err) {
+        setSceneImages((prev) => ({
+          ...prev,
+          [scene.sceneNumber]: { ...prev[scene.sceneNumber], isGenerating: false, error: "Failed to submit" },
+        }));
+      }
     }
   };
 
@@ -1994,6 +2074,14 @@ export default function CreateEpisodePage() {
       ...prev,
       [sceneNumber]: { ...prev[sceneNumber], isGenerating: true, error: "" },
     }));
+
+    // Persist generating status to DB
+    const genId = generationIdRef.current;
+    if (genId) {
+      upsertEpisodeStoryboards(genId, [{
+        scene_number: sceneNumber, status: "generating",
+      }]).catch(() => {});
+    }
 
     try {
       await submitJob(
@@ -2013,6 +2101,47 @@ export default function CreateEpisodePage() {
       setSceneImages((prev) => ({
         ...prev,
         [sceneNumber]: { ...prev[sceneNumber], isGenerating: false, error: "Refinement failed" },
+      }));
+    }
+  };
+
+  // Regenerate a failed scene image (no feedback required)
+  const regenerateSceneImage = async (sceneNumber: number) => {
+    if (!story) return;
+    const scene = sceneImages[sceneNumber];
+    if (!scene) return;
+
+    const approvedVisuals = buildApprovedVisuals();
+    if (!approvedVisuals) return;
+
+    setSceneImages((prev) => ({
+      ...prev,
+      [sceneNumber]: { ...prev[sceneNumber], isGenerating: true, error: "" },
+    }));
+
+    const genId = generationIdRef.current;
+    if (genId) {
+      upsertEpisodeStoryboards(genId, [{
+        scene_number: sceneNumber, status: "generating",
+      }]).catch(() => {});
+    }
+
+    try {
+      await submitJob(
+        "scene_image",
+        "/moodboard/refine-scene-image",
+        {
+          story,
+          approved_visuals: approvedVisuals,
+          scene_number: sceneNumber,
+          visual_description: scene.visualDescription,
+        },
+        { generationId: generationIdRef.current!, targetId: String(sceneNumber) }
+      );
+    } catch (err) {
+      setSceneImages((prev) => ({
+        ...prev,
+        [sceneNumber]: { ...prev[sceneNumber], isGenerating: false, error: "Regeneration failed" },
       }));
     }
   };
@@ -2608,8 +2737,8 @@ export default function CreateEpisodePage() {
 
                 {/* Character & Location picker (from story library) */}
                 <CharacterLocationPicker
-                  storyCharacters={storyLibraryChars}
-                  storyLocations={storyLibraryLocs}
+                  storyCharacters={storyLibraryChars.filter(c => c.savedToStory)}
+                  storyLocations={storyLibraryLocs.filter(l => l.savedToStory)}
                   selectedStyle={style}
                   selectedCharacters={selectedChars}
                   selectedLocation={selectedLocation}
@@ -3166,6 +3295,23 @@ export default function CreateEpisodePage() {
                             <div className="mt-3">
                               <p className="text-white text-sm font-medium truncate">{char.name}</p>
                               <p className="text-[#ADADAD] text-xs">Role: {char.role === "protagonist" ? "Main Character" : char.role === "antagonist" ? "Antagonist" : "Supporting"}</p>
+                              {hasImage && char.origin !== "story" && (() => {
+                                const isSaved = storyLibraryChars.find(c => c.id === char.id)?.savedToStory;
+                                return isSaved ? (
+                                  <span className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>
+                                    Saved to Library
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleSaveToLibrary("character", char.id); }}
+                                    className="mt-1 text-[10px] text-[#B8B6FC] hover:text-white flex items-center gap-1 transition-colors"
+                                  >
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></svg>
+                                    Save to Library
+                                  </button>
+                                );
+                              })()}
                             </div>
                           </div>
                         );
@@ -3276,6 +3422,23 @@ export default function CreateEpisodePage() {
                             <div className="mt-3">
                               <p className="text-white text-sm font-medium truncate">{loc.name || "Location"}</p>
                               <p className="text-[#ADADAD] text-xs truncate">{loc.atmosphere}</p>
+                              {hasImage && (() => {
+                                const isSaved = storyLibraryLocs.find(l => l.id === loc.id)?.savedToStory;
+                                return isSaved ? (
+                                  <span className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>
+                                    Saved to Library
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleSaveToLibrary("location", loc.id); }}
+                                    className="mt-1 text-[10px] text-[#B8B6FC] hover:text-white flex items-center gap-1 transition-colors"
+                                  >
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></svg>
+                                    Save to Library
+                                  </button>
+                                );
+                              })()}
                             </div>
                           </div>
                         );
@@ -3326,6 +3489,19 @@ export default function CreateEpisodePage() {
                     </div>
                   )}
 
+                  {/* Error generating scene descriptions */}
+                  {sceneDescError && !isGeneratingSceneDescs && Object.keys(sceneImages).length === 0 && (
+                    <div className="flex flex-col items-center justify-center py-16 gap-4">
+                      <div className="text-red-400 text-sm text-center max-w-md">{sceneDescError}</div>
+                      <button
+                        onClick={fetchSceneDescriptions}
+                        className="px-5 py-2.5 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 transition-opacity"
+                      >
+                        Try Again
+                      </button>
+                    </div>
+                  )}
+
                   {/* Generate All button */}
                   {Object.keys(sceneImages).length > 0 && !Object.values(sceneImages).some(s => s.image) && !Object.values(sceneImages).some(s => s.isGenerating) && (
                     <div className="text-center mb-6">
@@ -3361,8 +3537,14 @@ export default function CreateEpisodePage() {
                                   className="w-full h-full object-cover"
                                 />
                               ) : scene.error ? (
-                                <div className="w-full h-full flex items-center justify-center p-2">
+                                <div className="w-full h-full flex flex-col items-center justify-center p-3 gap-2">
                                   <span className="text-red-400 text-[10px] text-center">{scene.error}</span>
+                                  <button
+                                    onClick={() => regenerateSceneImage(scene.sceneNumber)}
+                                    className="px-3 py-1.5 bg-[#B8B6FC]/20 text-[#B8B6FC] text-[10px] font-medium rounded-lg border border-[#B8B6FC]/30 hover:bg-[#B8B6FC]/30 transition-colors"
+                                  >
+                                    Regenerate
+                                  </button>
                                 </div>
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center">
