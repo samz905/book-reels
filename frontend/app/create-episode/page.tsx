@@ -445,6 +445,16 @@ export default function CreateEpisodePage() {
   // Supabase Realtime: subscribe to gen_jobs changes for this generation
   const realtimeJobs = useGenJobs(generationId);
   const processedJobsRef = useRef<Set<string>>(new Set());
+  const snapshotRef = useRef<Record<string, unknown>>({});
+
+  /** Remove a previously-processed job so re-submission is handled by Realtime */
+  const clearProcessedJob = (jobType: string, targetId: string = "") => {
+    for (const job of realtimeJobs) {
+      if (job.job_type === jobType && (job.target_id || "") === targetId) {
+        processedJobsRef.current.delete(job.id);
+      }
+    }
+  };
 
   const CHAR_IMG_DEFAULTS = { images: [] as MoodboardImage[], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] as RefImageUpload[] };
   const LOC_IMG_DEFAULTS = { ...CHAR_IMG_DEFAULTS };
@@ -546,7 +556,7 @@ export default function CreateEpisodePage() {
         if (storyResult) {
           setStory(storyResult);
           if (result.cost_usd) setTotalCost((prev) => ({ ...prev, story: prev.story + (result.cost_usd as number) }));
-          saveNow({ story: storyResult, isGenerating: false }, "drafting");
+          saveNow({ story: storyResult });
         }
         setIsGenerating(false);
         setGlobalFeedback("");
@@ -769,7 +779,7 @@ export default function CreateEpisodePage() {
           }
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
-        saveNow({}, "visuals");
+        saveNow();
         break;
       }
       case "scene_image": {
@@ -790,7 +800,7 @@ export default function CreateEpisodePage() {
           }
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
-        saveNow({}, "visuals");
+        saveNow();
         break;
       }
       case "prompt_preview": {
@@ -1047,6 +1057,7 @@ export default function CreateEpisodePage() {
         } : undefined,
       };
 
+      clearProcessedJob("script");
       await submitJob("script", "/story/generate", payload, { generationId: activeGenId });
       // Result handled by Realtime useEffect — isGenerating set false there
     } catch (err) {
@@ -1082,6 +1093,7 @@ export default function CreateEpisodePage() {
         } : undefined,
       };
 
+      clearProcessedJob("script");
       await submitJob("script", "/story/regenerate", payload, { generationId: generationIdRef.current! });
       // Result handled by Realtime useEffect
     } catch (err) {
@@ -1193,6 +1205,7 @@ export default function CreateEpisodePage() {
     setIsRefining(true);
 
     try {
+      clearProcessedJob("refine_beat", String(selectedBeatIndex + 1));
       await submitJob(
         "refine_beat",
         "/story/refine-beat",
@@ -1265,30 +1278,32 @@ export default function CreateEpisodePage() {
     totalCost,
   });
 
-  // Save with current React state (for debounced/beforeunload saves)
+  /** Derive generation status from current state — single source of truth */
+  const inferStatus = (): string => {
+    if (film.status === "generating" || film.status === "assembling") return "filming";
+    if (film.status === "ready") return "ready";
+    if (film.status === "failed") return "failed";
+    if (promptPreview.shots.length > 0) return "preflight";
+    if (visualsActive) return "visuals";
+    return "drafting";
+  };
+
+  // Save with snapshotRef (always-current post-render state) for debounced/beforeunload saves
   const saveGeneration = async (statusOverride?: string, explicitId?: string) => {
     const gid = explicitId || generationIdRef.current;
     if (!gid) return;
-    const snapshot = buildSnapshot();
-    const currentStatus = statusOverride || (
-      film.status === "generating" || film.status === "assembling" ? "filming" :
-      film.status === "ready" ? "ready" :
-      film.status === "failed" ? "failed" :
-      promptPreview.shots.length > 0 ? "preflight" :
-      visualsActive ? "visuals" :
-      story ? "drafting" : "drafting"
-    );
+    const snapshot = snapshotRef.current;
     supaUpdateGeneration(gid, {
       title: episodeNameRef.current || "Untitled",
-      status: currentStatus,
+      status: statusOverride || inferStatus(),
       state: snapshot,
       film_id: film.filmId,
       cost_total: totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film,
     }).catch(console.error);
   };
 
-  // Save immediately with actual data (bypasses stale closures)
-  // Pass overrides for fields that were just set via setState but aren't in closure yet
+  // Save immediately — reads from snapshotRef (post-last-render state), merges optional overrides
+  // for fields that were just set via setState but haven't rendered yet
   const saveNow = (overrides: Record<string, unknown> = {}, statusOverride?: string) => {
     // Cancel pending debounced auto-save — this explicit save supersedes it
     if (saveTimeoutRef.current) {
@@ -1297,10 +1312,10 @@ export default function CreateEpisodePage() {
     }
     const gid = generationIdRef.current;
     if (!gid) return;
-    const snapshot = { ...buildSnapshot(), ...overrides };
+    const snapshot = { ...snapshotRef.current, ...overrides };
     supaUpdateGeneration(gid, {
       title: episodeNameRef.current || "Untitled",
-      status: statusOverride || "drafting",
+      status: statusOverride || inferStatus(),
       state: snapshot,
       film_id: film.filmId,
       cost_total: totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film,
@@ -1618,7 +1633,7 @@ export default function CreateEpisodePage() {
           // Clean up processed jobs
           await clearGenJobs(restoredGenId);
           // Save updated state
-          saveNow({}, undefined);
+          saveNow();
         } catch (err) {
           console.error("Failed to check completed gen jobs:", err);
         }
@@ -1667,6 +1682,11 @@ export default function CreateEpisodePage() {
     setPromptPreview({ shots: [], editedPrompts: {}, estimatedCostUsd: 0, isLoading: false });
     setSelectedChars([]);
     setSelectedLocation(null);
+    setStoryLibraryChars([]);
+    setStoryLibraryLocs([]);
+    setAssociatedStoryId(null);
+    associatedStoryIdRef.current = null;
+    processedJobsRef.current.clear();
     setTotalCost({ story: 0, characters: 0, locations: 0, keyMoments: 0, film: 0 });
   };
 
@@ -1765,6 +1785,9 @@ export default function CreateEpisodePage() {
         workingStory = remapStoryIds(story, idMap);
         setStory(workingStory);
       }
+
+      // Refresh library state so Save to Library button works with new DB entries
+      fetchStoryLibrary(storyId);
     }
 
     // ── Step 3: Build character image states ──
@@ -1867,7 +1890,7 @@ export default function CreateEpisodePage() {
 
     setCharacterImages(charStates);
     setLocationImages(locStates);
-    saveNow({ characterImages: charStates, locationImages: locStates, story: workingStory }, "visuals");
+    saveNow({ characterImages: charStates, locationImages: locStates, story: workingStory, visualsActive: true, visualsTab: "characters" }, "visuals");
   };
 
   // Character visuals modal save handler
@@ -1926,7 +1949,7 @@ export default function CreateEpisodePage() {
 
     setIsSavingVisualChar(false);
     setEditingVisualCharId(null);
-    saveNow({ characterImages: updatedCharacterImages }, "visuals");
+    saveNow({ characterImages: updatedCharacterImages });
   };
 
   // Location visuals modal save handler
@@ -1972,7 +1995,7 @@ export default function CreateEpisodePage() {
 
     setIsSavingVisualLoc(false);
     setEditingVisualLocId(null);
-    saveNow({ locationImages: updatedLocationImages }, "visuals");
+    saveNow({ locationImages: updatedLocationImages });
   };
 
   // Save an AI-generated char or loc to the story library
@@ -1999,6 +2022,7 @@ export default function CreateEpisodePage() {
     setSceneDescError("");
 
     try {
+      clearProcessedJob("scene_descriptions");
       await submitJob(
         "scene_descriptions",
         "/story/generate-scene-descriptions",
@@ -2042,6 +2066,7 @@ export default function CreateEpisodePage() {
     // Submit each scene as a separate job — results arrive via Realtime individually
     for (const scene of scenes) {
       try {
+        clearProcessedJob("scene_image", String(scene.sceneNumber));
         await submitJob(
           "scene_image",
           "/moodboard/refine-scene-image",
@@ -2085,6 +2110,7 @@ export default function CreateEpisodePage() {
     }
 
     try {
+      clearProcessedJob("scene_image", String(sceneNumber));
       await submitJob(
         "scene_image",
         "/moodboard/refine-scene-image",
@@ -2128,6 +2154,7 @@ export default function CreateEpisodePage() {
     }
 
     try {
+      clearProcessedJob("scene_image", String(sceneNumber));
       await submitJob(
         "scene_image",
         "/moodboard/refine-scene-image",
@@ -2252,6 +2279,12 @@ export default function CreateEpisodePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storyLibraryChars, storyLibraryLocs, visualsActive]);
 
+  // Keep snapshotRef in sync with latest state — runs after every relevant render
+  // so saveNow()/saveGeneration() always read current values instead of stale closures
+  useEffect(() => {
+    snapshotRef.current = buildSnapshot();
+  });
+
   // Auto-save generation state when key milestones change
   // Debounced to avoid spamming on rapid state changes
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -2342,6 +2375,7 @@ export default function CreateEpisodePage() {
     });
 
     try {
+      clearProcessedJob("film");
       await submitJob(
         "film",
         "/film/generate",
@@ -2374,6 +2408,7 @@ export default function CreateEpisodePage() {
     setPromptPreview((prev) => ({ ...prev, isLoading: true }));
 
     try {
+      clearProcessedJob("prompt_preview");
       const spikeScene = sceneImages[4] || sceneImages[Object.keys(sceneImages)[0] as unknown as number];
       await submitJob(
         "prompt_preview",
@@ -2438,6 +2473,7 @@ export default function CreateEpisodePage() {
     });
 
     try {
+      clearProcessedJob("film_with_prompts");
       await submitJob(
         "film_with_prompts",
         "/film/generate-with-prompts",
@@ -2484,6 +2520,7 @@ export default function CreateEpisodePage() {
     setRegeneratingShotNum(shotNumber);
 
     try {
+      clearProcessedJob("shot_regenerate", String(shotNumber));
       await submitJob(
         "shot_regenerate",
         "/film/shot/regenerate",
@@ -3194,7 +3231,7 @@ export default function CreateEpisodePage() {
                     <button
                       onClick={() => {
                         setVisualsTab(tab);
-                        saveNow({ visualsTab: tab }, "visuals");
+                        saveNow({ visualsTab: tab });
                       }}
                       className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
                         isActive
@@ -3334,7 +3371,7 @@ export default function CreateEpisodePage() {
                     <button
                       onClick={() => {
                         setVisualsTab("locations");
-                        saveNow({ visualsTab: "locations" }, "visuals");
+                        saveNow({ visualsTab: "locations" });
                       }}
                       disabled={!story?.characters.every(c => characterImages[c.id]?.image)}
                       className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -3451,7 +3488,7 @@ export default function CreateEpisodePage() {
                     <button
                       onClick={() => {
                         setVisualsTab("characters");
-                        saveNow({ visualsTab: "characters" }, "visuals");
+                        saveNow({ visualsTab: "characters" });
                       }}
                       className="text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
                     >
@@ -3460,7 +3497,7 @@ export default function CreateEpisodePage() {
                     <button
                       onClick={() => {
                         setVisualsTab("scenes");
-                        saveNow({ visualsTab: "scenes" }, "visuals");
+                        saveNow({ visualsTab: "scenes" });
                         if (Object.keys(sceneImages).length === 0) {
                           fetchSceneDescriptions();
                         }
@@ -3603,7 +3640,7 @@ export default function CreateEpisodePage() {
                     <button
                       onClick={() => {
                         setVisualsTab("locations");
-                        saveNow({ visualsTab: "locations" }, "visuals");
+                        saveNow({ visualsTab: "locations" });
                       }}
                       className="text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
                     >
@@ -3652,7 +3689,7 @@ export default function CreateEpisodePage() {
             isSaving={isSavingVisualChar}
             hideRole={false}
             lockedStyle={story.style}
-            readOnlyFields={story.characters.find(c => c.id === editingVisualCharId)?.origin === "story" ? ["name", "age"] : []}
+            readOnlyFields={["name", "age", "gender"]}
           />
         )}
 
@@ -3681,6 +3718,7 @@ export default function CreateEpisodePage() {
             })()}
             isSaving={isSavingVisualLoc}
             lockedStyle={story.style}
+            readOnlyFields={["name"]}
           />
         )}
 

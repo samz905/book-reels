@@ -21,6 +21,7 @@ interface LocationModalProps {
   existingCharacters?: StoryCharacterFE[];
   isSaving?: boolean;
   lockedStyle?: string;
+  readOnlyFields?: string[];
 }
 
 export default function LocationModal({
@@ -31,6 +32,7 @@ export default function LocationModal({
   existingCharacters = [],
   isSaving = false,
   lockedStyle,
+  readOnlyFields = [],
 }: LocationModalProps) {
   const isEditing = !!location;
 
@@ -243,7 +245,8 @@ export default function LocationModal({
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full h-12 bg-[#262626] rounded-xl px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC]"
+            disabled={readOnlyFields.includes("name")}
+            className={`w-full h-12 bg-[#262626] rounded-xl px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] ${readOnlyFields.includes("name") ? "opacity-50 cursor-not-allowed" : ""}`}
             placeholder="e.g. Enchanted Forest"
           />
         </div>
