@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { StoryCharacterFE } from "@/app/data/mockCreatorData";
 import { VISUAL_STYLES } from "@/app/data/mockCreatorData";
-import { generateCharacterImage, GenerationContext } from "@/lib/api/creator";
+import { generateCharacterImage } from "@/lib/api/creator";
 
 interface CharacterModalProps {
   isOpen: boolean;
@@ -25,8 +25,6 @@ interface CharacterModalProps {
   hideRole?: boolean;
   lockedStyle?: string;
   readOnlyFields?: string[];
-  /** When provided, image generation is tracked via gen_jobs for persistence */
-  generationContext?: GenerationContext;
 }
 
 export default function CharacterModal({
@@ -39,7 +37,6 @@ export default function CharacterModal({
   hideRole = true,
   lockedStyle,
   readOnlyFields = [],
-  generationContext,
 }: CharacterModalProps) {
   const isEditing = !!character;
 
@@ -138,19 +135,16 @@ export default function CharacterModal({
         ? existingCharacters.find((c) => c.id === refCharId)
         : null;
 
-      const result = await generateCharacterImage(
-        {
-          name: name.trim(),
-          age: age.trim(),
-          gender: gender || undefined,
-          description: description.trim(),
-          visual_style: refChar ? undefined : (lockedStyle || visualStyle),
-          reference_image: refChar?.imageBase64
-            ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
-            : undefined,
-        },
-        generationContext
-      );
+      const result = await generateCharacterImage({
+        name: name.trim(),
+        age: age.trim(),
+        gender: gender || undefined,
+        description: description.trim(),
+        visual_style: refChar ? undefined : (lockedStyle || visualStyle),
+        reference_image: refChar?.imageBase64
+          ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
+          : undefined,
+      });
 
       setImageBase64(result.image_base64);
       setImageMimeType(result.mime_type);

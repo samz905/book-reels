@@ -7,12 +7,13 @@ import {
   createGeneration as supaCreateGeneration,
   updateGeneration as supaUpdateGeneration,
   getGeneration as supaGetGeneration,
-  upsertFilmJob as supaUpsertFilmJob,
   getCompletedJobs,
   clearGenJobs,
 } from "@/lib/supabase/ai-generations";
 import { useAuth } from "@/app/context/AuthContext";
-import { getMyStories, getStoryCharacters, getStoryLocations, updateStoryCharacter, createStoryCharacter, updateStoryLocation, callGen } from "@/lib/api/creator";
+import { getMyStories, getStoryCharacters, getStoryLocations, updateStoryCharacter, createStoryCharacter, updateStoryLocation, submitJob } from "@/lib/api/creator";
+import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
+import { useGenJobs } from "@/lib/hooks/useGenJobs";
 import type { StoryCharacterFE, StoryLocationFE } from "@/app/data/mockCreatorData";
 import StoryPickerModal from "@/app/components/creator/StoryPickerModal";
 import CreateEpisodeModal from "@/app/components/creator/CreateEpisodeModal";
@@ -166,13 +167,22 @@ interface Story {
 
 interface MoodboardImage {
   type: "character" | "setting" | "location" | "key_moment";
-  image_base64: string;
+  image_url?: string;       // Supabase Storage public URL (persisted)
+  image_base64?: string;    // In-memory only; stripped before save
   mime_type: string;
   prompt_used: string;
 }
 
+/** Get a displayable src for an <img> tag, preferring URL over data URI */
+function getImageSrc(img: MoodboardImage): string {
+  if (img.image_url) return img.image_url;
+  if (img.image_base64) return `data:${img.mime_type};base64,${img.image_base64}`;
+  return "";
+}
+
 interface RefImageUpload {
-  base64: string;
+  url?: string;       // Supabase Storage URL (persisted)
+  base64?: string;    // In-memory only; stripped before save
   mimeType: string;
   name: string;
 }
@@ -214,7 +224,8 @@ interface SceneImageState {
 // Phase 4: Film Generation
 interface CompletedShot {
   number: number;
-  preview_url: string;
+  preview_url?: string;
+  storage_url?: string;
   veo_prompt?: string;
 }
 
@@ -266,6 +277,12 @@ interface TotalCost {
 // ============================================================
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+
+/** Resolve video URL — handles both absolute Storage URLs and legacy relative paths */
+function resolveVideoUrl(url: string): string {
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  return `${BACKEND_URL}${url}`;
+}
 
 // Fixed at 8 shots (8 seconds each = ~64 seconds)
 const TOTAL_SHOTS = 8;
@@ -375,8 +392,6 @@ export default function CreateEpisodePage() {
     error: null,
     cost: { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
   });
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
   // Clip review state
   const [clipsApproved, setClipsApproved] = useState(false);
   const [regeneratingShotNum, setRegeneratingShotNum] = useState<number | null>(null);
@@ -424,6 +439,515 @@ export default function CreateEpisodePage() {
   useEffect(() => {
     generationIdRef.current = generationId;
   }, [generationId]);
+
+  // Supabase Realtime: subscribe to gen_jobs changes for this generation
+  const realtimeJobs = useGenJobs(generationId);
+  const processedJobsRef = useRef<Set<string>>(new Set());
+
+  // Process completed/failed jobs from Realtime
+  useEffect(() => {
+    for (const job of realtimeJobs) {
+      // Skip already-processed or still-generating jobs
+      if (processedJobsRef.current.has(job.id)) continue;
+      if (job.status === "generating") {
+        // For film jobs, update progress from the incremental result
+        if ((job.job_type === "film" || job.job_type === "film_with_prompts") && job.result) {
+          const r = job.result as Record<string, unknown>;
+          setFilm((prev) => ({
+            ...prev,
+            filmId: (r.film_id as string) || prev.filmId,
+            phase: (r.phase as "filming" | "assembling") || prev.phase,
+            currentShot: (r.current_shot as number) ?? prev.currentShot,
+            totalShots: (r.total_shots as number) ?? prev.totalShots,
+            completedShots: (r.completed_shots as Array<{ number: number; preview_url?: string; storage_url?: string; veo_prompt?: string }>) || prev.completedShots,
+            finalVideoUrl: (r.final_video_url as string) || prev.finalVideoUrl,
+            cost: (r.cost as { scene_refs_usd: number; videos_usd: number; total_usd: number }) || prev.cost,
+          }));
+          if (r.cost) {
+            setTotalCost((prev) => ({ ...prev, film: (r.cost as { total_usd: number }).total_usd }));
+          }
+        }
+
+        // Set loading indicators for in-flight jobs (e.g. after page refresh)
+        switch (job.job_type) {
+          case "script":
+            setIsGenerating(true);
+            break;
+          case "refine_beat":
+            setIsRefining(true);
+            break;
+          case "scene_descriptions":
+            setIsGeneratingSceneDescs(true);
+            break;
+          case "scene_images":
+            setSceneImages((prev) => {
+              const updated = { ...prev };
+              for (const key of Object.keys(updated)) {
+                const num = parseInt(key);
+                if (!updated[num].image) {
+                  updated[num] = { ...updated[num], isGenerating: true, error: "" };
+                }
+              }
+              return updated;
+            });
+            break;
+          case "scene_image":
+            setSceneImages((prev) => {
+              const num = parseInt(job.target_id);
+              if (prev[num]) return { ...prev, [num]: { ...prev[num], isGenerating: true, error: "" } };
+              return prev;
+            });
+            break;
+          case "protagonist":
+          case "character_image":
+          case "refine_character":
+            if (job.target_id) {
+              setCharacterImages((prev) => {
+                if (!prev[job.target_id]) return prev;
+                return { ...prev, [job.target_id]: { ...prev[job.target_id], isGenerating: true, error: "" } };
+              });
+            }
+            break;
+          case "location_image":
+          case "refine_location":
+            if (job.target_id) {
+              setLocationImages((prev) => {
+                if (!prev[job.target_id]) return prev;
+                return { ...prev, [job.target_id]: { ...prev[job.target_id], isGenerating: true, error: "" } };
+              });
+            }
+            break;
+          case "key_moment":
+            setSceneImages((prev) => {
+              const updated = { ...prev };
+              for (const key of Object.keys(updated)) {
+                const num = parseInt(key);
+                if (!updated[num].image) {
+                  updated[num] = { ...updated[num], isGenerating: true, error: "" };
+                }
+              }
+              return updated;
+            });
+            break;
+          case "prompt_preview":
+            setPromptPreview((prev) => ({ ...prev, isLoading: true }));
+            break;
+          case "film":
+          case "film_with_prompts":
+            setFilm((prev) => prev.status === "idle" ? { ...prev, status: "generating" } : prev);
+            break;
+          case "shot_regenerate":
+            setRegeneratingShotNum(parseInt(job.target_id));
+            break;
+        }
+
+        continue;
+      }
+
+      // Mark as processed
+      processedJobsRef.current.add(job.id);
+
+      if (job.status === "failed") {
+        const errMsg = job.error_message || "Generation failed";
+        switch (job.job_type) {
+          case "script":
+            setError(errMsg);
+            setIsGenerating(false);
+            break;
+          case "scene_descriptions":
+            setIsGeneratingSceneDescs(false);
+            break;
+          case "scene_images":
+            setSceneImages((prev) => {
+              const updated = { ...prev };
+              Object.keys(updated).forEach((key) => {
+                const num = parseInt(key);
+                if (updated[num]?.isGenerating) {
+                  updated[num] = { ...updated[num], isGenerating: false, error: errMsg };
+                }
+              });
+              return updated;
+            });
+            break;
+          case "scene_image":
+            setSceneImages((prev) => ({
+              ...prev,
+              [parseInt(job.target_id)]: { ...prev[parseInt(job.target_id)], isGenerating: false, error: errMsg },
+            }));
+            break;
+          case "refine_beat":
+            setError(errMsg);
+            setIsRefining(false);
+            break;
+          case "film":
+          case "film_with_prompts":
+            setFilm((prev) => ({ ...prev, status: "failed", error: errMsg }));
+            break;
+          case "shot_regenerate":
+            setRegeneratingShotNum(null);
+            break;
+          case "protagonist":
+          case "character_image":
+          case "refine_character":
+            if (job.target_id) {
+              setCharacterImages((prev) => {
+                if (!prev[job.target_id]) return prev;
+                return { ...prev, [job.target_id]: { ...prev[job.target_id], isGenerating: false, error: errMsg } };
+              });
+            }
+            break;
+          case "location_image":
+          case "refine_location":
+            if (job.target_id) {
+              setLocationImages((prev) => {
+                if (!prev[job.target_id]) return prev;
+                return { ...prev, [job.target_id]: { ...prev[job.target_id], isGenerating: false, error: errMsg } };
+              });
+            }
+            break;
+          case "key_moment":
+            setSceneImages((prev) => {
+              const updated = { ...prev };
+              for (const key of Object.keys(updated)) {
+                const num = parseInt(key);
+                if (updated[num]?.isGenerating) {
+                  updated[num] = { ...updated[num], isGenerating: false, error: errMsg };
+                }
+              }
+              return updated;
+            });
+            break;
+          case "prompt_preview":
+            setPromptPreview((prev) => ({ ...prev, isLoading: false }));
+            break;
+          default:
+            console.warn(`[Realtime] Unhandled failed job type: ${job.job_type}`);
+        }
+        continue;
+      }
+
+      // status === "completed"
+      const result = job.result as Record<string, unknown>;
+      if (!result) continue;
+
+      switch (job.job_type) {
+        case "script": {
+          const storyResult = result.story as Story;
+          if (storyResult) {
+            setStory(storyResult);
+            if (result.cost_usd) {
+              setTotalCost((prev) => ({ ...prev, story: prev.story + (result.cost_usd as number) }));
+            }
+            saveNow({ story: storyResult, isGenerating: false }, "drafting");
+          }
+          setIsGenerating(false);
+          setGlobalFeedback("");
+          break;
+        }
+        case "refine_beat": {
+          const beatResult = (result.beat as Beat) || null;
+          if (beatResult && story) {
+            const sceneNum = parseInt(job.target_id) || beatResult.scene_number;
+            const idx = story.beats.findIndex((b: Beat) => b.scene_number === sceneNum);
+            if (idx >= 0) {
+              const updatedBeats = [...story.beats];
+              updatedBeats[idx] = beatResult;
+              const updatedScenes = [...getScenes(story)];
+              updatedScenes[idx] = {
+                scene_number: beatResult.scene_number || sceneNum,
+                title: updatedScenes[idx]?.title || `Scene ${sceneNum}`,
+                duration: updatedScenes[idx]?.duration || "8 seconds",
+                characters_on_screen: beatResult.characters_in_scene || [],
+                setting_id: beatResult.location_id || "",
+                action: beatResult.action || "",
+                dialogue: beatResult.dialogue?.map((d: DialogueLine) => `${d.character}: ${d.line}`).join("\n") || null,
+                image_prompt: beatResult.description || "",
+                regenerate_notes: updatedScenes[idx]?.regenerate_notes || "",
+                scene_change: beatResult.scene_change,
+                scene_heading: beatResult.scene_heading,
+              };
+              setStory({ ...story, beats: updatedBeats, scenes: updatedScenes });
+            }
+          }
+          setIsRefining(false);
+          setFeedback("");
+          setSelectedBeatIndex(null);
+          break;
+        }
+        case "protagonist": {
+          const charId = (result.character_id as string) || job.target_id;
+          const img = result.image as MoodboardImage | undefined;
+          const imgs = result.images as MoodboardImage[] | undefined;
+          if (charId && (img || imgs)) {
+            // Images already have image_url from backend upload — no frontend upload needed
+            setCharacterImages((prev) => ({
+              ...prev,
+              [charId]: {
+                ...(prev[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+                image: img || (imgs && imgs[0]) || null,
+                images: imgs || (img ? [img] : []),
+                isGenerating: false,
+                error: "",
+                promptUsed: (result.prompt_used as string) || "",
+              },
+            }));
+          }
+          if (result.cost_usd) {
+            setTotalCost((prev) => ({ ...prev, characters: prev.characters + (result.cost_usd as number) }));
+          }
+          break;
+        }
+        case "character_image": {
+          const charId = job.target_id;
+          const img = result.image as MoodboardImage | undefined;
+          const imgs = result.images as MoodboardImage[] | undefined;
+          if (charId && (img || imgs)) {
+            setCharacterImages((prev) => ({
+              ...prev,
+              [charId]: {
+                ...(prev[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+                image: img || (imgs && imgs[0]) || null,
+                images: imgs || (img ? [img] : []),
+                isGenerating: false,
+                error: "",
+                promptUsed: (result.prompt_used as string) || "",
+              },
+            }));
+          }
+          if (result.cost_usd) {
+            setTotalCost((prev) => ({ ...prev, characters: prev.characters + (result.cost_usd as number) }));
+          }
+          break;
+        }
+        case "refine_character": {
+          const charId = (result.character_id as string) || job.target_id;
+          const img = result.image as MoodboardImage | undefined;
+          if (charId && img) {
+            setCharacterImages((prev) => ({
+              ...prev,
+              [charId]: {
+                ...(prev[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+                image: img,
+                isGenerating: false,
+                error: "",
+                feedback: "",
+                promptUsed: (result.prompt_used as string) || "",
+              },
+            }));
+          }
+          if (result.cost_usd) {
+            setTotalCost((prev) => ({ ...prev, characters: prev.characters + (result.cost_usd as number) }));
+          }
+          break;
+        }
+        case "location_image": {
+          const locId = job.target_id;
+          const img = result.image as MoodboardImage | undefined;
+          const imgs = result.images as MoodboardImage[] | undefined;
+          if (locId && (img || imgs)) {
+            setLocationImages((prev) => ({
+              ...prev,
+              [locId]: {
+                ...(prev[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+                image: img || (imgs && imgs[0]) || null,
+                images: imgs || (img ? [img] : []),
+                isGenerating: false,
+                error: "",
+                promptUsed: (result.prompt_used as string) || "",
+              },
+            }));
+          }
+          if (result.cost_usd) {
+            setTotalCost((prev) => ({ ...prev, locations: prev.locations + (result.cost_usd as number) }));
+          }
+          break;
+        }
+        case "refine_location": {
+          const locId = (result.location_id as string) || job.target_id;
+          const img = result.image as MoodboardImage | undefined;
+          if (locId && img) {
+            setLocationImages((prev) => ({
+              ...prev,
+              [locId]: {
+                ...(prev[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+                image: img,
+                isGenerating: false,
+                error: "",
+                feedback: "",
+                promptUsed: (result.prompt_used as string) || "",
+              },
+            }));
+          }
+          if (result.cost_usd) {
+            setTotalCost((prev) => ({ ...prev, locations: prev.locations + (result.cost_usd as number) }));
+          }
+          break;
+        }
+        case "key_moment": {
+          const km = result.key_moment as { beat_number: number; beat_description: string; image: MoodboardImage; prompt_used: string } | undefined;
+          const kms = result.key_moments as Array<{ beat_number: number; beat_description: string; image: MoodboardImage; prompt_used: string }> | undefined;
+          // Key moments go into scene images
+          if (kms && kms.length > 0) {
+            setSceneImages((prev) => {
+              const updated = { ...prev };
+              for (const m of kms) {
+                updated[m.beat_number] = {
+                  sceneNumber: m.beat_number,
+                  title: m.beat_description.slice(0, 50),
+                  visualDescription: m.beat_description,
+                  image: m.image,
+                  isGenerating: false,
+                  error: "",
+                  feedback: "",
+                };
+              }
+              return updated;
+            });
+          } else if (km) {
+            setSceneImages((prev) => ({
+              ...prev,
+              [km.beat_number]: {
+                sceneNumber: km.beat_number,
+                title: km.beat_description.slice(0, 50),
+                visualDescription: km.beat_description,
+                image: km.image,
+                isGenerating: false,
+                error: "",
+                feedback: "",
+              },
+            }));
+          }
+          if (result.cost_usd) {
+            setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
+          }
+          break;
+        }
+        case "scene_descriptions": {
+          const descs = result.descriptions as Array<{ scene_number: number; title: string; visual_description: string }>;
+          if (descs) {
+            const newSceneImages: Record<number, SceneImageState> = {};
+            for (const desc of descs) {
+              newSceneImages[desc.scene_number] = {
+                sceneNumber: desc.scene_number,
+                title: desc.title,
+                visualDescription: desc.visual_description,
+                image: null,
+                isGenerating: false,
+                error: "",
+                feedback: "",
+              };
+            }
+            setSceneImages(newSceneImages);
+          }
+          setIsGeneratingSceneDescs(false);
+          break;
+        }
+        case "scene_images": {
+          const sceneImgs = result.scene_images as Array<{ scene_number: number; image: MoodboardImage }>;
+          if (sceneImgs) {
+            setSceneImages((prev) => {
+              const updated = { ...prev };
+              for (const si of sceneImgs) {
+                if (updated[si.scene_number]) {
+                  updated[si.scene_number] = { ...updated[si.scene_number], image: si.image, isGenerating: false };
+                }
+              }
+              return updated;
+            });
+          }
+          if (result.cost_usd) {
+            setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
+          }
+          saveNow({}, "visuals");
+          break;
+        }
+        case "scene_image": {
+          const sceneNum = parseInt(job.target_id);
+          const img = result.image as MoodboardImage | undefined;
+          if (!isNaN(sceneNum) && img) {
+            setSceneImages((prev) => ({
+              ...prev,
+              [sceneNum]: { ...prev[sceneNum], image: img, isGenerating: false, feedback: "" },
+            }));
+          }
+          if (result.cost_usd) {
+            setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
+          }
+          saveNow({}, "visuals");
+          break;
+        }
+        case "prompt_preview": {
+          const shots = result.shots as Array<{ beat_number: number; veo_prompt: string }>;
+          if (shots) {
+            const editedPrompts: Record<number, string> = {};
+            for (const shot of shots) {
+              editedPrompts[shot.beat_number] = shot.veo_prompt;
+            }
+            setPromptPreview({
+              shots: shots as PromptPreviewState["shots"],
+              editedPrompts,
+              estimatedCostUsd: (result.estimated_cost_usd as number) || 0,
+              isLoading: false,
+            });
+          }
+          break;
+        }
+        case "film":
+        case "film_with_prompts": {
+          const r = result;
+          const filmId = r.film_id as string;
+          setFilm({
+            filmId,
+            status: (r.status as string) === "ready" ? "ready" : "failed",
+            currentShot: (r.total_shots as number) || 0,
+            totalShots: (r.total_shots as number) || 0,
+            phase: "filming",
+            completedShots: (r.completed_shots as Array<{ number: number; storage_url?: string; veo_prompt?: string }>) || [],
+            finalVideoUrl: (r.final_video_url as string) || null,
+            error: (r.error_message as string) || null,
+            cost: (r.cost as { scene_refs_usd: number; videos_usd: number; total_usd: number }) || { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
+          });
+          if (r.cost) {
+            setTotalCost((prev) => ({ ...prev, film: (r.cost as { total_usd: number }).total_usd }));
+          }
+          // Create episode if ready
+          if ((r.status as string) === "ready" && associatedStoryIdRef.current) {
+            fetch(`/api/stories/${associatedStoryIdRef.current}/episodes`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: episodeNameRef.current || "Untitled Episode",
+                media_url: (r.final_video_url as string) || null,
+                status: "draft",
+              }),
+            }).catch((err) => console.error("Failed to save episode:", err));
+          }
+          break;
+        }
+        case "shot_regenerate": {
+          const shotNum = parseInt(job.target_id);
+          if (!isNaN(shotNum) && result.preview_url) {
+            setFilm((prev) => {
+              const updatedShots = prev.completedShots.map((s) =>
+                s.number === shotNum
+                  ? { ...s, preview_url: result.preview_url as string, storage_url: result.preview_url as string, veo_prompt: (result.veo_prompt as string) || s.veo_prompt }
+                  : s
+              );
+              return { ...prev, completedShots: updatedShots, status: "ready" };
+            });
+          }
+          if (result.cost) {
+            setTotalCost((prev) => ({ ...prev, film: (result.cost as { total_usd: number }).total_usd }));
+          }
+          setRegeneratingShotNum(null);
+          break;
+        }
+        default:
+          console.warn(`[Realtime] Unhandled completed job type: ${job.job_type}`);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [realtimeJobs]);
 
   // URL helper — generation ID in URL as ?g=xxx
   const setGenerationUrl = (id: string | null) => {
@@ -495,7 +1019,7 @@ export default function CreateEpisodePage() {
       setGenerationId(activeGenId);
       setGenerationUrl(activeGenId);
       // Await creation so the row exists before any saves or sendBeacon can fire
-      await supaCreateGeneration(activeGenId, episodeNameRef.current || "Untitled", style, { idea, style, isGenerating: true }, associatedStoryIdRef.current);
+      await supaCreateGeneration(activeGenId, episodeNameRef.current || "Untitled", style, { idea, style }, associatedStoryIdRef.current);
     }
 
     try {
@@ -518,22 +1042,10 @@ export default function CreateEpisodePage() {
         } : undefined,
       };
 
-      const data = await callGen<{ story: Story; cost_usd?: number }>(
-        "script",
-        "/story/generate",
-        payload,
-        { generationId: activeGenId }
-      );
-
-      setStory(data.story);
-      const scriptCost = data.cost_usd;
-      if (scriptCost) {
-        setTotalCost((prev) => ({ ...prev, story: prev.story + scriptCost }));
-      }
-      saveNow({ story: data.story }, "drafting");
+      await submitJob("script", "/story/generate", payload, { generationId: activeGenId });
+      // Result handled by Realtime useEffect — isGenerating set false there
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate story");
-    } finally {
       setIsGenerating(false);
     }
   };
@@ -565,19 +1077,10 @@ export default function CreateEpisodePage() {
         } : undefined,
       };
 
-      const data = await callGen<{ story: Story; cost_usd?: number }>(
-        "script",
-        "/story/regenerate",
-        payload,
-        { generationId: generationIdRef.current! }
-      );
-
-      setStory(data.story);
-      setGlobalFeedback("");
-      saveNow({ story: data.story }, "drafting");
+      await submitJob("script", "/story/regenerate", payload, { generationId: generationIdRef.current! });
+      // Result handled by Realtime useEffect
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to regenerate story");
-    } finally {
       setIsGenerating(false);
     }
   };
@@ -685,47 +1188,15 @@ export default function CreateEpisodePage() {
     setIsRefining(true);
 
     try {
-      const response = await fetch(`${BACKEND_URL}/story/refine-beat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          story,
-          beat_number: selectedBeatIndex + 1,
-          feedback,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to refine beat");
-      }
-
-      const data = await response.json();
-
-      const updatedBeats = [...story.beats];
-      updatedBeats[selectedBeatIndex] = data.beat;
-      // Also sync the scene from the refined beat
-      const updatedScenes = [...getScenes(story)];
-      const refinedBeat = data.beat;
-      updatedScenes[selectedBeatIndex] = {
-        scene_number: refinedBeat.scene_number,
-        title: updatedScenes[selectedBeatIndex]?.title || `Scene ${refinedBeat.scene_number}`,
-        duration: updatedScenes[selectedBeatIndex]?.duration || "8 seconds",
-        characters_on_screen: refinedBeat.characters_in_scene || [],
-        setting_id: refinedBeat.location_id || "",
-        action: refinedBeat.action || "",
-        dialogue: refinedBeat.dialogue?.map((d: DialogueLine) => `${d.character}: ${d.line}`).join("\n") || null,
-        image_prompt: refinedBeat.description || "",
-        regenerate_notes: updatedScenes[selectedBeatIndex]?.regenerate_notes || "",
-        scene_change: refinedBeat.scene_change,
-        scene_heading: refinedBeat.scene_heading,
-      };
-      setStory({ ...story, beats: updatedBeats, scenes: updatedScenes });
-      setFeedback("");
-      setSelectedBeatIndex(null);
+      await submitJob(
+        "refine_beat",
+        "/story/refine-beat",
+        { story, beat_number: selectedBeatIndex + 1, feedback },
+        { generationId: generationIdRef.current!, targetId: String(selectedBeatIndex + 1) }
+      );
+      // Result handled by Realtime useEffect
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refine beat");
-    } finally {
       setIsRefining(false);
     }
   };
@@ -733,6 +1204,10 @@ export default function CreateEpisodePage() {
   // ============================================================
   // Generation Persistence
   // ============================================================
+
+  // Strip base64 data from images before saving — only URLs persist
+  const stripImg = (img: MoodboardImage | null): MoodboardImage | null =>
+    img ? { type: img.type, image_url: img.image_url, mime_type: img.mime_type, prompt_used: img.prompt_used } : null;
 
   const buildSnapshot = () => ({
     idea,
@@ -743,12 +1218,34 @@ export default function CreateEpisodePage() {
     episodeIsFree,
     selectedChars,
     selectedLocation,
-    isGenerating,
+    // isGenerating intentionally omitted — transient state, always false on restore
     visualsActive,
     visualsTab,
-    characterImages,
-    locationImages,
-    sceneImages,
+    characterImages: Object.fromEntries(
+      Object.entries(characterImages).map(([k, v]) => [k, {
+        ...v,
+        isGenerating: false, // never persist generating state
+        image: stripImg(v.image),
+        images: v.images.map(stripImg),
+        refImages: v.refImages.map((r) => ({ url: r.url, mimeType: r.mimeType, name: r.name })),
+      }])
+    ),
+    locationImages: Object.fromEntries(
+      Object.entries(locationImages).map(([k, v]) => [k, {
+        ...v,
+        isGenerating: false,
+        image: stripImg(v.image),
+        images: v.images.map(stripImg),
+        refImages: v.refImages.map((r) => ({ url: r.url, mimeType: r.mimeType, name: r.name })),
+      }])
+    ),
+    sceneImages: Object.fromEntries(
+      Object.entries(sceneImages).map(([k, v]) => [k, {
+        ...v,
+        isGenerating: false,
+        image: stripImg(v.image),
+      }])
+    ),
     promptPreview: {
       shots: promptPreview.shots,
       editedPrompts: promptPreview.editedPrompts,
@@ -868,7 +1365,9 @@ export default function CreateEpisodePage() {
           .catch(() => {});
         fetchStoryLibrary(data.story_id);
       }
-      if (s.episodeName !== undefined) { setEpisodeName(s.episodeName as string | null); episodeNameRef.current = s.episodeName as string | null; }
+      const restoredName = (s.episodeName as string | null) || data.title || null;
+      setEpisodeName(restoredName);
+      episodeNameRef.current = restoredName;
       if (s.episodeNumber !== undefined) setEpisodeNumber(s.episodeNumber as number | null);
       if (s.episodeIsFree !== undefined) setEpisodeIsFree(s.episodeIsFree as boolean);
       if (s.idea !== undefined) setIdea(s.idea as string);
@@ -882,9 +1381,13 @@ export default function CreateEpisodePage() {
       // Backward compat: old snapshots with visualStep → map to visualsActive
       if (s.visualStep && !s.visualsActive) setVisualsActive(true);
 
-      // Helper: check if an image is real (not stripped by sendBeacon)
-      const hasRealImage = (img: MoodboardImage | null) =>
-        img && img.image_base64 && img.image_base64 !== "[stripped]";
+      // Helper: check if an image has real content (URL or base64)
+      const hasRealImage = (img: MoodboardImage | null) => {
+        if (!img) return false;
+        if (img.image_url) return true;
+        if (img.image_base64 && img.image_base64 !== "[stripped]") return true;
+        return false;
+      };
 
       // Clean character images: keep entries with real image/error, reset idle ones
       const cleanedChars: Record<string, CharacterImageState> = {};
@@ -893,14 +1396,10 @@ export default function CreateEpisodePage() {
         for (const key in raw) {
           const ci = raw[key];
           if (hasRealImage(ci.image)) {
-            // Has a real image — keep it
             cleanedChars[key] = { ...ci, isGenerating: false };
           } else if (ci.error) {
-            // Had an error — keep error state but stop generating
             cleanedChars[key] = { ...ci, isGenerating: false };
           } else {
-            // No image, no error — was never generated or was mid-generation
-            // Either way, reset to idle (user can re-trigger)
             cleanedChars[key] = { ...ci, image: null, isGenerating: false };
           }
         }
@@ -918,7 +1417,6 @@ export default function CreateEpisodePage() {
           } else if (li.error) {
             cleanedLocs[key] = { ...li, isGenerating: false };
           } else {
-            // No image, no error — reset to idle
             cleanedLocs[key] = { ...li, image: null, isGenerating: false };
           }
         }
@@ -940,6 +1438,73 @@ export default function CreateEpisodePage() {
         setSceneImages(cleanedScenes);
       }
 
+      // Lazy migration: if old gen has base64 but no URL, upload to Storage
+      // Also prefetch base64 for URL-only images (needed by buildApprovedVisuals)
+      const migrateAndPrefetch = async () => {
+        const uploads: Promise<void>[] = [];
+        // Migrate/prefetch character images
+        for (const [cid, ci] of Object.entries(cleanedChars)) {
+          if (ci.image) {
+            if (ci.image.image_base64 && !ci.image.image_url) {
+              // Old gen: upload base64 to Storage
+              uploads.push((async () => {
+                try {
+                  const url = await uploadGenerationAsset(genId, `characters/${cid}/${Date.now()}_0`, ci.image!.image_base64!, ci.image!.mime_type);
+                  ci.image!.image_url = url;
+                } catch {}
+              })());
+            } else if (ci.image.image_url && !ci.image.image_base64) {
+              // URL-only: prefetch base64 for buildApprovedVisuals
+              uploads.push((async () => {
+                try {
+                  const resp = await fetch(ci.image!.image_url!);
+                  const blob = await resp.blob();
+                  const b64 = await new Promise<string>((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve((reader.result as string).split(",")[1]);
+                    reader.readAsDataURL(blob);
+                  });
+                  ci.image!.image_base64 = b64;
+                } catch {}
+              })());
+            }
+          }
+        }
+        // Migrate/prefetch location images
+        for (const [lid, li] of Object.entries(cleanedLocs)) {
+          if (li.image) {
+            if (li.image.image_base64 && !li.image.image_url) {
+              uploads.push((async () => {
+                try {
+                  const url = await uploadGenerationAsset(genId, `locations/${lid}/${Date.now()}_0`, li.image!.image_base64!, li.image!.mime_type);
+                  li.image!.image_url = url;
+                } catch {}
+              })());
+            } else if (li.image.image_url && !li.image.image_base64) {
+              uploads.push((async () => {
+                try {
+                  const resp = await fetch(li.image!.image_url!);
+                  const blob = await resp.blob();
+                  const b64 = await new Promise<string>((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve((reader.result as string).split(",")[1]);
+                    reader.readAsDataURL(blob);
+                  });
+                  li.image!.image_base64 = b64;
+                } catch {}
+              })());
+            }
+          }
+        }
+        if (uploads.length > 0) {
+          await Promise.all(uploads);
+          // Update state with migrated URLs / prefetched base64
+          setCharacterImages({ ...cleanedChars });
+          setLocationImages({ ...cleanedLocs });
+        }
+      };
+      migrateAndPrefetch().catch(console.error);
+
       if (s.promptPreview) setPromptPreview({ ...(s.promptPreview as PromptPreviewState), isLoading: false });
       if (s.clipsApproved !== undefined) setClipsApproved(s.clipsApproved as boolean);
       if (s.shotFeedback) setShotFeedback(s.shotFeedback as Record<number, string>);
@@ -954,12 +1519,13 @@ export default function CreateEpisodePage() {
           currentShot: fj.current_shot || 0,
           totalShots: fj.total_shots || 0,
           phase: (fj.phase || "filming") as FilmState["phase"],
-          completedShots: (fj.completed_shots || []).map((cs) => ({
+          completedShots: (fj.completed_shots || []).map((cs: { number: number; storage_url?: string; preview_url?: string; veo_prompt?: string }) => ({
             number: cs.number,
-            preview_url: `${BACKEND_URL}/film/${fj.film_id}/shot/${cs.number}`,
+            preview_url: cs.storage_url || cs.preview_url || "",
+            storage_url: cs.storage_url || cs.preview_url || "",
             veo_prompt: cs.veo_prompt || "",
           })),
-          finalVideoUrl: fj.final_video_url ? `${BACKEND_URL}/film/${fj.film_id}/final` : null,
+          finalVideoUrl: fj.final_video_url || null,
           error: fj.status === "interrupted" ? "Generation was interrupted by server restart" : fj.error_message,
           cost: {
             scene_refs_usd: fj.cost_scene_refs || 0,
@@ -970,11 +1536,7 @@ export default function CreateEpisodePage() {
       } else if (s.film && (s.film as FilmState).status === "ready") {
         setFilm(s.film as FilmState);
       }
-
-      // Resume polling if film is actively generating
-      if (data.film_job && ["generating", "assembling"].includes(data.film_job.status)) {
-        startPolling(data.film_job.film_id);
-      }
+      // Film progress for in-flight jobs is delivered via Realtime subscription (no polling needed)
 
       // ---- Check gen_jobs for completed results (handles tab-close recovery) ----
       const restoredGenId = data.id;
@@ -1019,11 +1581,15 @@ export default function CreateEpisodePage() {
               case "character_image": {
                 const charId = job.target_id;
                 if (charId && result.image_base64) {
+                  const b64 = result.image_base64 as string;
+                  const mime = (result.mime_type as string) || "image/png";
+                  let imgUrl: string | undefined;
+                  try { imgUrl = await uploadGenerationAsset(genId, `characters/${charId}/${Date.now()}_0`, b64, mime); } catch {}
                   setCharacterImages((prev) => ({
                     ...prev,
                     [charId]: {
                       ...(prev[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-                      image: { type: "character" as const, image_base64: result.image_base64 as string, mime_type: (result.mime_type as string) || "image/png", prompt_used: (result.prompt_used as string) || "" },
+                      image: { type: "character" as const, image_url: imgUrl, image_base64: b64, mime_type: mime, prompt_used: (result.prompt_used as string) || "" },
                       approved: true,
                       isGenerating: false,
                       error: "",
@@ -1035,11 +1601,15 @@ export default function CreateEpisodePage() {
               case "location_image": {
                 const locId = job.target_id;
                 if (locId && result.image_base64) {
+                  const b64 = result.image_base64 as string;
+                  const mime = (result.mime_type as string) || "image/png";
+                  let imgUrl: string | undefined;
+                  try { imgUrl = await uploadGenerationAsset(genId, `locations/${locId}/${Date.now()}_0`, b64, mime); } catch {}
                   setLocationImages((prev) => ({
                     ...prev,
                     [locId]: {
                       ...(prev[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-                      image: { type: "location" as const, image_base64: result.image_base64 as string, mime_type: (result.mime_type as string) || "image/png", prompt_used: (result.prompt_used as string) || "" },
+                      image: { type: "location" as const, image_url: imgUrl, image_base64: b64, mime_type: mime, prompt_used: (result.prompt_used as string) || "" },
                       approved: true,
                       isGenerating: false,
                       error: "",
@@ -1071,6 +1641,15 @@ export default function CreateEpisodePage() {
               case "scene_images": {
                 const sceneImgs = result.scene_images as Array<{ scene_number: number; image: MoodboardImage }>;
                 if (sceneImgs) {
+                  // Upload recovered scene images to Storage
+                  await Promise.all(sceneImgs.map(async (si) => {
+                    if (si.image?.image_base64) {
+                      try {
+                        const url = await uploadGenerationAsset(genId, `scenes/${si.scene_number}/${Date.now()}`, si.image.image_base64, si.image.mime_type);
+                        si.image.image_url = url;
+                      } catch {}
+                    }
+                  }));
                   setSceneImages((prev) => {
                     const updated = { ...prev };
                     for (const si of sceneImgs) {
@@ -1116,6 +1695,8 @@ export default function CreateEpisodePage() {
     generationIdRef.current = null;
     setGenerationId(null);
     setGenerationUrl(null);
+    setEpisodeName(null);
+    episodeNameRef.current = null;
     setIdea("");
     setStyle("cinematic");
     setStory(null);
@@ -1147,29 +1728,24 @@ export default function CreateEpisodePage() {
     setSelectedChars([]);
     setSelectedLocation(null);
     setTotalCost({ story: 0, characters: 0, locations: 0, keyMoments: 0, film: 0 });
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-    }
   };
 
   // ============================================================
   // Build Your Visuals (Phase 2) Functions
   // ============================================================
 
-  const startBuildVisuals = () => {
+  const startBuildVisuals = async () => {
     if (!story) return;
     setVisualsActive(true);
     setVisualsTab("characters");
+    const gid = generationIdRef.current;
 
     // Helper: find character image source by ID first, then fallback to name match
     const findCharImgSource = (char: Character) => {
       const nameLower = char.name.toLowerCase();
-      // Try ID match first (fastest, most reliable when IDs are preserved)
       const byId = storyLibraryChars.find((c) => c.id === char.id)
         || selectedChars.find((c) => c.id === char.id);
       if (byId?.imageBase64) return byId;
-      // Fallback: match by name (handles cases where Gemini changed the ID)
       const byName = storyLibraryChars.find((c) => c.name.toLowerCase() === nameLower)
         || selectedChars.find((c) => c.name.toLowerCase() === nameLower);
       if (byName?.imageBase64) return byName;
@@ -1192,7 +1768,6 @@ export default function CreateEpisodePage() {
         };
       }
     });
-    setCharacterImages(charStates);
 
     // Helper: find location image source by ID first, then fallback to name match
     const findLocImgSource = (loc: Location) => {
@@ -1222,8 +1797,36 @@ export default function CreateEpisodePage() {
         };
       }
     });
+
+    // Upload story-library images to Storage in background, then update state with URLs
+    if (gid) {
+      const uploadTasks: Promise<void>[] = [];
+      for (const [charId, state] of Object.entries(charStates)) {
+        if (state.image?.image_base64) {
+          uploadTasks.push((async () => {
+            try {
+              const url = await uploadGenerationAsset(gid, `characters/${charId}/${Date.now()}_0`, state.image!.image_base64!, state.image!.mime_type);
+              state.image!.image_url = url;
+            } catch {}
+          })());
+        }
+      }
+      for (const [locId, state] of Object.entries(locStates)) {
+        if (state.image?.image_base64) {
+          uploadTasks.push((async () => {
+            try {
+              const url = await uploadGenerationAsset(gid, `locations/${locId}/${Date.now()}_0`, state.image!.image_base64!, state.image!.mime_type);
+              state.image!.image_url = url;
+            } catch {}
+          })());
+        }
+      }
+      await Promise.all(uploadTasks);
+    }
+
+    setCharacterImages(charStates);
     setLocationImages(locStates);
-    saveNow({ locationImages: locStates }, "visuals");
+    saveNow({ characterImages: charStates, locationImages: locStates }, "visuals");
   };
 
   // Character visuals modal save handler
@@ -1237,11 +1840,15 @@ export default function CreateEpisodePage() {
     // Compute updated character images so we can pass fresh data to saveNow
     let updatedCharacterImages = characterImages;
     if (data.imageBase64) {
+      let imgUrl: string | undefined;
+      if (generationIdRef.current) {
+        try { imgUrl = await uploadGenerationAsset(generationIdRef.current, `characters/${charId}/${Date.now()}_0`, data.imageBase64, data.imageMimeType); } catch {}
+      }
       updatedCharacterImages = {
         ...characterImages,
         [charId]: {
           ...(characterImages[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-          image: { type: "character" as const, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
+          image: { type: "character" as const, image_url: imgUrl, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
           approved: true,
           isGenerating: false,
           error: "",
@@ -1278,11 +1885,15 @@ export default function CreateEpisodePage() {
     // Compute updated location images so we can pass fresh data to saveNow
     let updatedLocationImages = locationImages;
     if (data.imageBase64) {
+      let imgUrl: string | undefined;
+      if (generationIdRef.current) {
+        try { imgUrl = await uploadGenerationAsset(generationIdRef.current, `locations/${locId}/${Date.now()}_0`, data.imageBase64, data.imageMimeType); } catch {}
+      }
       updatedLocationImages = {
         ...locationImages,
         [locId]: {
           ...(locationImages[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-          image: { type: "location" as const, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
+          image: { type: "location" as const, image_url: imgUrl, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
           approved: true,
           isGenerating: false,
           error: "",
@@ -1323,7 +1934,7 @@ export default function CreateEpisodePage() {
         description: char.appearance,
         role: char.role,
         visual_style: style,
-        image_base64: charImg.image.image_base64,
+        image_base64: charImg.image.image_base64 || null,
         image_mime_type: charImg.image.mime_type,
       });
       // Mark as story-origin now
@@ -1343,29 +1954,15 @@ export default function CreateEpisodePage() {
     setIsGeneratingSceneDescs(true);
 
     try {
-      const data = await callGen<{ descriptions: Array<{ scene_number: number; title: string; visual_description: string }>; cost_usd?: number }>(
+      await submitJob(
         "scene_descriptions",
         "/story/generate-scene-descriptions",
         { story },
-        { generationId: generationIdRef.current }
+        { generationId: generationIdRef.current! }
       );
-
-      const newSceneImages: Record<number, SceneImageState> = {};
-      for (const desc of data.descriptions) {
-        newSceneImages[desc.scene_number] = {
-          sceneNumber: desc.scene_number,
-          title: desc.title,
-          visualDescription: desc.visual_description,
-          image: null,
-          isGenerating: false,
-          error: "",
-          feedback: "",
-        };
-      }
-      setSceneImages(newSceneImages);
+      // Result handled by Realtime useEffect
     } catch (err) {
-      console.error("Failed to fetch scene descriptions:", err);
-    } finally {
+      console.error("Failed to submit scene descriptions job:", err);
       setIsGeneratingSceneDescs(false);
     }
   };
@@ -1392,31 +1989,13 @@ export default function CreateEpisodePage() {
         visual_description: si.visualDescription,
       }));
 
-      const data = await callGen<{ scene_images: Array<{ scene_number: number; image: MoodboardImage; prompt_used: string }>; cost_usd?: number }>(
+      await submitJob(
         "scene_images",
         "/moodboard/generate-scene-images",
         { story, approved_visuals: approvedVisuals, scene_descriptions: sceneDescs },
         { generationId: generationIdRef.current! }
       );
-
-      // Compute updated scenes outside setState so we can pass fresh data to saveNow
-      const updatedSceneImages = { ...sceneImages };
-      for (const si of data.scene_images) {
-        if (updatedSceneImages[si.scene_number]) {
-          updatedSceneImages[si.scene_number] = {
-            ...updatedSceneImages[si.scene_number],
-            image: si.image,
-            isGenerating: false,
-          };
-        }
-      }
-      setSceneImages(updatedSceneImages);
-
-      const scenesCost = data.cost_usd;
-      if (scenesCost) {
-        setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + scenesCost }));
-      }
-      saveNow({ sceneImages: updatedSceneImages }, "visuals");
+      // Result handled by Realtime useEffect — images uploaded by backend
     } catch (err) {
       setSceneImages((prev) => {
         const updated = { ...prev };
@@ -1446,7 +2025,7 @@ export default function CreateEpisodePage() {
     }));
 
     try {
-      const data = await callGen<{ image: MoodboardImage; cost_usd?: number }>(
+      await submitJob(
         "scene_image",
         "/moodboard/refine-scene-image",
         {
@@ -1458,22 +2037,7 @@ export default function CreateEpisodePage() {
         },
         { generationId: generationIdRef.current!, targetId: String(sceneNumber) }
       );
-
-      const updatedSceneImages = {
-        ...sceneImages,
-        [sceneNumber]: {
-          ...sceneImages[sceneNumber],
-          image: data.image,
-          isGenerating: false,
-          feedback: "",
-        },
-      };
-      setSceneImages(updatedSceneImages);
-      const refineCost = data.cost_usd;
-      if (refineCost) {
-        setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + refineCost }));
-      }
-      saveNow({ sceneImages: updatedSceneImages }, "visuals");
+      // Result handled by Realtime useEffect — image uploaded by backend
     } catch (err) {
       setSceneImages((prev) => ({
         ...prev,
@@ -1490,7 +2054,7 @@ export default function CreateEpisodePage() {
     const characterImageMap: Record<string, { image_base64: string; mime_type: string }> = {};
     story.characters.forEach((char) => {
       const charState = characterImages[char.id];
-      if (charState?.image) {
+      if (charState?.image?.image_base64) {
         const ref = { image_base64: charState.image.image_base64, mime_type: charState.image.mime_type };
         allCharacterImages.push(ref);
         characterImageMap[char.id] = ref;
@@ -1501,7 +2065,7 @@ export default function CreateEpisodePage() {
     const locDescs: Record<string, string> = {};
     story.locations.forEach((loc) => {
       const locState = locationImages[loc.id];
-      if (locState?.image) {
+      if (locState?.image?.image_base64) {
         locImages[loc.id] = { image_base64: locState.image.image_base64, mime_type: locState.image.mime_type };
       }
       locDescs[loc.id] = `${loc.description}. ${loc.atmosphere}`;
@@ -1544,14 +2108,6 @@ export default function CreateEpisodePage() {
   // Phase 4: Film Generation Functions
   // ============================================================
 
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
-    };
-  }, []);
 
   // Auto-save generation state when key milestones change
   // Debounced to avoid spamming on rapid state changes
@@ -1626,7 +2182,7 @@ export default function CreateEpisodePage() {
 
     // Use spike scene image (scene 4) as key_moment_image for backward compat with film pipeline
     const spikeScene = sceneImages[4] || sceneImages[Object.keys(sceneImages)[0] as unknown as number];
-    const keyMomentImage = spikeScene?.image
+    const keyMomentImage = spikeScene?.image?.image_base64
       ? { image_base64: spikeScene.image.image_base64, mime_type: spikeScene.image.mime_type }
       : undefined;
 
@@ -1643,38 +2199,18 @@ export default function CreateEpisodePage() {
     });
 
     try {
-      const response = await fetch(`${BACKEND_URL}/film/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      await submitJob(
+        "film",
+        "/film/generate",
+        {
           story,
           approved_visuals: approvedVisuals,
           key_moment_image: keyMomentImage,
           generation_id: generationIdRef.current,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to start film generation");
-      }
-
-      const data = await response.json();
-
-      setFilm((prev) => ({
-        ...prev,
-        filmId: data.film_id,
-        totalShots: data.total_shots,
-      }));
-
-      // Save film_id to Supabase generation
-      const gid = generationIdRef.current;
-      if (gid) {
-        supaUpdateGeneration(gid, { film_id: data.film_id, status: "filming" }).catch(console.error);
-      }
-
-      // Start polling
-      startPolling(data.film_id);
+        },
+        { generationId: generationIdRef.current! }
+      );
+      // Progress + completion handled by Realtime useEffect — no polling needed
     } catch (err) {
       setFilm((prev) => ({
         ...prev,
@@ -1696,37 +2232,20 @@ export default function CreateEpisodePage() {
 
     try {
       const spikeScene = sceneImages[4] || sceneImages[Object.keys(sceneImages)[0] as unknown as number];
-      const response = await fetch(`${BACKEND_URL}/film/preview-prompts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      await submitJob(
+        "prompt_preview",
+        "/film/preview-prompts",
+        {
           story,
           approved_visuals: approvedVisuals,
-          key_moment_image: spikeScene?.image
+          key_moment_image: spikeScene?.image?.image_base64
             ? { image_base64: spikeScene.image.image_base64, mime_type: spikeScene.image.mime_type }
             : { image_base64: "", mime_type: "image/png" },
           beat_numbers: [],
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to preview prompts");
-      }
-
-      const data = await response.json();
-
-      const editedPrompts: Record<number, string> = {};
-      for (const shot of data.shots) {
-        editedPrompts[shot.beat_number] = shot.veo_prompt;
-      }
-
-      setPromptPreview({
-        shots: data.shots,
-        editedPrompts,
-        estimatedCostUsd: data.estimated_cost_usd,
-        isLoading: false,
-      });
+        },
+        { generationId: generationIdRef.current! }
+      );
+      // Result handled by Realtime useEffect
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to preview prompts");
       setPromptPreview((prev) => ({ ...prev, isLoading: false }));
@@ -1741,7 +2260,7 @@ export default function CreateEpisodePage() {
 
     // Use spike scene image as overall key_moment_image for backward compat
     const spikeScene = sceneImages[4] || sceneImages[Object.keys(sceneImages)[0] as unknown as number];
-    const keyMomentImage = spikeScene?.image
+    const keyMomentImage = spikeScene?.image?.image_base64
       ? { image_base64: spikeScene.image.image_base64, mime_type: spikeScene.image.mime_type }
       : undefined;
 
@@ -1749,7 +2268,7 @@ export default function CreateEpisodePage() {
     const sceneImageByBeat: Record<number, { image_base64: string; mime_type: string }> = {};
     for (const key in sceneImages) {
       const si = sceneImages[key as unknown as number];
-      if (si?.image) {
+      if (si?.image?.image_base64) {
         sceneImageByBeat[si.sceneNumber] = {
           image_base64: si.image.image_base64,
           mime_type: si.image.mime_type,
@@ -1776,38 +2295,19 @@ export default function CreateEpisodePage() {
     });
 
     try {
-      const response = await fetch(`${BACKEND_URL}/film/generate-with-prompts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      await submitJob(
+        "film_with_prompts",
+        "/film/generate-with-prompts",
+        {
           story,
           approved_visuals: approvedVisuals,
           key_moment_image: keyMomentImage,
           edited_shots: editedShots,
           generation_id: generationIdRef.current,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to start generation");
-      }
-
-      const data = await response.json();
-
-      setFilm((prev) => ({
-        ...prev,
-        filmId: data.film_id,
-        totalShots: data.total_shots,
-      }));
-
-      // Save film_id to Supabase generation
-      const gid = generationIdRef.current;
-      if (gid) {
-        supaUpdateGeneration(gid, { film_id: data.film_id, status: "filming" }).catch(console.error);
-      }
-
-      startPolling(data.film_id);
+        },
+        { generationId: generationIdRef.current! }
+      );
+      // Progress + completion handled by Realtime useEffect — no polling needed
     } catch (err) {
       setFilm((prev) => ({
         ...prev,
@@ -1817,92 +2317,7 @@ export default function CreateEpisodePage() {
     }
   };
 
-  const startPolling = (filmId: string) => {
-    // Clear any existing interval
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-    }
-
-    // Poll every 5 seconds
-    pollingIntervalRef.current = setInterval(async () => {
-      try {
-        const response = await fetch(`${BACKEND_URL}/film/${filmId}`);
-        if (!response.ok) {
-          throw new Error("Failed to get film status");
-        }
-
-        const data = await response.json();
-
-        setFilm({
-          filmId: data.film_id,
-          status: data.status,
-          currentShot: data.current_shot,
-          totalShots: data.total_shots,
-          phase: data.phase,
-          completedShots: data.completed_shots,
-          finalVideoUrl: data.final_video_url,
-          error: data.error_message,
-          cost: data.cost || { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
-        });
-
-        // Update film cost in total
-        if (data.cost) {
-          setTotalCost((prev) => ({ ...prev, film: data.cost.total_usd }));
-        }
-
-        // Persist film job progress to Supabase (fire-and-forget)
-        supaUpsertFilmJob({
-          film_id: data.film_id,
-          generation_id: generationIdRef.current,
-          status: data.status,
-          total_shots: data.total_shots,
-          current_shot: data.current_shot,
-          phase: data.phase,
-          completed_shots: data.completed_shots || [],
-          final_video_url: data.final_video_url,
-          error_message: data.error_message,
-          cost_scene_refs: data.cost?.scene_refs_usd || 0,
-          cost_videos: data.cost?.videos_usd || 0,
-        }).catch(console.error);
-
-        // Stop polling when done
-        if (data.status === "ready" || data.status === "failed") {
-          if (pollingIntervalRef.current) {
-            clearInterval(pollingIntervalRef.current);
-            pollingIntervalRef.current = null;
-          }
-          // Update generation status in Supabase on terminal state
-          const gid = generationIdRef.current;
-          if (gid) {
-            supaUpdateGeneration(gid, {
-              status: data.status === "ready" ? "ready" : "failed",
-              film_id: filmId,
-            }).catch(console.error);
-          }
-          // Create episode under the associated story when film is ready
-          if (data.status === "ready" && associatedStoryIdRef.current) {
-            fetch(`/api/stories/${associatedStoryIdRef.current}/episodes`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                name: episodeNameRef.current || "Untitled Episode",
-                media_url: data.final_video_url || null,
-                status: "draft",
-              }),
-            }).catch((err) => console.error("Failed to save episode to story:", err));
-          }
-        }
-      } catch (err) {
-        console.error("Polling error:", err);
-      }
-    }, 5000);
-  };
-
   const resetFilm = () => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-    }
     setFilm({
       filmId: null,
       status: "idle",
@@ -1926,19 +2341,12 @@ export default function CreateEpisodePage() {
     setRegeneratingShotNum(shotNumber);
 
     try {
-      const response = await fetch(
-        `${BACKEND_URL}/film/${film.filmId}/shot/${shotNumber}/regenerate`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ feedback: feedbackText }),
-        }
+      await submitJob(
+        "shot_regenerate",
+        "/film/shot/regenerate",
+        { film_id: film.filmId, shot_number: shotNumber, feedback: feedbackText },
+        { generationId: generationIdRef.current!, targetId: String(shotNumber) }
       );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to regenerate shot");
-      }
 
       // Clear feedback for this shot
       setShotFeedback((prev) => {
@@ -1946,38 +2354,7 @@ export default function CreateEpisodePage() {
         delete next[shotNumber];
         return next;
       });
-
-      // Poll until the shot is regenerated (status returns to "ready")
-      const pollRegen = setInterval(async () => {
-        try {
-          const statusRes = await fetch(`${BACKEND_URL}/film/${film.filmId}`);
-          if (!statusRes.ok) return;
-          const data = await statusRes.json();
-
-          setFilm({
-            filmId: data.film_id,
-            status: data.status,
-            currentShot: data.current_shot,
-            totalShots: data.total_shots,
-            phase: data.phase,
-            completedShots: data.completed_shots,
-            finalVideoUrl: data.final_video_url,
-            error: data.error_message,
-            cost: data.cost || { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
-          });
-
-          if (data.cost) {
-            setTotalCost((prev) => ({ ...prev, film: data.cost.total_usd }));
-          }
-
-          if (data.status === "ready" || data.status === "failed") {
-            clearInterval(pollRegen);
-            setRegeneratingShotNum(null);
-          }
-        } catch {
-          // Continue polling
-        }
-      }, 5000);
+      // Result handled by Realtime useEffect — no polling needed
     } catch (err) {
       setRegeneratingShotNum(null);
       console.error("Regeneration failed:", err);
@@ -2725,7 +3102,7 @@ export default function CreateEpisodePage() {
                               {hasImage && imgState?.image ? (
                                 <>
                                   <img
-                                    src={`data:${imgState.image.mime_type};base64,${imgState.image.image_base64}`}
+                                    src={getImageSrc(imgState.image)}
                                     alt={char.name}
                                     className="w-full h-full object-cover"
                                   />
@@ -2833,7 +3210,7 @@ export default function CreateEpisodePage() {
                               {hasImage && imgState?.image ? (
                                 <>
                                   <img
-                                    src={`data:${imgState.image.mime_type};base64,${imgState.image.image_base64}`}
+                                    src={getImageSrc(imgState.image)}
                                     alt={loc.name || loc.description}
                                     className="w-full h-full object-cover"
                                   />
@@ -2951,7 +3328,7 @@ export default function CreateEpisodePage() {
                                 </div>
                               ) : scene.image ? (
                                 <img
-                                  src={`data:${scene.image.mime_type};base64,${scene.image.image_base64}`}
+                                  src={getImageSrc(scene.image)}
                                   alt={`Scene ${scene.sceneNumber}`}
                                   className="w-full h-full object-cover"
                                 />
@@ -3062,7 +3439,6 @@ export default function CreateEpisodePage() {
             hideRole={false}
             lockedStyle={story.style}
             readOnlyFields={story.characters.find(c => c.id === editingVisualCharId)?.origin === "story" ? ["name", "age"] : []}
-            generationContext={generationIdRef.current ? { generationId: generationIdRef.current, targetId: editingVisualCharId } : undefined}
           />
         )}
 
@@ -3091,7 +3467,6 @@ export default function CreateEpisodePage() {
             })()}
             isSaving={isSavingVisualLoc}
             lockedStyle={story.style}
-            generationContext={generationIdRef.current ? { generationId: generationIdRef.current, targetId: editingVisualLocId } : undefined}
           />
         )}
 
@@ -3136,7 +3511,7 @@ export default function CreateEpisodePage() {
                         return (
                           <>
                             <img
-                              src={`data:${si.image.mime_type};base64,${si.image.image_base64}`}
+                              src={getImageSrc(si.image)}
                               className="w-10 h-14 object-cover rounded border border-[#B8B6FC]/30"
                               title={`Scene ${shot.beat_number} storyboard`}
                             />
@@ -3273,7 +3648,7 @@ export default function CreateEpisodePage() {
                             {completedShot ? (
                               <video
                                 key={`gen-${shotNum}-${completedShot.preview_url}`}
-                                src={`${BACKEND_URL}${completedShot.preview_url}`}
+                                src={resolveVideoUrl(completedShot.storage_url || completedShot.preview_url || "")}
                                 controls
                                 playsInline
                                 className="w-full h-full object-cover"
@@ -3359,7 +3734,7 @@ export default function CreateEpisodePage() {
                               ) : (
                                 <video
                                   key={`${shot.number}-${shot.preview_url}`}
-                                  src={`${BACKEND_URL}${shot.preview_url}`}
+                                  src={resolveVideoUrl(shot.storage_url || shot.preview_url || "")}
                                   controls
                                   playsInline
                                   className="w-full h-full object-cover"
@@ -3435,7 +3810,7 @@ export default function CreateEpisodePage() {
               <div className="text-center">
                 <div className="aspect-[9/16] max-w-sm mx-auto bg-black rounded-xl overflow-hidden mb-6">
                   <video
-                    src={`${BACKEND_URL}${film.finalVideoUrl}`}
+                    src={resolveVideoUrl(film.finalVideoUrl)}
                     controls
                     className="w-full h-full object-cover"
                   />
@@ -3492,7 +3867,7 @@ export default function CreateEpisodePage() {
 
                 <div className="flex gap-4 justify-center">
                   <a
-                    href={`${BACKEND_URL}${film.finalVideoUrl}`}
+                    href={resolveVideoUrl(film.finalVideoUrl)}
                     download
                     className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
                   >

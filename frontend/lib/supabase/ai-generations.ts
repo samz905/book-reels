@@ -1,4 +1,5 @@
 import { createClient } from "./client";
+import { deleteGenerationAssets } from "@/lib/storage/generation-assets";
 
 // ============================================================
 // Types
@@ -132,6 +133,11 @@ export async function listGenerations(limit = 50): Promise<AIGenerationSummary[]
 }
 
 export async function deleteGeneration(id: string): Promise<boolean> {
+  // Delete Storage assets first (non-fatal if it fails)
+  try { await deleteGenerationAssets(id); } catch (e) {
+    console.error("deleteGenerationAssets error:", e);
+  }
+
   const supabase = getSupabase();
   const { error } = await supabase
     .from("ai_generations")

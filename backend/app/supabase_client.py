@@ -1,0 +1,99 @@
+"""
+Shared Supabase client for Storage uploads and gen_jobs CRUD.
+Used by the /jobs router and film generation.
+"""
+import base64
+from datetime import datetime, timezone
+from typing import Optional
+
+from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY, AI_ASSETS_BUCKET
+
+_client = None
+
+
+def get_supabase():
+    """Get shared Supabase client (lazy init, singleton)."""
+    global _client
+    if _client is None and SUPABASE_URL and SUPABASE_SERVICE_KEY:
+        from supabase import create_client
+        _client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    return _client
+
+
+def upload_asset(generation_id: str, path: str, data: bytes, mime: str) -> str:
+    """Upload bytes to ai-assets bucket, return public URL."""
+    sb = get_supabase()
+    if not sb:
+        raise RuntimeError("Supabase not configured")
+    storage_path = f"{generation_id}/{path}"
+    sb.storage.from_(AI_ASSETS_BUCKET).upload(
+        storage_path, data,
+        file_options={"content-type": mime, "upsert": "true"},
+    )
+    return sb.storage.from_(AI_ASSETS_BUCKET).get_public_url(storage_path)
+
+
+def upload_image_base64(generation_id: str, path: str, b64: str, mime: str = "image/png") -> str:
+    """Upload base64-encoded image, return public URL."""
+    return upload_asset(generation_id, path, base64.b64decode(b64), mime)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def create_gen_job(
+    generation_id: str,
+    job_type: str,
+    target_id: str = "",
+) -> dict:
+    """Create or upsert a gen_jobs row. Returns the row dict."""
+    sb = get_supabase()
+    if not sb:
+        raise RuntimeError("Supabase not configured")
+    row = sb.table("gen_jobs").upsert(
+        {
+            "generation_id": generation_id,
+            "job_type": job_type,
+            "target_id": target_id,
+            "status": "generating",
+            "result": None,
+            "error_message": None,
+            "updated_at": _now_iso(),
+        },
+        on_conflict="generation_id,job_type,target_id",
+    ).execute()
+    return row.data[0]
+
+
+def update_gen_job(
+    job_id: str,
+    status: str,
+    result: Optional[dict] = None,
+    error: Optional[str] = None,
+):
+    """Update a gen_jobs row (status, result, error)."""
+    sb = get_supabase()
+    if not sb:
+        return
+    update: dict = {"status": status, "updated_at": _now_iso()}
+    if result is not None:
+        update["result"] = result
+    if error is not None:
+        update["error_message"] = error
+    sb.table("gen_jobs").update(update).eq("id", job_id).execute()
+
+
+def mark_stale_jobs_failed(cutoff_minutes: int = 10):
+    """Mark jobs stuck in 'generating' as failed (e.g. after server restart)."""
+    sb = get_supabase()
+    if not sb:
+        return
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=cutoff_minutes)).isoformat()
+    sb.table("gen_jobs").update({
+        "status": "failed",
+        "error_message": "Interrupted by server restart",
+        "updated_at": _now_iso(),
+    }).eq("status", "generating").lt("updated_at", cutoff).execute()
+    print(f"[startup] Marked stale gen_jobs (>{cutoff_minutes}min) as failed")

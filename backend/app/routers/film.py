@@ -44,7 +44,8 @@ def _get_veo_semaphore() -> asyncio.Semaphore:
     if _veo_semaphore is None:
         _veo_semaphore = asyncio.Semaphore(VEO_MAX_CONCURRENT)
     return _veo_semaphore
-from ..config import TEMP_DIR, GOOGLE_GENAI_API_KEY
+from ..config import TEMP_DIR, GOOGLE_GENAI_API_KEY, AI_ASSETS_BUCKET
+from ..supabase_client import get_supabase
 from .story import Story, Beat, SceneBlock
 from .moodboard import ApprovedVisuals, ReferenceImage
 
@@ -153,6 +154,7 @@ class CompletedShot:
     number: int
     video_path: str
     veo_prompt: str = ""
+    storage_url: str = ""  # Supabase Storage public URL (persistent)
 
 
 @dataclass
@@ -176,6 +178,7 @@ class FilmJob:
 
     # Output
     final_video_path: Optional[str] = None
+    final_storage_url: Optional[str] = None  # Supabase Storage URL (persistent)
 
     # Error tracking
     error_message: Optional[str] = None
@@ -197,8 +200,41 @@ film_jobs: Dict[str, FilmJob] = {}
 
 
 async def persist_film_job(job: FilmJob) -> None:
-    """No-op: persistence moved to Supabase on the frontend side."""
-    pass
+    """Push incremental progress to gen_jobs if a gen_job_id is set on the job."""
+    if not getattr(job, "gen_job_id", None):
+        return
+    try:
+        from ..supabase_client import update_gen_job
+        completed_shots = [
+            {
+                "number": shot.number,
+                "storage_url": shot.storage_url,
+                "veo_prompt": shot.veo_prompt,
+            }
+            for shot in job.completed_shots
+        ]
+        progress = {
+            "film_id": job.film_id,
+            "phase": job.phase,
+            "current_shot": job.current_shot,
+            "total_shots": job.total_shots,
+            "completed_shots": completed_shots,
+            "final_video_url": job.final_storage_url,
+            "error_message": job.error_message,
+            "cost": {
+                "scene_refs_usd": round(job.cost_scene_refs, 4),
+                "videos_usd": round(job.cost_videos, 4),
+                "total_usd": round(job.cost_total, 4),
+            },
+        }
+        status = "generating"
+        if job.status == "ready":
+            status = "completed"
+        elif job.status == "failed":
+            status = "failed"
+        update_gen_job(job.gen_job_id, status, result=progress, error=job.error_message)
+    except Exception as e:
+        print(f"[persist] Warning: gen_job update failed: {e}")
 
 
 # ============================================================
@@ -592,8 +628,11 @@ def build_veo_prompt(beat: Beat, story: Story, director_script: Optional[Directo
     return "\n".join(parts)
 
 
-async def download_video(video_url: str, film_id: str, shot_number: int) -> str:
-    """Download video from Google's authenticated URL and save locally."""
+async def download_video(video_url: str, film_id: str, shot_number: int, generation_id: str | None = None) -> tuple[str, str]:
+    """Download video from Google's authenticated URL, save locally, and upload to Supabase Storage.
+
+    Returns (local_path, storage_url).
+    """
     async with httpx.AsyncClient() as client:
         response = await client.get(
             video_url,
@@ -602,14 +641,29 @@ async def download_video(video_url: str, film_id: str, shot_number: int) -> str:
             timeout=120.0,
         )
         response.raise_for_status()
+        video_bytes = response.content
 
-        filename = f"{film_id}_shot_{shot_number:02d}.mp4"
-        filepath = os.path.join(TEMP_DIR, filename)
+    filename = f"{film_id}_shot_{shot_number:02d}.mp4"
+    filepath = os.path.join(TEMP_DIR, filename)
+    with open(filepath, "wb") as f:
+        f.write(video_bytes)
 
-        with open(filepath, "wb") as f:
-            f.write(response.content)
+    # Upload to Supabase Storage for persistence
+    storage_url = ""
+    sb = get_supabase()
+    if sb and generation_id:
+        try:
+            storage_path = f"{generation_id}/film/shots/shot_{shot_number:02d}.mp4"
+            sb.storage.from_(AI_ASSETS_BUCKET).upload(
+                storage_path, video_bytes,
+                file_options={"content-type": "video/mp4", "upsert": "true"}
+            )
+            storage_url = sb.storage.from_(AI_ASSETS_BUCKET).get_public_url(storage_path)
+            print(f"  Uploaded shot {shot_number} to Supabase Storage")
+        except Exception as e:
+            print(f"  Warning: Supabase upload failed for shot {shot_number}: {e}")
 
-        return filepath
+    return filepath, storage_url
 
 
 async def generate_shot_with_retry(
@@ -707,12 +761,13 @@ async def process_single_shot(
     job.cost_videos += COST_PER_VIDEO
     print(f"[Shot {beat.number}] Video generated (cost: ${COST_PER_VIDEO:.2f}, total so far: ${job.cost_total:.2f})")
 
-    # STEP 3: Download video
+    # STEP 3: Download video + upload to Supabase Storage
     print(f"[Shot {beat.number}] Downloading video...")
-    video_path = await download_video(
+    video_path, storage_url = await download_video(
         video_result["video_url"],
         job.film_id,
         beat.number,
+        generation_id=job.generation_id,
     )
     print(f"[Shot {beat.number}] Video saved to: {video_path}")
 
@@ -721,6 +776,7 @@ async def process_single_shot(
         number=beat.number,
         video_path=video_path,
         veo_prompt=shot_prompt,
+        storage_url=storage_url,
     ))
     job.current_shot = len(job.completed_shots)
     await persist_film_job(job)
@@ -810,6 +866,23 @@ async def run_film_generation(
         assembly_result = await assemble_videos(video_paths, crossfade_duration=0.0)
 
         job.final_video_path = assembly_result["output_path"]
+
+        # Upload final video to Supabase Storage
+        sb = get_supabase()
+        if sb and job.generation_id and job.final_video_path:
+            try:
+                with open(job.final_video_path, "rb") as f:
+                    final_bytes = f.read()
+                storage_path = f"{job.generation_id}/film/final.mp4"
+                sb.storage.from_(AI_ASSETS_BUCKET).upload(
+                    storage_path, final_bytes,
+                    file_options={"content-type": "video/mp4", "upsert": "true"}
+                )
+                job.final_storage_url = sb.storage.from_(AI_ASSETS_BUCKET).get_public_url(storage_path)
+                print(f"Uploaded final video to Supabase Storage")
+            except Exception as e:
+                print(f"Warning: Final video upload failed: {e}")
+
         job.status = "ready"
         await persist_film_job(job)
 
@@ -1001,7 +1074,7 @@ async def get_film_status(film_id: str):
         completed_shots = [
             CompletedShotInfo(
                 number=shot.number,
-                preview_url=f"/film/{film_id}/shot/{shot.number}",
+                preview_url=shot.storage_url or f"/film/{film_id}/shot/{shot.number}",
                 veo_prompt=shot.veo_prompt,
             )
             for shot in job.completed_shots
@@ -1013,7 +1086,7 @@ async def get_film_status(film_id: str):
             total_shots=job.total_shots,
             phase=job.phase,
             completed_shots=completed_shots,
-            final_video_url=f"/film/{film_id}/final" if job.final_video_path else None,
+            final_video_url=job.final_storage_url or (f"/film/{film_id}/final" if job.final_video_path else None),
             error_message=job.error_message,
             cost=CostBreakdown(
                 scene_refs_usd=round(job.cost_scene_refs, 4),
@@ -1157,11 +1230,12 @@ async def run_shot_regeneration(job: FilmJob, beat: Beat, feedback: Optional[str
         )
         job.cost_videos += COST_PER_VIDEO
 
-        # Download video
-        video_path = await download_video(
+        # Download video + upload to Supabase Storage
+        video_path, storage_url = await download_video(
             video_result["video_url"],
             job.film_id,
             beat.number,
+            generation_id=job.generation_id,
         )
 
         # Update completed shots
@@ -1172,11 +1246,13 @@ async def run_shot_regeneration(job: FilmJob, beat: Beat, feedback: Optional[str
                 os.remove(existing_shot.video_path)
             existing_shot.video_path = video_path
             existing_shot.veo_prompt = shot_prompt
+            existing_shot.storage_url = storage_url
         else:
             job.completed_shots.append(CompletedShot(
                 number=beat.number,
                 video_path=video_path,
                 veo_prompt=shot_prompt,
+                storage_url=storage_url,
             ))
 
         # Re-assemble the film

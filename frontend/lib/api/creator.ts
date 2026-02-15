@@ -514,16 +514,17 @@ export interface GenerationContext {
 }
 
 /**
- * Call a backend generation endpoint through the /api/gen proxy.
- * The proxy persists job status to Supabase so results survive tab closure.
+ * Submit a generation as a background job to the backend.
+ * Returns immediately with job_id — results arrive via Supabase Realtime.
+ * The user can close the tab; the backend continues processing.
  */
-export async function callGen<T>(
+export async function submitJob(
   jobType: string,
   backendPath: string,
   payload: unknown,
   ctx: GenerationContext
-): Promise<T> {
-  const response = await fetch("/api/gen", {
+): Promise<string> {
+  const response = await fetch(`${BACKEND_URL}/jobs/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -536,9 +537,10 @@ export async function callGen<T>(
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || `Generation failed: ${response.status}`);
+    throw new Error(err.detail || err.error || `Job submission failed: ${response.status}`);
   }
-  return response.json();
+  const data = await response.json();
+  return data.job_id;
 }
 
 // ============ AI Image Generation ============
@@ -552,11 +554,7 @@ export async function generateCharacterImage(
     visual_style?: string;
     reference_image?: { image_base64: string; mime_type: string };
   },
-  ctx?: GenerationContext
 ): Promise<{ image_base64: string; mime_type: string; cost_usd: number }> {
-  if (ctx) {
-    return callGen("character_image", "/assets/generate-character-image", data, ctx);
-  }
   const response = await fetch(`${BACKEND_URL}/assets/generate-character-image`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -577,11 +575,7 @@ export async function generateLocationImage(
     visual_style?: string;
     reference_image?: { image_base64: string; mime_type: string };
   },
-  ctx?: GenerationContext
 ): Promise<{ image_base64: string; mime_type: string; cost_usd: number }> {
-  if (ctx) {
-    return callGen("location_image", "/assets/generate-location-image", data, ctx);
-  }
   const response = await fetch(`${BACKEND_URL}/assets/generate-location-image`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -11,6 +11,11 @@ GOOGLE_GENAI_API_KEY = os.getenv("GOOGLE_GENAI_API_KEY")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", 8000))
 
+# Supabase Storage (for persisting video assets)
+SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+AI_ASSETS_BUCKET = "ai-assets"
+
 # CORS: comma-separated origins, e.g. "https://myapp.vercel.app,http://localhost:3000"
 CORS_ORIGINS = [
     o.strip()

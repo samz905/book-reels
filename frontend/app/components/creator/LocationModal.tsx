@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { StoryLocationFE, StoryCharacterFE } from "@/app/data/mockCreatorData";
 import { VISUAL_STYLES } from "@/app/data/mockCreatorData";
-import { generateLocationImage, GenerationContext } from "@/lib/api/creator";
+import { generateLocationImage } from "@/lib/api/creator";
 
 interface LocationModalProps {
   isOpen: boolean;
@@ -21,8 +21,6 @@ interface LocationModalProps {
   existingCharacters?: StoryCharacterFE[];
   isSaving?: boolean;
   lockedStyle?: string;
-  /** When provided, image generation is tracked via gen_jobs for persistence */
-  generationContext?: GenerationContext;
 }
 
 export default function LocationModal({
@@ -33,7 +31,6 @@ export default function LocationModal({
   existingCharacters = [],
   isSaving = false,
   lockedStyle,
-  generationContext,
 }: LocationModalProps) {
   const isEditing = !!location;
 
@@ -124,18 +121,15 @@ export default function LocationModal({
         ? existingCharacters.find((c) => c.id === refCharId)
         : null;
 
-      const result = await generateLocationImage(
-        {
-          name: name.trim(),
-          description: description.trim(),
-          atmosphere: atmosphere.trim() || undefined,
-          visual_style: refChar ? undefined : (lockedStyle || visualStyle),
-          reference_image: refChar?.imageBase64
-            ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
-            : undefined,
-        },
-        generationContext
-      );
+      const result = await generateLocationImage({
+        name: name.trim(),
+        description: description.trim(),
+        atmosphere: atmosphere.trim() || undefined,
+        visual_style: refChar ? undefined : (lockedStyle || visualStyle),
+        reference_image: refChar?.imageBase64
+          ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
+          : undefined,
+      });
 
       setImageBase64(result.image_base64);
       setImageMimeType(result.mime_type);
