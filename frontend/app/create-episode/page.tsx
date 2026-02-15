@@ -1921,29 +1921,16 @@ export default function CreateEpisodePage() {
     }
 
     // Save char image to story library (persists across sessions)
-    const char = story.characters.find((c) => c.id === charId);
+    // All chars already exist in DB after startBuildVisuals — always update, never create
     const charImgUrl = updatedCharacterImages[charId]?.image?.image_url || null;
     if (associatedStoryId) {
       try {
-        if (char?.origin === "story") {
-          await updateStoryCharacter(associatedStoryId, charId, {
-            description: data.description,
-            image_base64: data.imageBase64,
-            image_url: charImgUrl,
-            image_mime_type: data.imageMimeType,
-          });
-        } else if (char) {
-          await createStoryCharacter(associatedStoryId, {
-            name: char.name,
-            age: char.age,
-            gender: char.gender,
-            description: data.description,
-            role: data.role,
-            image_base64: data.imageBase64,
-            image_url: charImgUrl,
-            image_mime_type: data.imageMimeType,
-          });
-        }
+        await updateStoryCharacter(associatedStoryId, charId, {
+          description: data.description,
+          image_base64: data.imageBase64,
+          image_url: charImgUrl,
+          image_mime_type: data.imageMimeType,
+        });
       } catch { /* non-fatal */ }
     }
 
