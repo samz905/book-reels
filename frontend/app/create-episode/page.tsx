@@ -1683,7 +1683,7 @@ export default function CreateEpisodePage() {
       characters: s.characters.map((c) => ({
         ...c,
         id: remap(c.id),
-        origin: idMap[c.id] ? "story" as const : c.origin,
+        origin: c.origin,
       })),
       locations: s.locations.map((l) => ({ ...l, id: remap(l.id) })),
       scenes: (s.scenes || []).map((sc) => ({
@@ -1730,7 +1730,8 @@ export default function CreateEpisodePage() {
     if (storyId) {
       // Save AI-generated characters to DB
       for (const char of story.characters) {
-        if (char.origin !== "story") {
+        const charExistsInDb = storyLibraryChars.some((c) => c.id === char.id);
+        if (!charExistsInDb) {
           try {
             const dbChar = await createStoryCharacter(storyId, {
               name: char.name, age: char.age, gender: char.gender,
@@ -3300,7 +3301,7 @@ export default function CreateEpisodePage() {
                                 return isSaved ? (
                                   <span className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>
-                                    Saved to Library
+                                    In Library
                                   </span>
                                 ) : (
                                   <button
@@ -3427,7 +3428,7 @@ export default function CreateEpisodePage() {
                                 return isSaved ? (
                                   <span className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>
-                                    Saved to Library
+                                    In Library
                                   </span>
                                 ) : (
                                   <button
