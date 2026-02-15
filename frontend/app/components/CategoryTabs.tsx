@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef } from "react";
 import { CATEGORIES, type Category } from "../data/mockStories";
 
 interface CategoryTabsProps {
@@ -13,22 +13,6 @@ export default function CategoryTabs({
   onCategoryChange,
 }: CategoryTabsProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Handle wheel - vertical to horizontal scroll with non-passive listener
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-        e.preventDefault();
-        el.scrollLeft += e.deltaY;
-      }
-    };
-
-    el.addEventListener("wheel", handleWheel, { passive: false });
-    return () => el.removeEventListener("wheel", handleWheel);
-  }, []);
 
   return (
     <div

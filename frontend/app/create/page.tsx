@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import ProfileCard from "../components/creator/ProfileCard";
@@ -22,37 +23,79 @@ import {
   defaultSubscription,
 } from "../data/mockCreatorData";
 import {
-  getProfile,
   createProfile,
   updateProfile,
-  getMyStories,
   createStory,
   updateStory,
-  getCreatorSettings,
   updateCreatorSettings,
   createEpisode,
   createEbook,
   updateEbook,
   generateRandomUsername,
   mapDbProfileToFrontend,
-  mapDbSettingsToFrontend,
 } from "@/lib/api/creator";
+import {
+  useProfile,
+  useMyStories,
+  useCreatorSettings,
+  queryKeys,
+} from "@/lib/hooks/queries";
 
 export default function CreatePage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { user, loading: authLoading } = useAuth();
 
-  // Loading and error states
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // React Query — cached, stale-while-revalidate data loading
+  const {
+    data: profileData,
+    isLoading: profileLoading,
+    error: profileError,
+  } = useProfile(user?.id);
+  const {
+    data: stories = [],
+    isLoading: storiesLoading,
+    error: storiesError,
+  } = useMyStories(user?.id);
+  const { data: subscription = defaultSubscription } = useCreatorSettings();
 
-  // Data states
-  const [userId, setUserId] = useState<string | null>(null);
+  // Derived profile with story/episode counts
   const [profile, setProfile] = useState<CreatorProfile | null>(null);
-  const [stats, setStats] = useState<CreatorStats>(emptyStats);
-  const [subscription, setSubscription] =
-    useState<Subscription>(defaultSubscription);
-  const [stories, setStories] = useState<Story[]>([]);
+
+  // Auto-create profile if it doesn't exist
+  useEffect(() => {
+    if (!user || profileLoading) return;
+    if (profileData) {
+      const totalEpisodes = stories.reduce((sum, s) => sum + s.episodeCount, 0);
+      setProfile(
+        mapDbProfileToFrontend(profileData, stories.length, totalEpisodes)
+      );
+      return;
+    }
+    // Profile doesn't exist — create one
+    const createNewProfile = async () => {
+      const randomUsername = generateRandomUsername();
+      const userName =
+        user.user_metadata?.full_name ||
+        user.user_metadata?.name ||
+        user.email?.split("@")[0] ||
+        "New Creator";
+      const userAvatar =
+        user.user_metadata?.avatar_url ||
+        user.user_metadata?.picture ||
+        null;
+      await createProfile(user.id, {
+        username: randomUsername,
+        name: userName,
+        bio: "",
+        avatar_url: userAvatar,
+      });
+      queryClient.invalidateQueries({ queryKey: queryKeys.profile(user.id) });
+    };
+    createNewProfile().catch(console.error);
+  }, [user, profileData, profileLoading, stories, queryClient]);
+
+  // UI-only state
   const [showCreateStoryModal, setShowCreateStoryModal] = useState(false);
   const [showAddBookModal, setShowAddBookModal] = useState(false);
   const [showEpisodeStoryPicker, setShowEpisodeStoryPicker] = useState(false);
@@ -60,92 +103,23 @@ export default function CreatePage() {
   const [selectedStoryIdForEpisode, setSelectedStoryIdForEpisode] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isAddingBook, setIsAddingBook] = useState(false);
-  // Fetch data on mount when user is authenticated
-  useEffect(() => {
-    async function loadData() {
-      if (!user) return;
+  const [error, setError] = useState<string | null>(null);
 
-      setIsLoading(true);
-      setError(null);
-      setUserId(user.id);
+  const isLoading = authLoading || profileLoading || storiesLoading;
 
-      try {
-        // Fetch or create profile
-        let profileData = await getProfile(user.id);
-
-        if (!profileData) {
-          // Create new profile with random username, user's name and avatar
-          const randomUsername = generateRandomUsername();
-          const userName = user.user_metadata?.full_name ||
-                          user.user_metadata?.name ||
-                          user.email?.split("@")[0] ||
-                          "New Creator";
-          const userAvatar = user.user_metadata?.avatar_url ||
-                            user.user_metadata?.picture ||
-                            null;
-          profileData = await createProfile(user.id, {
-            username: randomUsername,
-            name: userName,
-            bio: "",
-            avatar_url: userAvatar,
-          });
-        }
-
-        // Fetch stories for this creator
-        const storiesData = await getMyStories(user.id);
-
-        // Fetch creator settings
-        const settingsData = await getCreatorSettings();
-
-        // Compute episode count (published only)
-        const totalEpisodes = storiesData.reduce(
-          (sum, s) => sum + s.episodeCount,
-          0
-        );
-
-        // Map to frontend types
-        const mappedProfile = mapDbProfileToFrontend(
-          profileData,
-          storiesData.length,
-          totalEpisodes
-        );
-        const mappedSubscription = mapDbSettingsToFrontend(settingsData);
-
-        setProfile(mappedProfile);
-        setStories(storiesData);
-        setSubscription(mappedSubscription);
-
-      } catch (err) {
-        console.error("Error loading creator data:", err);
-        setError(err instanceof Error ? err.message : "Failed to load data");
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    if (!authLoading) {
-      if (user) {
-        loadData();
-      } else {
-        setIsLoading(false);
-      }
-    }
-  }, [user, authLoading]);
-
-  // Update handlers
+  // Mutation handlers — call API then invalidate cache
   const handleProfileUpdate = async (updatedProfile: CreatorProfile) => {
-    if (!userId) return;
-
+    if (!user) return;
     try {
-      await updateProfile(userId, {
+      await updateProfile(user.id, {
         username: updatedProfile.username,
         name: updatedProfile.name,
         bio: updatedProfile.bio,
         avatar_url: updatedProfile.avatar,
       });
       setProfile(updatedProfile);
+      queryClient.invalidateQueries({ queryKey: queryKeys.profile(user.id) });
     } catch (err) {
-      // Re-throw so the modal can handle the error (e.g., 409)
       throw err;
     }
   };
@@ -157,7 +131,7 @@ export default function CreatePage() {
         monthly_price: updatedSubscription.monthlyPrice,
         min_price: updatedSubscription.minPrice,
       });
-      setSubscription(updatedSubscription);
+      queryClient.invalidateQueries({ queryKey: queryKeys.creatorSettings() });
     } catch (err) {
       console.error("Error updating subscription:", err);
       throw err;
@@ -174,9 +148,7 @@ export default function CreatePage() {
         genres: updatedStory.genre,
         status: updatedStory.status,
       });
-      setStories((prev) =>
-        prev.map((s) => (s.id === updatedStory.id ? updatedStory : s))
-      );
+      queryClient.invalidateQueries({ queryKey: queryKeys.stories(user!.id) });
     } catch (err) {
       console.error("Error updating story:", err);
       throw err;
@@ -191,11 +163,8 @@ export default function CreatePage() {
   ) => {
     setIsSaving(true);
     setError(null);
-
-    console.log("Creating story with data:", storyData);
-
     try {
-      const newStory = await createStory({
+      await createStory({
         title: storyData.title,
         type: storyData.type,
         description: storyData.description,
@@ -203,19 +172,8 @@ export default function CreatePage() {
         genres: storyData.genre,
         status: storyData.status,
       });
-
-      console.log("Story created successfully:", newStory);
-
-      setStories((prev) => [...prev, newStory]);
       setShowCreateStoryModal(false);
-
-      // Update profile story count
-      if (profile) {
-        setProfile({
-          ...profile,
-          storiesCount: profile.storiesCount + 1,
-        });
-      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.stories(user!.id) });
     } catch (err) {
       console.error("Error creating story:", err);
       const errorMessage = err instanceof Error ? err.message : "Failed to create story";
@@ -237,21 +195,7 @@ export default function CreatePage() {
         is_free: episodeData.isFree,
         status: "draft",
       });
-
-      // Update the story's episodes (episodeCount only changes for published eps)
-      setStories((prev) =>
-        prev.map((s) =>
-          s.id === storyId
-            ? {
-                ...s,
-                episodes: [...s.episodes, newEpisode],
-              }
-            : s
-        )
-      );
-
-      // Don't increment profile episode count for drafts — only published eps count
-
+      queryClient.invalidateQueries({ queryKey: queryKeys.stories(user!.id) });
       return newEpisode;
     } catch (err) {
       console.error("Error creating episode:", err);
@@ -278,19 +222,7 @@ export default function CreatePage() {
         isbn: ebookData.isbn || null,
         price: ebookData.price,
       });
-
-      // Update the story's ebooks
-      setStories((prev) =>
-        prev.map((s) =>
-          s.id === ebookData.storyId
-            ? {
-                ...s,
-                ebooks: [...s.ebooks, newEbook],
-              }
-            : s
-        )
-      );
-
+      queryClient.invalidateQueries({ queryKey: queryKeys.stories(user!.id) });
       return newEbook;
     } catch (err) {
       console.error("Error creating ebook:", err);
@@ -309,33 +241,19 @@ export default function CreatePage() {
     }
   ) => {
     try {
-      const updatedEbook = await updateEbook(ebookId, {
+      await updateEbook(ebookId, {
         title: data.title,
         cover_url: data.coverUrl || null,
         isbn: data.isbn || null,
         price: data.price,
       });
-
-      // Update the story's ebooks
-      setStories((prev) =>
-        prev.map((s) =>
-          s.id === storyId
-            ? {
-                ...s,
-                ebooks: s.ebooks.map((e) =>
-                  e.id === ebookId ? updatedEbook : e
-                ),
-              }
-            : s
-        )
-      );
+      queryClient.invalidateQueries({ queryKey: queryKeys.stories(user!.id) });
     } catch (err) {
       console.error("Error updating ebook:", err);
       throw err;
     }
   };
 
-  // Handler for top-level Add Book modal
   const handleAddBookFromModal = async (ebookData: {
     storyId: string;
     title: string;
@@ -346,27 +264,15 @@ export default function CreatePage() {
   }) => {
     setIsAddingBook(true);
     try {
-      const newEbook = await createEbook(ebookData.storyId, {
+      await createEbook(ebookData.storyId, {
         title: ebookData.title,
         file_url: ebookData.fileUrl,
         cover_url: ebookData.coverUrl || null,
         isbn: ebookData.isbn || null,
         price: ebookData.price,
       });
-
-      // Update the story's ebooks
-      setStories((prev) =>
-        prev.map((s) =>
-          s.id === ebookData.storyId
-            ? {
-                ...s,
-                ebooks: [...s.ebooks, newEbook],
-              }
-            : s
-        )
-      );
-
       setShowAddBookModal(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.stories(user!.id) });
     } catch (err) {
       console.error("Error creating ebook:", err);
       throw err;
@@ -375,19 +281,17 @@ export default function CreatePage() {
     }
   };
 
-  // Show loading state
-  if (authLoading || isLoading) {
+  // Show loading state (only on first visit — cached data shown instantly on revisit)
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
         <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto">
           <div className="animate-pulse space-y-6">
-            {/* Profile skeleton */}
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
               <div className="bg-[#0F0E13] rounded-xl p-6 h-48" />
               <div className="bg-[#0F0E13] rounded-xl p-6 h-48" />
             </div>
-            {/* Stats skeleton */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="bg-[#0F0E13] rounded-xl p-6 h-40" />
               <div className="bg-[#0F0E13] rounded-xl p-6 h-40" />
@@ -399,7 +303,6 @@ export default function CreatePage() {
     );
   }
 
-  // Show login prompt if not authenticated
   if (!user) {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
@@ -428,8 +331,8 @@ export default function CreatePage() {
     );
   }
 
-  // Show error state
-  if (error && !profile) {
+  if ((profileError || storiesError) && !profile) {
+    const errMsg = profileError?.message || storiesError?.message || "Failed to load data";
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
@@ -438,7 +341,7 @@ export default function CreatePage() {
             <h2 className="text-red-400 text-xl font-semibold mb-4">
               Error loading dashboard
             </h2>
-            <p className="text-white/60 mb-6">{error}</p>
+            <p className="text-white/60 mb-6">{errMsg}</p>
             <button
               onClick={() => window.location.reload()}
               className="px-6 py-3 rounded-lg font-semibold text-white bg-orange-500 hover:bg-orange-600 transition-colors"
@@ -452,7 +355,6 @@ export default function CreatePage() {
     );
   }
 
-  // Default empty profile if still null
   const displayProfile = profile || {
     name: "New Creator",
     username: "loading...",
@@ -468,21 +370,18 @@ export default function CreatePage() {
       <Header />
 
       <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto">
-        {/* Error banner */}
         {error && (
           <div className="mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200">
             {error}
           </div>
         )}
 
-        {/* Top row: Profile + Create New Story */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6 mb-6">
           <ProfileCard
             profile={displayProfile}
             onUpdate={handleProfileUpdate}
           />
 
-          {/* Create New Story card */}
           <div className="bg-[#0F0E13] rounded-xl p-6 flex flex-col gap-5">
             <button
               onClick={() => setShowCreateStoryModal(true)}
@@ -520,16 +419,14 @@ export default function CreatePage() {
           </div>
         </div>
 
-        {/* Stats + Subscription row */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          <StatsCard stats={stats} />
+          <StatsCard stats={emptyStats} />
           <SubscriptionCard
             subscription={subscription}
             onUpdate={handleSubscriptionUpdate}
           />
         </div>
 
-        {/* Stories section */}
         {stories.length > 0 && (
           <div className="space-y-6">
             {stories.map((story) => (
@@ -545,7 +442,6 @@ export default function CreatePage() {
           </div>
         )}
 
-        {/* Empty state for stories */}
         {stories.length === 0 && (
           <div className="bg-[#0F0E13] rounded-xl p-8 text-center">
             <h3 className="text-white text-lg font-semibold mb-2">
@@ -561,7 +457,6 @@ export default function CreatePage() {
 
       <Footer />
 
-      {/* Create Story Modal */}
       <CreateStoryModal
         isOpen={showCreateStoryModal}
         onClose={() => setShowCreateStoryModal(false)}
@@ -569,7 +464,6 @@ export default function CreatePage() {
         isSaving={isSaving}
       />
 
-      {/* Add Book Modal */}
       <AddBookModal
         isOpen={showAddBookModal}
         onClose={() => setShowAddBookModal(false)}
@@ -578,7 +472,6 @@ export default function CreatePage() {
         isSaving={isAddingBook}
       />
 
-      {/* Story Picker for Episode Creation */}
       <StoryPickerModal
         isOpen={showEpisodeStoryPicker}
         onClose={() => setShowEpisodeStoryPicker(false)}
@@ -597,7 +490,6 @@ export default function CreatePage() {
         description="Which story should this episode belong to?"
       />
 
-      {/* Episode Details Modal (after story selection) */}
       <CreateEpisodeModal
         isOpen={showCreateEpisodeModal}
         onClose={() => setShowCreateEpisodeModal(false)}

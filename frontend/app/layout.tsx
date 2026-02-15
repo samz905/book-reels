@@ -3,6 +3,7 @@ import { Mulish } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "./context/AuthContext";
 import { CartProvider } from "./context/CartContext";
+import QueryProvider from "./providers/QueryProvider";
 
 const mulish = Mulish({
   subsets: ["latin"],
@@ -25,7 +26,9 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className={`${mulish.variable} font-sans antialiased`}>
         <AuthProvider>
-          <CartProvider>{children}</CartProvider>
+          <CartProvider>
+            <QueryProvider>{children}</QueryProvider>
+          </CartProvider>
         </AuthProvider>
       </body>
     </html>

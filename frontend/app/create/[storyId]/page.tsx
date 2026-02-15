@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 import Header from "@/app/components/Header";
 import Footer from "@/app/components/Footer";
@@ -17,6 +18,12 @@ import LocationModal from "@/app/components/creator/LocationModal";
 import DeleteConfirmModal from "@/app/components/creator/DeleteConfirmModal";
 import { useAuth } from "@/app/context/AuthContext";
 import {
+  useStoryDetail,
+  useStoryCharacters,
+  useStoryLocations,
+  queryKeys,
+} from "@/lib/hooks/queries";
+import {
   Story,
   Ebook,
   formatViewCount,
@@ -24,15 +31,12 @@ import {
   StoryLocationFE,
 } from "@/app/data/mockCreatorData";
 import {
-  mapDbStoryToFrontend,
   updateStory,
   createEbook,
   updateEbook,
-  getStoryCharacters,
   createStoryCharacter,
   updateStoryCharacter,
   deleteStoryCharacter,
-  getStoryLocations,
   createStoryLocation,
   updateStoryLocation,
   deleteStoryLocation,
@@ -43,15 +47,15 @@ export default function StoryManagementPage() {
   const router = useRouter();
   const storyId = params.storyId as string;
   const { user, loading: authLoading } = useAuth();
+  const queryClient = useQueryClient();
 
-  // Data
-  const [story, setStory] = useState<Story | null>(null);
-  const [characters, setCharacters] = useState<StoryCharacterFE[]>([]);
-  const [locations, setLocations] = useState<StoryLocationFE[]>([]);
+  // Data — React Query (cached, stale-while-revalidate)
+  const { data: story, isLoading: storyLoading, error: storyError } = useStoryDetail(storyId);
+  const { data: characters = [] } = useStoryCharacters(storyId);
+  const { data: locations = [] } = useStoryLocations(storyId);
 
-  // Loading / error
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const isLoading = authLoading || storyLoading;
+  const error = storyError ? storyError.message : null;
 
   // Modal states
   const [showEpisodes, setShowEpisodes] = useState(false);
@@ -74,44 +78,6 @@ export default function StoryManagementPage() {
   const [isLocSaving, setIsLocSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Load data
-  useEffect(() => {
-    if (authLoading || !user) return;
-
-    async function loadData() {
-      setIsLoading(true);
-      setError(null);
-      try {
-        // Fetch story with episodes and ebooks
-        const storyRes = await fetch(`/api/stories/${storyId}`, {
-          credentials: "include",
-        });
-        if (!storyRes.ok) {
-          if (storyRes.status === 404) throw new Error("Story not found");
-          throw new Error("Failed to load story");
-        }
-        const storyData = await storyRes.json();
-        const mapped = mapDbStoryToFrontend(storyData);
-        setStory(mapped);
-
-        // Fetch characters and locations in parallel
-        const [chars, locs] = await Promise.all([
-          getStoryCharacters(storyId),
-          getStoryLocations(storyId),
-        ]);
-        setCharacters(chars);
-        setLocations(locs);
-      } catch (err) {
-        console.error("Error loading story:", err);
-        setError(err instanceof Error ? err.message : "Failed to load story");
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    loadData();
-  }, [storyId, user, authLoading]);
-
   // ============ Story Handlers ============
 
   const handleEditStory = async (updatedStory: Story) => {
@@ -125,7 +91,7 @@ export default function StoryManagementPage() {
         genres: updatedStory.genre,
         status: updatedStory.status,
       });
-      setStory(updatedStory);
+      queryClient.setQueryData(queryKeys.story(storyId), updatedStory);
       setShowEditModal(false);
     } catch (err) {
       console.error("Error updating story:", err);
@@ -146,16 +112,14 @@ export default function StoryManagementPage() {
     isbn?: string;
   }) => {
     try {
-      const newEbook = await createEbook(bookData.storyId, {
+      await createEbook(bookData.storyId, {
         title: bookData.title,
         file_url: bookData.fileUrl,
         cover_url: bookData.coverUrl || null,
         isbn: bookData.isbn || null,
         price: bookData.price,
       });
-      if (story) {
-        setStory({ ...story, ebooks: [...story.ebooks, newEbook] });
-      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.story(storyId) });
       setShowAddBookModal(false);
     } catch (err) {
       console.error("Error adding ebook:", err);
@@ -168,18 +132,13 @@ export default function StoryManagementPage() {
     data: { title: string; coverUrl?: string; price: number; isbn?: string }
   ) => {
     try {
-      const updated = await updateEbook(ebookId, {
+      await updateEbook(ebookId, {
         title: data.title,
         cover_url: data.coverUrl || null,
         isbn: data.isbn || null,
         price: data.price,
       });
-      if (story) {
-        setStory({
-          ...story,
-          ebooks: story.ebooks.map((e) => (e.id === ebookId ? updated : e)),
-        });
-      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.story(storyId) });
     } catch (err) {
       console.error("Error updating ebook:", err);
       throw err;
@@ -212,13 +171,12 @@ export default function StoryManagementPage() {
       };
 
       if (editingCharacter) {
-        const updated = await updateStoryCharacter(storyId, editingCharacter.id, payload);
-        setCharacters((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+        await updateStoryCharacter(storyId, editingCharacter.id, payload);
       } else {
-        const created = await createStoryCharacter(storyId, payload);
-        setCharacters((prev) => [...prev, created]);
+        await createStoryCharacter(storyId, payload);
       }
 
+      queryClient.invalidateQueries({ queryKey: queryKeys.storyCharacters(storyId) });
       setShowCharacterModal(false);
       setEditingCharacter(undefined);
     } catch (err) {
@@ -263,13 +221,12 @@ export default function StoryManagementPage() {
       };
 
       if (editingLocation) {
-        const updated = await updateStoryLocation(storyId, editingLocation.id, payload);
-        setLocations((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+        await updateStoryLocation(storyId, editingLocation.id, payload);
       } else {
-        const created = await createStoryLocation(storyId, payload);
-        setLocations((prev) => [...prev, created]);
+        await createStoryLocation(storyId, payload);
       }
 
+      queryClient.invalidateQueries({ queryKey: queryKeys.storyLocations(storyId) });
       setShowLocationModal(false);
       setEditingLocation(undefined);
     } catch (err) {
@@ -300,10 +257,10 @@ export default function StoryManagementPage() {
     try {
       if (deleteTarget.type === "character") {
         await deleteStoryCharacter(storyId, deleteTarget.id);
-        setCharacters((prev) => prev.filter((c) => c.id !== deleteTarget.id));
+        queryClient.invalidateQueries({ queryKey: queryKeys.storyCharacters(storyId) });
       } else {
         await deleteStoryLocation(storyId, deleteTarget.id);
-        setLocations((prev) => prev.filter((l) => l.id !== deleteTarget.id));
+        queryClient.invalidateQueries({ queryKey: queryKeys.storyLocations(storyId) });
       }
       setShowDeleteModal(false);
       setDeleteTarget(null);

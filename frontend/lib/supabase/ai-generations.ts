@@ -54,8 +54,10 @@ export async function createGeneration(
   storyId?: string | null
 ): Promise<AIGenerationSummary | null> {
   const supabase = getSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
   const row: Record<string, unknown> = { id, title, style, state };
   if (storyId) row.story_id = storyId;
+  if (user) row.user_id = user.id;
   const { data, error } = await supabase
     .from("ai_generations")
     .insert(row)

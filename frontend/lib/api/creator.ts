@@ -168,33 +168,12 @@ export async function getMyStories(
   creatorId: string
 ): Promise<FrontendStory[]> {
   const response = await fetch(
-    `/api/stories?creator_id=${creatorId}&status=all`,
+    `/api/stories?creator_id=${creatorId}&status=all&include=episodes,ebooks`,
     { credentials: "include" }
   );
   const result = await handleResponse<{ data: StoryFull[] }>(response);
 
-  // Now fetch episodes and ebooks for each story
-  const storiesWithDetails = await Promise.all(
-    result.data.map(async (story) => {
-      const [episodesRes, ebooksRes] = await Promise.all([
-        fetch(`/api/stories/${story.id}/episodes`, { credentials: "include" }),
-        fetch(`/api/stories/${story.id}/ebooks`, { credentials: "include" }),
-      ]);
-
-      const episodes = episodesRes.ok
-        ? await episodesRes.json()
-        : [];
-      const ebooks = ebooksRes.ok ? await ebooksRes.json() : [];
-
-      return {
-        ...story,
-        episodes,
-        ebooks,
-      };
-    })
-  );
-
-  return storiesWithDetails.map(mapDbStoryToFrontend);
+  return result.data.map(mapDbStoryToFrontend);
 }
 
 export async function createStory(data: {

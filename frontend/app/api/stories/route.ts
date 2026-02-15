@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
     const type = searchParams.get("type") as StoryType | null;
     const creatorId = searchParams.get("creator_id");
     const status = searchParams.get("status") || "published";
+    const include = searchParams.get("include")?.split(",") || [];
 
     const { page, limit, offset } = getPaginationParams(request);
 
@@ -35,21 +36,15 @@ export async function GET(request: NextRequest) {
     const needsServiceClient = creatorId && status === "all";
     const supabase = needsServiceClient ? createServiceClient() : createApiClient();
 
+    // Build select — include related tables if requested (avoids N+1)
+    let selectParts = `*, creator:profiles!creator_id ( id, username, name, avatar_url )`;
+    if (include.includes("episodes")) selectParts += `, episodes ( * )`;
+    if (include.includes("ebooks")) selectParts += `, ebooks ( * )`;
+
     // Build query
     let query = supabase
       .from("stories")
-      .select(
-        `
-        *,
-        creator:profiles!creator_id (
-          id,
-          username,
-          name,
-          avatar_url
-        )
-      `,
-        { count: "exact" }
-      );
+      .select(selectParts, { count: "exact" });
 
     // Only filter by status if not "all"
     if (status !== "all") {

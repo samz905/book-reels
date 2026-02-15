@@ -15,22 +15,6 @@ export default function EbooksTab({ ebooks, onRemove }: EbooksTabProps) {
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
 
-  // Handle wheel - vertical to horizontal scroll with non-passive listener
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-        e.preventDefault();
-        el.scrollLeft += e.deltaY;
-      }
-    };
-
-    el.addEventListener("wheel", handleWheel, { passive: false });
-    return () => el.removeEventListener("wheel", handleWheel);
-  }, []);
-
   // Check scroll position for arrow states
   const checkScrollPosition = useCallback(() => {
     const el = scrollRef.current;

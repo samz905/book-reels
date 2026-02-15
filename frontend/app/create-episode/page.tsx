@@ -442,13 +442,20 @@ export default function CreateEpisodePage() {
   // overwrite state because it would strip base64 images and destroy good data.
   useEffect(() => {
     const handleBeforeUnload = () => {
+      // Flush any pending debounced save immediately — this ensures the full state
+      // (with images) is written to Supabase before the page unloads.
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+        saveGeneration(); // fires async Supabase update with full state
+      }
+
       const gid = generationIdRef.current;
       if (!gid) return;
 
-      // sendBeacon only saves lightweight metadata — never `state`.
-      // Full state (with images) is already persisted by saveNow() (immediate after
-      // every API response) and auto-save (500ms debounce). Writing state here would
-      // strip base64 images and overwrite the good data already in Supabase.
+      // sendBeacon as lightweight metadata backup — never sends `state`.
+      // Full state is already persisted by saveNow() (after every API response)
+      // and the flush above. sendBeacon has a ~64KB limit so it can't carry base64 images.
       const payload = JSON.stringify({
         title: episodeNameRef.current || "Untitled",
         status: film.status === "ready" ? "ready" : film.status === "failed" ? "failed" : undefined,
@@ -731,6 +738,9 @@ export default function CreateEpisodePage() {
     idea,
     style,
     story,
+    episodeName,
+    episodeNumber,
+    episodeIsFree,
     selectedChars,
     selectedLocation,
     isGenerating,
@@ -858,6 +868,9 @@ export default function CreateEpisodePage() {
           .catch(() => {});
         fetchStoryLibrary(data.story_id);
       }
+      if (s.episodeName !== undefined) { setEpisodeName(s.episodeName as string | null); episodeNameRef.current = s.episodeName as string | null; }
+      if (s.episodeNumber !== undefined) setEpisodeNumber(s.episodeNumber as number | null);
+      if (s.episodeIsFree !== undefined) setEpisodeIsFree(s.episodeIsFree as boolean);
       if (s.idea !== undefined) setIdea(s.idea as string);
       if (s.style) setStyle(s.style as Style);
       if (s.selectedChars) setSelectedChars(s.selectedChars as SelectedCharacter[]);
@@ -1210,7 +1223,7 @@ export default function CreateEpisodePage() {
       }
     });
     setLocationImages(locStates);
-    saveNow({}, "visuals");
+    saveNow({ locationImages: locStates }, "visuals");
   };
 
   // Character visuals modal save handler
@@ -1221,18 +1234,20 @@ export default function CreateEpisodePage() {
     if (!story) return;
     setIsSavingVisualChar(true);
 
-    // Update characterImages with the new image
+    // Compute updated character images so we can pass fresh data to saveNow
+    let updatedCharacterImages = characterImages;
     if (data.imageBase64) {
-      setCharacterImages((prev) => ({
-        ...prev,
+      updatedCharacterImages = {
+        ...characterImages,
         [charId]: {
-          ...(prev[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+          ...(characterImages[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
           image: { type: "character" as const, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
           approved: true,
           isGenerating: false,
           error: "",
         },
-      }));
+      };
+      setCharacterImages(updatedCharacterImages);
     }
 
     // If story-origin char, push visual changes back to story library
@@ -1249,7 +1264,7 @@ export default function CreateEpisodePage() {
 
     setIsSavingVisualChar(false);
     setEditingVisualCharId(null);
-    saveNow({}, "visuals");
+    saveNow({ characterImages: updatedCharacterImages }, "visuals");
   };
 
   // Location visuals modal save handler
@@ -1260,17 +1275,20 @@ export default function CreateEpisodePage() {
     if (!story) return;
     setIsSavingVisualLoc(true);
 
+    // Compute updated location images so we can pass fresh data to saveNow
+    let updatedLocationImages = locationImages;
     if (data.imageBase64) {
-      setLocationImages((prev) => ({
-        ...prev,
+      updatedLocationImages = {
+        ...locationImages,
         [locId]: {
-          ...(prev[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+          ...(locationImages[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
           image: { type: "location" as const, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
           approved: true,
           isGenerating: false,
           error: "",
         },
-      }));
+      };
+      setLocationImages(updatedLocationImages);
     }
 
     // If story has this location and it's from library, update it
@@ -1287,7 +1305,7 @@ export default function CreateEpisodePage() {
 
     setIsSavingVisualLoc(false);
     setEditingVisualLocId(null);
-    saveNow({}, "visuals");
+    saveNow({ locationImages: updatedLocationImages }, "visuals");
   };
 
   // Save AI char to story library
@@ -1381,25 +1399,24 @@ export default function CreateEpisodePage() {
         { generationId: generationIdRef.current! }
       );
 
-      setSceneImages((prev) => {
-        const updated = { ...prev };
-        for (const si of data.scene_images) {
-          if (updated[si.scene_number]) {
-            updated[si.scene_number] = {
-              ...updated[si.scene_number],
-              image: si.image,
-              isGenerating: false,
-            };
-          }
+      // Compute updated scenes outside setState so we can pass fresh data to saveNow
+      const updatedSceneImages = { ...sceneImages };
+      for (const si of data.scene_images) {
+        if (updatedSceneImages[si.scene_number]) {
+          updatedSceneImages[si.scene_number] = {
+            ...updatedSceneImages[si.scene_number],
+            image: si.image,
+            isGenerating: false,
+          };
         }
-        return updated;
-      });
+      }
+      setSceneImages(updatedSceneImages);
 
       const scenesCost = data.cost_usd;
       if (scenesCost) {
         setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + scenesCost }));
       }
-      saveNow({}, "visuals");
+      saveNow({ sceneImages: updatedSceneImages }, "visuals");
     } catch (err) {
       setSceneImages((prev) => {
         const updated = { ...prev };
@@ -1442,20 +1459,21 @@ export default function CreateEpisodePage() {
         { generationId: generationIdRef.current!, targetId: String(sceneNumber) }
       );
 
-      setSceneImages((prev) => ({
-        ...prev,
+      const updatedSceneImages = {
+        ...sceneImages,
         [sceneNumber]: {
-          ...prev[sceneNumber],
+          ...sceneImages[sceneNumber],
           image: data.image,
           isGenerating: false,
           feedback: "",
         },
-      }));
+      };
+      setSceneImages(updatedSceneImages);
       const refineCost = data.cost_usd;
       if (refineCost) {
         setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + refineCost }));
       }
-      saveNow({}, "visuals");
+      saveNow({ sceneImages: updatedSceneImages }, "visuals");
     } catch (err) {
       setSceneImages((prev) => ({
         ...prev,
@@ -1554,6 +1572,7 @@ export default function CreateEpisodePage() {
     generationId, story, visualsActive, visualsTab,
     characterImages, locationImages, sceneImages, promptPreview,
     film, clipsApproved, totalCost,
+    episodeName, episodeNumber, episodeIsFree,
   ]);
 
   // On mount: only restore if URL has ?g= param. Otherwise start fresh.
