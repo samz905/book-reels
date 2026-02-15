@@ -302,6 +302,7 @@ export interface Database {
           role: string;
           visual_style: string | null;
           image_base64: string | null;
+          image_url: string | null;
           image_mime_type: string;
           created_at: string;
           updated_at: string;
@@ -316,6 +317,7 @@ export interface Database {
           role?: string;
           visual_style?: string | null;
           image_base64?: string | null;
+          image_url?: string | null;
           image_mime_type?: string;
         };
         Update: {
@@ -326,6 +328,7 @@ export interface Database {
           role?: string;
           visual_style?: string | null;
           image_base64?: string | null;
+          image_url?: string | null;
           image_mime_type?: string;
         };
       };
@@ -338,6 +341,7 @@ export interface Database {
           atmosphere: string;
           visual_style: string | null;
           image_base64: string | null;
+          image_url: string | null;
           image_mime_type: string;
           created_at: string;
           updated_at: string;
@@ -350,6 +354,7 @@ export interface Database {
           atmosphere?: string;
           visual_style?: string | null;
           image_base64?: string | null;
+          image_url?: string | null;
           image_mime_type?: string;
         };
         Update: {
@@ -358,6 +363,7 @@ export interface Database {
           atmosphere?: string;
           visual_style?: string | null;
           image_base64?: string | null;
+          image_url?: string | null;
           image_mime_type?: string;
         };
       };

@@ -374,6 +374,8 @@ async def generate_scene_references(
     Returns:
         List of 3 dicts, each with image_base64 and mime_type
     """
+    # Ensure all images have base64 (fetch from URL if needed)
+    await approved_visuals.resolve_urls()
     style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
 
     # 1. Select character refs for this scene

@@ -66,6 +66,7 @@ export interface StoryCharacterFE {
   role: string;
   visualStyle: string | null;
   imageBase64: string | null;
+  imageUrl: string | null;
   imageMimeType: string;
 }
 
@@ -76,6 +77,7 @@ export interface StoryLocationFE {
   atmosphere: string;
   visualStyle: string | null;
   imageBase64: string | null;
+  imageUrl: string | null;
   imageMimeType: string;
 }
 

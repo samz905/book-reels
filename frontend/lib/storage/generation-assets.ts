@@ -10,7 +10,7 @@ export async function uploadGenerationAsset(
   assetPath: string,
   base64Data: string,
   mimeType: string
-): Promise<string> {
+): Promise<string | null> {
   const supabase = createClient();
 
   // Convert base64 to Uint8Array
@@ -35,8 +35,8 @@ export async function uploadGenerationAsset(
     });
 
   if (error) {
-    console.error("Asset upload failed:", error);
-    throw new Error(`Asset upload failed: ${error.message}`);
+    console.warn("Asset upload failed (using base64 fallback):", error.message);
+    return null;
   }
 
   const { data: urlData } = supabase.storage

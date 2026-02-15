@@ -364,6 +364,7 @@ export function mapDbCharacterToFrontend(db: DbStoryCharacter): StoryCharacterFE
     role: db.role,
     visualStyle: db.visual_style,
     imageBase64: db.image_base64,
+    imageUrl: db.image_url,
     imageMimeType: db.image_mime_type,
   };
 }
@@ -376,6 +377,7 @@ export function mapDbLocationToFrontend(db: DbStoryLocation): StoryLocationFE {
     atmosphere: db.atmosphere,
     visualStyle: db.visual_style,
     imageBase64: db.image_base64,
+    imageUrl: db.image_url,
     imageMimeType: db.image_mime_type,
   };
 }
@@ -400,6 +402,7 @@ export async function createStoryCharacter(
     role?: string;
     visual_style?: string | null;
     image_base64?: string | null;
+    image_url?: string | null;
     image_mime_type?: string;
   }
 ): Promise<StoryCharacterFE> {
@@ -424,6 +427,7 @@ export async function updateStoryCharacter(
     role?: string;
     visual_style?: string | null;
     image_base64?: string | null;
+    image_url?: string | null;
     image_mime_type?: string;
   }
 ): Promise<StoryCharacterFE> {
@@ -463,6 +467,7 @@ export async function createStoryLocation(
     atmosphere?: string;
     visual_style?: string | null;
     image_base64?: string | null;
+    image_url?: string | null;
     image_mime_type?: string;
   }
 ): Promise<StoryLocationFE> {
@@ -485,6 +490,7 @@ export async function updateStoryLocation(
     atmosphere?: string;
     visual_style?: string | null;
     image_base64?: string | null;
+    image_url?: string | null;
     image_mime_type?: string;
   }
 ): Promise<StoryLocationFE> {

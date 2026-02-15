@@ -9,9 +9,10 @@ import {
   getGeneration as supaGetGeneration,
   getCompletedJobs,
   clearGenJobs,
+  type GenJob,
 } from "@/lib/supabase/ai-generations";
 import { useAuth } from "@/app/context/AuthContext";
-import { getMyStories, getStoryCharacters, getStoryLocations, updateStoryCharacter, createStoryCharacter, updateStoryLocation, submitJob } from "@/lib/api/creator";
+import { getMyStories, getStoryCharacters, getStoryLocations, updateStoryCharacter, createStoryCharacter, updateStoryLocation, createStoryLocation, createStory, submitJob } from "@/lib/api/creator";
 import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 import { useGenJobs } from "@/lib/hooks/useGenJobs";
 import type { StoryCharacterFE, StoryLocationFE } from "@/app/data/mockCreatorData";
@@ -444,6 +445,338 @@ export default function CreateEpisodePage() {
   const realtimeJobs = useGenJobs(generationId);
   const processedJobsRef = useRef<Set<string>>(new Set());
 
+  const CHAR_IMG_DEFAULTS = { images: [] as MoodboardImage[], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] as RefImageUpload[] };
+  const LOC_IMG_DEFAULTS = { ...CHAR_IMG_DEFAULTS };
+
+  // ---- Shared job processing: single source of truth for both Realtime & restore ----
+
+  const applyFailedJob = (job: GenJob) => {
+    const errMsg = job.error_message || "Generation failed";
+    switch (job.job_type) {
+      case "script":
+        setError(errMsg);
+        setIsGenerating(false);
+        break;
+      case "refine_beat":
+        setError(errMsg);
+        setIsRefining(false);
+        break;
+      case "scene_descriptions":
+        setIsGeneratingSceneDescs(false);
+        break;
+      case "scene_images":
+      case "key_moment":
+        setSceneImages((prev) => {
+          const updated = { ...prev };
+          for (const key of Object.keys(updated)) {
+            const num = parseInt(key);
+            if (updated[num]?.isGenerating) {
+              updated[num] = { ...updated[num], isGenerating: false, error: errMsg };
+            }
+          }
+          return updated;
+        });
+        break;
+      case "scene_image":
+        setSceneImages((prev) => ({
+          ...prev,
+          [parseInt(job.target_id)]: { ...prev[parseInt(job.target_id)], isGenerating: false, error: errMsg },
+        }));
+        break;
+      case "protagonist":
+      case "character_image":
+      case "refine_character":
+        if (job.target_id) {
+          setCharacterImages((prev) => {
+            if (!prev[job.target_id]) return prev;
+            return { ...prev, [job.target_id]: { ...prev[job.target_id], isGenerating: false, error: errMsg } };
+          });
+        }
+        break;
+      case "location_image":
+      case "refine_location":
+        if (job.target_id) {
+          setLocationImages((prev) => {
+            if (!prev[job.target_id]) return prev;
+            return { ...prev, [job.target_id]: { ...prev[job.target_id], isGenerating: false, error: errMsg } };
+          });
+        }
+        break;
+      case "prompt_preview":
+        setPromptPreview((prev) => ({ ...prev, isLoading: false }));
+        break;
+      case "film":
+      case "film_with_prompts":
+        setFilm((prev) => ({ ...prev, status: "failed", error: errMsg }));
+        break;
+      case "shot_regenerate":
+        setRegeneratingShotNum(null);
+        break;
+    }
+  };
+
+  const applyCompletedJob = (job: GenJob) => {
+    const result = job.result as Record<string, unknown>;
+    if (!result) return;
+
+    switch (job.job_type) {
+      case "script": {
+        const storyResult = result.story as Story;
+        if (storyResult) {
+          setStory(storyResult);
+          if (result.cost_usd) setTotalCost((prev) => ({ ...prev, story: prev.story + (result.cost_usd as number) }));
+          saveNow({ story: storyResult, isGenerating: false }, "drafting");
+        }
+        setIsGenerating(false);
+        setGlobalFeedback("");
+        break;
+      }
+      case "refine_beat": {
+        const beatResult = (result.beat as Beat) || null;
+        if (beatResult && story) {
+          const sceneNum = parseInt(job.target_id) || beatResult.scene_number;
+          const idx = story.beats.findIndex((b: Beat) => b.scene_number === sceneNum);
+          if (idx >= 0) {
+            const updatedBeats = [...story.beats];
+            updatedBeats[idx] = beatResult;
+            const updatedScenes = [...getScenes(story)];
+            updatedScenes[idx] = {
+              scene_number: beatResult.scene_number || sceneNum,
+              title: updatedScenes[idx]?.title || `Scene ${sceneNum}`,
+              duration: updatedScenes[idx]?.duration || "8 seconds",
+              characters_on_screen: beatResult.characters_in_scene || [],
+              setting_id: beatResult.location_id || "",
+              action: beatResult.action || "",
+              dialogue: beatResult.dialogue?.map((d: DialogueLine) => `${d.character}: ${d.line}`).join("\n") || null,
+              image_prompt: beatResult.description || "",
+              regenerate_notes: updatedScenes[idx]?.regenerate_notes || "",
+              scene_change: beatResult.scene_change,
+              scene_heading: beatResult.scene_heading,
+            };
+            setStory({ ...story, beats: updatedBeats, scenes: updatedScenes });
+          }
+        }
+        setIsRefining(false);
+        setFeedback("");
+        setSelectedBeatIndex(null);
+        break;
+      }
+      case "protagonist":
+      case "character_image": {
+        const charId = (result.character_id as string) || job.target_id;
+        const img = result.image as MoodboardImage | undefined;
+        const imgs = result.images as MoodboardImage[] | undefined;
+        if (charId && (img || imgs)) {
+          setCharacterImages((prev) => ({
+            ...prev,
+            [charId]: {
+              ...(prev[charId] || CHAR_IMG_DEFAULTS),
+              image: img || (imgs && imgs[0]) || null,
+              images: imgs || (img ? [img] : []),
+              isGenerating: false, error: "",
+              promptUsed: (result.prompt_used as string) || "",
+            },
+          }));
+          // Persist image to story_characters DB table immediately
+          const sid = associatedStoryIdRef.current;
+          const saveImg = img || (imgs && imgs[0]);
+          if (sid && saveImg) {
+            updateStoryCharacter(sid, charId, {
+              image_url: saveImg.image_url || null,
+              image_base64: saveImg.image_base64 || null,
+              image_mime_type: saveImg.mime_type,
+            }).catch((e) => console.warn("DB char image save failed:", e));
+          }
+        }
+        if (result.cost_usd) setTotalCost((prev) => ({ ...prev, characters: prev.characters + (result.cost_usd as number) }));
+        break;
+      }
+      case "refine_character": {
+        const charId = (result.character_id as string) || job.target_id;
+        const img = result.image as MoodboardImage | undefined;
+        if (charId && img) {
+          setCharacterImages((prev) => ({
+            ...prev,
+            [charId]: {
+              ...(prev[charId] || CHAR_IMG_DEFAULTS),
+              image: img, isGenerating: false, error: "", feedback: "",
+              promptUsed: (result.prompt_used as string) || "",
+            },
+          }));
+          // Persist refined image to story_characters DB table immediately
+          const sid = associatedStoryIdRef.current;
+          if (sid) {
+            updateStoryCharacter(sid, charId, {
+              image_url: img.image_url || null,
+              image_base64: img.image_base64 || null,
+              image_mime_type: img.mime_type,
+            }).catch((e) => console.warn("DB char image save failed:", e));
+          }
+        }
+        if (result.cost_usd) setTotalCost((prev) => ({ ...prev, characters: prev.characters + (result.cost_usd as number) }));
+        break;
+      }
+      case "location_image": {
+        const locId = (result.location_id as string) || job.target_id;
+        const img = result.image as MoodboardImage | undefined;
+        const imgs = result.images as MoodboardImage[] | undefined;
+        if (locId && (img || imgs)) {
+          setLocationImages((prev) => ({
+            ...prev,
+            [locId]: {
+              ...(prev[locId] || LOC_IMG_DEFAULTS),
+              image: img || (imgs && imgs[0]) || null,
+              images: imgs || (img ? [img] : []),
+              isGenerating: false, error: "",
+              promptUsed: (result.prompt_used as string) || "",
+            },
+          }));
+          // Persist image to story_locations DB table immediately
+          const sid = associatedStoryIdRef.current;
+          const saveImg = img || (imgs && imgs[0]);
+          if (sid && saveImg) {
+            updateStoryLocation(sid, locId, {
+              image_url: saveImg.image_url || null,
+              image_base64: saveImg.image_base64 || null,
+              image_mime_type: saveImg.mime_type,
+            }).catch((e) => console.warn("DB loc image save failed:", e));
+          }
+        }
+        if (result.cost_usd) setTotalCost((prev) => ({ ...prev, locations: prev.locations + (result.cost_usd as number) }));
+        break;
+      }
+      case "refine_location": {
+        const locId = (result.location_id as string) || job.target_id;
+        const img = result.image as MoodboardImage | undefined;
+        if (locId && img) {
+          setLocationImages((prev) => ({
+            ...prev,
+            [locId]: {
+              ...(prev[locId] || LOC_IMG_DEFAULTS),
+              image: img, isGenerating: false, error: "", feedback: "",
+              promptUsed: (result.prompt_used as string) || "",
+            },
+          }));
+          // Persist refined image to story_locations DB table immediately
+          const sid = associatedStoryIdRef.current;
+          if (sid) {
+            updateStoryLocation(sid, locId, {
+              image_url: img.image_url || null,
+              image_base64: img.image_base64 || null,
+              image_mime_type: img.mime_type,
+            }).catch((e) => console.warn("DB loc image save failed:", e));
+          }
+        }
+        if (result.cost_usd) setTotalCost((prev) => ({ ...prev, locations: prev.locations + (result.cost_usd as number) }));
+        break;
+      }
+      case "key_moment": {
+        const km = result.key_moment as { beat_number: number; beat_description: string; image: MoodboardImage; prompt_used: string } | undefined;
+        const kms = result.key_moments as Array<{ beat_number: number; beat_description: string; image: MoodboardImage; prompt_used: string }> | undefined;
+        if (kms && kms.length > 0) {
+          setSceneImages((prev) => {
+            const updated = { ...prev };
+            for (const m of kms) {
+              updated[m.beat_number] = { sceneNumber: m.beat_number, title: m.beat_description.slice(0, 50), visualDescription: m.beat_description, image: m.image, isGenerating: false, error: "", feedback: "" };
+            }
+            return updated;
+          });
+        } else if (km) {
+          setSceneImages((prev) => ({
+            ...prev,
+            [km.beat_number]: { sceneNumber: km.beat_number, title: km.beat_description.slice(0, 50), visualDescription: km.beat_description, image: km.image, isGenerating: false, error: "", feedback: "" },
+          }));
+        }
+        if (result.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
+        break;
+      }
+      case "scene_descriptions": {
+        const descs = result.descriptions as Array<{ scene_number: number; title: string; visual_description: string }>;
+        if (descs) {
+          const newSceneImages: Record<number, SceneImageState> = {};
+          for (const desc of descs) {
+            newSceneImages[desc.scene_number] = { sceneNumber: desc.scene_number, title: desc.title, visualDescription: desc.visual_description, image: null, isGenerating: false, error: "", feedback: "" };
+          }
+          setSceneImages(newSceneImages);
+        }
+        setIsGeneratingSceneDescs(false);
+        break;
+      }
+      case "scene_images": {
+        const sceneImgs = result.scene_images as Array<{ scene_number: number; image: MoodboardImage }>;
+        if (sceneImgs) {
+          setSceneImages((prev) => {
+            const updated = { ...prev };
+            for (const si of sceneImgs) {
+              if (updated[si.scene_number]) updated[si.scene_number] = { ...updated[si.scene_number], image: si.image, isGenerating: false };
+            }
+            return updated;
+          });
+        }
+        if (result.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
+        saveNow({}, "visuals");
+        break;
+      }
+      case "scene_image": {
+        const sceneNum = parseInt(job.target_id);
+        const img = result.image as MoodboardImage | undefined;
+        if (!isNaN(sceneNum) && img) {
+          setSceneImages((prev) => ({ ...prev, [sceneNum]: { ...prev[sceneNum], image: img, isGenerating: false, feedback: "" } }));
+        }
+        if (result.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
+        saveNow({}, "visuals");
+        break;
+      }
+      case "prompt_preview": {
+        const shots = result.shots as Array<{ beat_number: number; veo_prompt: string }>;
+        if (shots) {
+          const editedPrompts: Record<number, string> = {};
+          for (const shot of shots) editedPrompts[shot.beat_number] = shot.veo_prompt;
+          setPromptPreview({ shots: shots as PromptPreviewState["shots"], editedPrompts, estimatedCostUsd: (result.estimated_cost_usd as number) || 0, isLoading: false });
+        }
+        break;
+      }
+      case "film":
+      case "film_with_prompts": {
+        const r = result;
+        setFilm({
+          filmId: r.film_id as string,
+          status: (r.status as string) === "ready" ? "ready" : "failed",
+          currentShot: (r.total_shots as number) || 0,
+          totalShots: (r.total_shots as number) || 0,
+          phase: "filming",
+          completedShots: (r.completed_shots as Array<{ number: number; storage_url?: string; veo_prompt?: string }>) || [],
+          finalVideoUrl: (r.final_video_url as string) || null,
+          error: (r.error_message as string) || null,
+          cost: (r.cost as { scene_refs_usd: number; videos_usd: number; total_usd: number }) || { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
+        });
+        if (r.cost) setTotalCost((prev) => ({ ...prev, film: (r.cost as { total_usd: number }).total_usd }));
+        if ((r.status as string) === "ready" && associatedStoryIdRef.current) {
+          fetch(`/api/stories/${associatedStoryIdRef.current}/episodes`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: episodeNameRef.current || "Untitled Episode", media_url: (r.final_video_url as string) || null, status: "draft" }),
+          }).catch((err) => console.error("Failed to save episode:", err));
+        }
+        break;
+      }
+      case "shot_regenerate": {
+        const shotNum = parseInt(job.target_id);
+        if (!isNaN(shotNum) && result.preview_url) {
+          setFilm((prev) => {
+            const updatedShots = prev.completedShots.map((s) =>
+              s.number === shotNum ? { ...s, preview_url: result.preview_url as string, storage_url: result.preview_url as string, veo_prompt: (result.veo_prompt as string) || s.veo_prompt } : s
+            );
+            return { ...prev, completedShots: updatedShots, status: "ready" };
+          });
+        }
+        if (result.cost) setTotalCost((prev) => ({ ...prev, film: (result.cost as { total_usd: number }).total_usd }));
+        setRegeneratingShotNum(null);
+        break;
+      }
+    }
+  };
+
   // Process completed/failed jobs from Realtime
   useEffect(() => {
     for (const job of realtimeJobs) {
@@ -544,407 +877,13 @@ export default function CreateEpisodePage() {
         continue;
       }
 
-      // Mark as processed
+      // Mark as processed, apply result via shared functions
       processedJobsRef.current.add(job.id);
-
       if (job.status === "failed") {
-        const errMsg = job.error_message || "Generation failed";
-        switch (job.job_type) {
-          case "script":
-            setError(errMsg);
-            setIsGenerating(false);
-            break;
-          case "scene_descriptions":
-            setIsGeneratingSceneDescs(false);
-            break;
-          case "scene_images":
-            setSceneImages((prev) => {
-              const updated = { ...prev };
-              Object.keys(updated).forEach((key) => {
-                const num = parseInt(key);
-                if (updated[num]?.isGenerating) {
-                  updated[num] = { ...updated[num], isGenerating: false, error: errMsg };
-                }
-              });
-              return updated;
-            });
-            break;
-          case "scene_image":
-            setSceneImages((prev) => ({
-              ...prev,
-              [parseInt(job.target_id)]: { ...prev[parseInt(job.target_id)], isGenerating: false, error: errMsg },
-            }));
-            break;
-          case "refine_beat":
-            setError(errMsg);
-            setIsRefining(false);
-            break;
-          case "film":
-          case "film_with_prompts":
-            setFilm((prev) => ({ ...prev, status: "failed", error: errMsg }));
-            break;
-          case "shot_regenerate":
-            setRegeneratingShotNum(null);
-            break;
-          case "protagonist":
-          case "character_image":
-          case "refine_character":
-            if (job.target_id) {
-              setCharacterImages((prev) => {
-                if (!prev[job.target_id]) return prev;
-                return { ...prev, [job.target_id]: { ...prev[job.target_id], isGenerating: false, error: errMsg } };
-              });
-            }
-            break;
-          case "location_image":
-          case "refine_location":
-            if (job.target_id) {
-              setLocationImages((prev) => {
-                if (!prev[job.target_id]) return prev;
-                return { ...prev, [job.target_id]: { ...prev[job.target_id], isGenerating: false, error: errMsg } };
-              });
-            }
-            break;
-          case "key_moment":
-            setSceneImages((prev) => {
-              const updated = { ...prev };
-              for (const key of Object.keys(updated)) {
-                const num = parseInt(key);
-                if (updated[num]?.isGenerating) {
-                  updated[num] = { ...updated[num], isGenerating: false, error: errMsg };
-                }
-              }
-              return updated;
-            });
-            break;
-          case "prompt_preview":
-            setPromptPreview((prev) => ({ ...prev, isLoading: false }));
-            break;
-          default:
-            console.warn(`[Realtime] Unhandled failed job type: ${job.job_type}`);
-        }
+        applyFailedJob(job);
         continue;
       }
-
-      // status === "completed"
-      const result = job.result as Record<string, unknown>;
-      if (!result) continue;
-
-      switch (job.job_type) {
-        case "script": {
-          const storyResult = result.story as Story;
-          if (storyResult) {
-            setStory(storyResult);
-            if (result.cost_usd) {
-              setTotalCost((prev) => ({ ...prev, story: prev.story + (result.cost_usd as number) }));
-            }
-            saveNow({ story: storyResult, isGenerating: false }, "drafting");
-          }
-          setIsGenerating(false);
-          setGlobalFeedback("");
-          break;
-        }
-        case "refine_beat": {
-          const beatResult = (result.beat as Beat) || null;
-          if (beatResult && story) {
-            const sceneNum = parseInt(job.target_id) || beatResult.scene_number;
-            const idx = story.beats.findIndex((b: Beat) => b.scene_number === sceneNum);
-            if (idx >= 0) {
-              const updatedBeats = [...story.beats];
-              updatedBeats[idx] = beatResult;
-              const updatedScenes = [...getScenes(story)];
-              updatedScenes[idx] = {
-                scene_number: beatResult.scene_number || sceneNum,
-                title: updatedScenes[idx]?.title || `Scene ${sceneNum}`,
-                duration: updatedScenes[idx]?.duration || "8 seconds",
-                characters_on_screen: beatResult.characters_in_scene || [],
-                setting_id: beatResult.location_id || "",
-                action: beatResult.action || "",
-                dialogue: beatResult.dialogue?.map((d: DialogueLine) => `${d.character}: ${d.line}`).join("\n") || null,
-                image_prompt: beatResult.description || "",
-                regenerate_notes: updatedScenes[idx]?.regenerate_notes || "",
-                scene_change: beatResult.scene_change,
-                scene_heading: beatResult.scene_heading,
-              };
-              setStory({ ...story, beats: updatedBeats, scenes: updatedScenes });
-            }
-          }
-          setIsRefining(false);
-          setFeedback("");
-          setSelectedBeatIndex(null);
-          break;
-        }
-        case "protagonist": {
-          const charId = (result.character_id as string) || job.target_id;
-          const img = result.image as MoodboardImage | undefined;
-          const imgs = result.images as MoodboardImage[] | undefined;
-          if (charId && (img || imgs)) {
-            // Images already have image_url from backend upload — no frontend upload needed
-            setCharacterImages((prev) => ({
-              ...prev,
-              [charId]: {
-                ...(prev[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-                image: img || (imgs && imgs[0]) || null,
-                images: imgs || (img ? [img] : []),
-                isGenerating: false,
-                error: "",
-                promptUsed: (result.prompt_used as string) || "",
-              },
-            }));
-          }
-          if (result.cost_usd) {
-            setTotalCost((prev) => ({ ...prev, characters: prev.characters + (result.cost_usd as number) }));
-          }
-          break;
-        }
-        case "character_image": {
-          const charId = job.target_id;
-          const img = result.image as MoodboardImage | undefined;
-          const imgs = result.images as MoodboardImage[] | undefined;
-          if (charId && (img || imgs)) {
-            setCharacterImages((prev) => ({
-              ...prev,
-              [charId]: {
-                ...(prev[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-                image: img || (imgs && imgs[0]) || null,
-                images: imgs || (img ? [img] : []),
-                isGenerating: false,
-                error: "",
-                promptUsed: (result.prompt_used as string) || "",
-              },
-            }));
-          }
-          if (result.cost_usd) {
-            setTotalCost((prev) => ({ ...prev, characters: prev.characters + (result.cost_usd as number) }));
-          }
-          break;
-        }
-        case "refine_character": {
-          const charId = (result.character_id as string) || job.target_id;
-          const img = result.image as MoodboardImage | undefined;
-          if (charId && img) {
-            setCharacterImages((prev) => ({
-              ...prev,
-              [charId]: {
-                ...(prev[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-                image: img,
-                isGenerating: false,
-                error: "",
-                feedback: "",
-                promptUsed: (result.prompt_used as string) || "",
-              },
-            }));
-          }
-          if (result.cost_usd) {
-            setTotalCost((prev) => ({ ...prev, characters: prev.characters + (result.cost_usd as number) }));
-          }
-          break;
-        }
-        case "location_image": {
-          const locId = job.target_id;
-          const img = result.image as MoodboardImage | undefined;
-          const imgs = result.images as MoodboardImage[] | undefined;
-          if (locId && (img || imgs)) {
-            setLocationImages((prev) => ({
-              ...prev,
-              [locId]: {
-                ...(prev[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-                image: img || (imgs && imgs[0]) || null,
-                images: imgs || (img ? [img] : []),
-                isGenerating: false,
-                error: "",
-                promptUsed: (result.prompt_used as string) || "",
-              },
-            }));
-          }
-          if (result.cost_usd) {
-            setTotalCost((prev) => ({ ...prev, locations: prev.locations + (result.cost_usd as number) }));
-          }
-          break;
-        }
-        case "refine_location": {
-          const locId = (result.location_id as string) || job.target_id;
-          const img = result.image as MoodboardImage | undefined;
-          if (locId && img) {
-            setLocationImages((prev) => ({
-              ...prev,
-              [locId]: {
-                ...(prev[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-                image: img,
-                isGenerating: false,
-                error: "",
-                feedback: "",
-                promptUsed: (result.prompt_used as string) || "",
-              },
-            }));
-          }
-          if (result.cost_usd) {
-            setTotalCost((prev) => ({ ...prev, locations: prev.locations + (result.cost_usd as number) }));
-          }
-          break;
-        }
-        case "key_moment": {
-          const km = result.key_moment as { beat_number: number; beat_description: string; image: MoodboardImage; prompt_used: string } | undefined;
-          const kms = result.key_moments as Array<{ beat_number: number; beat_description: string; image: MoodboardImage; prompt_used: string }> | undefined;
-          // Key moments go into scene images
-          if (kms && kms.length > 0) {
-            setSceneImages((prev) => {
-              const updated = { ...prev };
-              for (const m of kms) {
-                updated[m.beat_number] = {
-                  sceneNumber: m.beat_number,
-                  title: m.beat_description.slice(0, 50),
-                  visualDescription: m.beat_description,
-                  image: m.image,
-                  isGenerating: false,
-                  error: "",
-                  feedback: "",
-                };
-              }
-              return updated;
-            });
-          } else if (km) {
-            setSceneImages((prev) => ({
-              ...prev,
-              [km.beat_number]: {
-                sceneNumber: km.beat_number,
-                title: km.beat_description.slice(0, 50),
-                visualDescription: km.beat_description,
-                image: km.image,
-                isGenerating: false,
-                error: "",
-                feedback: "",
-              },
-            }));
-          }
-          if (result.cost_usd) {
-            setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
-          }
-          break;
-        }
-        case "scene_descriptions": {
-          const descs = result.descriptions as Array<{ scene_number: number; title: string; visual_description: string }>;
-          if (descs) {
-            const newSceneImages: Record<number, SceneImageState> = {};
-            for (const desc of descs) {
-              newSceneImages[desc.scene_number] = {
-                sceneNumber: desc.scene_number,
-                title: desc.title,
-                visualDescription: desc.visual_description,
-                image: null,
-                isGenerating: false,
-                error: "",
-                feedback: "",
-              };
-            }
-            setSceneImages(newSceneImages);
-          }
-          setIsGeneratingSceneDescs(false);
-          break;
-        }
-        case "scene_images": {
-          const sceneImgs = result.scene_images as Array<{ scene_number: number; image: MoodboardImage }>;
-          if (sceneImgs) {
-            setSceneImages((prev) => {
-              const updated = { ...prev };
-              for (const si of sceneImgs) {
-                if (updated[si.scene_number]) {
-                  updated[si.scene_number] = { ...updated[si.scene_number], image: si.image, isGenerating: false };
-                }
-              }
-              return updated;
-            });
-          }
-          if (result.cost_usd) {
-            setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
-          }
-          saveNow({}, "visuals");
-          break;
-        }
-        case "scene_image": {
-          const sceneNum = parseInt(job.target_id);
-          const img = result.image as MoodboardImage | undefined;
-          if (!isNaN(sceneNum) && img) {
-            setSceneImages((prev) => ({
-              ...prev,
-              [sceneNum]: { ...prev[sceneNum], image: img, isGenerating: false, feedback: "" },
-            }));
-          }
-          if (result.cost_usd) {
-            setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
-          }
-          saveNow({}, "visuals");
-          break;
-        }
-        case "prompt_preview": {
-          const shots = result.shots as Array<{ beat_number: number; veo_prompt: string }>;
-          if (shots) {
-            const editedPrompts: Record<number, string> = {};
-            for (const shot of shots) {
-              editedPrompts[shot.beat_number] = shot.veo_prompt;
-            }
-            setPromptPreview({
-              shots: shots as PromptPreviewState["shots"],
-              editedPrompts,
-              estimatedCostUsd: (result.estimated_cost_usd as number) || 0,
-              isLoading: false,
-            });
-          }
-          break;
-        }
-        case "film":
-        case "film_with_prompts": {
-          const r = result;
-          const filmId = r.film_id as string;
-          setFilm({
-            filmId,
-            status: (r.status as string) === "ready" ? "ready" : "failed",
-            currentShot: (r.total_shots as number) || 0,
-            totalShots: (r.total_shots as number) || 0,
-            phase: "filming",
-            completedShots: (r.completed_shots as Array<{ number: number; storage_url?: string; veo_prompt?: string }>) || [],
-            finalVideoUrl: (r.final_video_url as string) || null,
-            error: (r.error_message as string) || null,
-            cost: (r.cost as { scene_refs_usd: number; videos_usd: number; total_usd: number }) || { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
-          });
-          if (r.cost) {
-            setTotalCost((prev) => ({ ...prev, film: (r.cost as { total_usd: number }).total_usd }));
-          }
-          // Create episode if ready
-          if ((r.status as string) === "ready" && associatedStoryIdRef.current) {
-            fetch(`/api/stories/${associatedStoryIdRef.current}/episodes`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                name: episodeNameRef.current || "Untitled Episode",
-                media_url: (r.final_video_url as string) || null,
-                status: "draft",
-              }),
-            }).catch((err) => console.error("Failed to save episode:", err));
-          }
-          break;
-        }
-        case "shot_regenerate": {
-          const shotNum = parseInt(job.target_id);
-          if (!isNaN(shotNum) && result.preview_url) {
-            setFilm((prev) => {
-              const updatedShots = prev.completedShots.map((s) =>
-                s.number === shotNum
-                  ? { ...s, preview_url: result.preview_url as string, storage_url: result.preview_url as string, veo_prompt: (result.veo_prompt as string) || s.veo_prompt }
-                  : s
-              );
-              return { ...prev, completedShots: updatedShots, status: "ready" };
-            });
-          }
-          if (result.cost) {
-            setTotalCost((prev) => ({ ...prev, film: (result.cost as { total_usd: number }).total_usd }));
-          }
-          setRegeneratingShotNum(null);
-          break;
-        }
-        default:
-          console.warn(`[Realtime] Unhandled completed job type: ${job.job_type}`);
-      }
+      applyCompletedJob(job);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realtimeJobs]);
@@ -1206,8 +1145,15 @@ export default function CreateEpisodePage() {
   // ============================================================
 
   // Strip base64 data from images before saving — only URLs persist
+  // Strip base64 from images before saving — keep base64 only if no URL exists (upload failed)
   const stripImg = (img: MoodboardImage | null): MoodboardImage | null =>
-    img ? { type: img.type, image_url: img.image_url, mime_type: img.mime_type, prompt_used: img.prompt_used } : null;
+    img ? {
+      type: img.type,
+      image_url: img.image_url,
+      mime_type: img.mime_type,
+      prompt_used: img.prompt_used,
+      ...(img.image_url ? {} : img.image_base64 ? { image_base64: img.image_base64 } : {}),
+    } : null;
 
   const buildSnapshot = () => ({
     idea,
@@ -1221,21 +1167,23 @@ export default function CreateEpisodePage() {
     // isGenerating intentionally omitted — transient state, always false on restore
     visualsActive,
     visualsTab,
+    // Images are DB-authoritative (story_characters/story_locations tables).
+    // JSONB only stores supplementary state — no image data.
     characterImages: Object.fromEntries(
       Object.entries(characterImages).map(([k, v]) => [k, {
-        ...v,
-        isGenerating: false, // never persist generating state
-        image: stripImg(v.image),
-        images: v.images.map(stripImg),
+        selectedIndex: v.selectedIndex,
+        approved: v.approved,
+        feedback: v.feedback,
+        promptUsed: v.promptUsed,
         refImages: v.refImages.map((r) => ({ url: r.url, mimeType: r.mimeType, name: r.name })),
       }])
     ),
     locationImages: Object.fromEntries(
       Object.entries(locationImages).map(([k, v]) => [k, {
-        ...v,
-        isGenerating: false,
-        image: stripImg(v.image),
-        images: v.images.map(stripImg),
+        selectedIndex: v.selectedIndex,
+        approved: v.approved,
+        feedback: v.feedback,
+        promptUsed: v.promptUsed,
         refImages: v.refImages.map((r) => ({ url: r.url, mimeType: r.mimeType, name: r.name })),
       }])
     ),
@@ -1284,6 +1232,11 @@ export default function CreateEpisodePage() {
   // Save immediately with actual data (bypasses stale closures)
   // Pass overrides for fields that were just set via setState but aren't in closure yet
   const saveNow = (overrides: Record<string, unknown> = {}, statusOverride?: string) => {
+    // Cancel pending debounced auto-save — this explicit save supersedes it
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
     const gid = generationIdRef.current;
     if (!gid) return;
     const snapshot = { ...buildSnapshot(), ...overrides };
@@ -1355,7 +1308,9 @@ export default function CreateEpisodePage() {
       generationIdRef.current = genId;
       setGenerationId(genId);
       setGenerationUrl(genId);
-      // Restore story association from DB column + re-fetch library chars/locs
+      // Restore story association from DB column + fetch library chars/locs (DB-authoritative for images)
+      let dbChars: StoryCharacterFE[] = [];
+      let dbLocs: StoryLocationFE[] = [];
       if (data.story_id) {
         setAssociatedStoryId(data.story_id);
         associatedStoryIdRef.current = data.story_id;
@@ -1363,7 +1318,15 @@ export default function CreateEpisodePage() {
           .then(res => res.ok ? res.json() : null)
           .then(d => { if (d?.title) setAssociatedStoryName(d.title); })
           .catch(() => {});
-        fetchStoryLibrary(data.story_id);
+        // Await DB fetch — these are the source of truth for images
+        try {
+          [dbChars, dbLocs] = await Promise.all([
+            getStoryCharacters(data.story_id),
+            getStoryLocations(data.story_id),
+          ]);
+          setStoryLibraryChars(dbChars);
+          setStoryLibraryLocs(dbLocs);
+        } catch { /* non-fatal — fall back to JSONB */ }
       }
       const restoredName = (s.episodeName as string | null) || data.title || null;
       setEpisodeName(restoredName);
@@ -1389,41 +1352,83 @@ export default function CreateEpisodePage() {
         return false;
       };
 
-      // Clean character images: keep entries with real image/error, reset idle ones
+      // ── DB-authoritative: build char image states from story_characters table ──
+      const jsonbChars = (s.characterImages || {}) as Record<string, Partial<CharacterImageState>>;
+      const jsonbLocs = (s.locationImages || {}) as Record<string, Partial<LocationImageState>>;
       const cleanedChars: Record<string, CharacterImageState> = {};
-      if (s.characterImages) {
-        const raw = s.characterImages as Record<string, CharacterImageState>;
-        for (const key in raw) {
-          const ci = raw[key];
-          if (hasRealImage(ci.image)) {
-            cleanedChars[key] = { ...ci, isGenerating: false };
-          } else if (ci.error) {
-            cleanedChars[key] = { ...ci, isGenerating: false };
+
+      // DB chars are source of truth for images
+      for (const dbChar of dbChars) {
+        const jc = jsonbChars[dbChar.id] || {};
+        const hasImg = dbChar.imageUrl || dbChar.imageBase64;
+        cleanedChars[dbChar.id] = {
+          image: hasImg ? {
+            type: "character" as const,
+            image_url: dbChar.imageUrl || undefined,
+            image_base64: dbChar.imageBase64 || undefined,
+            mime_type: dbChar.imageMimeType || "image/png",
+            prompt_used: (jc.promptUsed as string) || "",
+          } : null,
+          images: (jc.images as MoodboardImage[]) || [],
+          selectedIndex: (jc.selectedIndex as number) || 0,
+          approved: !!hasImg || !!(jc.approved),
+          isGenerating: false,
+          feedback: (jc.feedback as string) || "",
+          promptUsed: (jc.promptUsed as string) || "",
+          error: "",
+          refImages: (jc.refImages as RefImageUpload[]) || [],
+        };
+      }
+      // Keep any JSONB-only entries (chars not yet in DB — backward compat for old gens)
+      for (const [cid, ci] of Object.entries(jsonbChars)) {
+        if (!cleanedChars[cid]) {
+          const rawCi = ci as CharacterImageState;
+          if (rawCi.image && hasRealImage(rawCi.image)) {
+            cleanedChars[cid] = { ...rawCi, isGenerating: false };
           } else {
-            cleanedChars[key] = { ...ci, image: null, isGenerating: false };
+            cleanedChars[cid] = { ...rawCi, image: null, isGenerating: false };
           }
         }
       }
       setCharacterImages(cleanedChars);
 
-      // Same for location images
+      // ── DB-authoritative: build loc image states from story_locations table ──
       const cleanedLocs: Record<string, LocationImageState> = {};
-      if (s.locationImages) {
-        const raw = s.locationImages as Record<string, LocationImageState>;
-        for (const key in raw) {
-          const li = raw[key];
-          if (hasRealImage(li.image)) {
-            cleanedLocs[key] = { ...li, isGenerating: false };
-          } else if (li.error) {
-            cleanedLocs[key] = { ...li, isGenerating: false };
+      for (const dbLoc of dbLocs) {
+        const jl = jsonbLocs[dbLoc.id] || {};
+        const hasImg = dbLoc.imageUrl || dbLoc.imageBase64;
+        cleanedLocs[dbLoc.id] = {
+          image: hasImg ? {
+            type: "location" as const,
+            image_url: dbLoc.imageUrl || undefined,
+            image_base64: dbLoc.imageBase64 || undefined,
+            mime_type: dbLoc.imageMimeType || "image/png",
+            prompt_used: (jl.promptUsed as string) || "",
+          } : null,
+          images: (jl.images as MoodboardImage[]) || [],
+          selectedIndex: (jl.selectedIndex as number) || 0,
+          approved: !!hasImg || !!(jl.approved),
+          isGenerating: false,
+          feedback: (jl.feedback as string) || "",
+          promptUsed: (jl.promptUsed as string) || "",
+          error: "",
+          refImages: (jl.refImages as RefImageUpload[]) || [],
+        };
+      }
+      // Keep any JSONB-only entries (locs not yet in DB)
+      for (const [lid, li] of Object.entries(jsonbLocs)) {
+        if (!cleanedLocs[lid]) {
+          const rawLi = li as LocationImageState;
+          if (rawLi.image && hasRealImage(rawLi.image)) {
+            cleanedLocs[lid] = { ...rawLi, isGenerating: false };
           } else {
-            cleanedLocs[key] = { ...li, image: null, isGenerating: false };
+            cleanedLocs[lid] = { ...rawLi, image: null, isGenerating: false };
           }
         }
       }
       setLocationImages(cleanedLocs);
 
-      // Restore scene images
+      // Restore scene images (still JSONB-based — no DB table for these)
       if (s.sceneImages) {
         const rawScenes = s.sceneImages as Record<number, SceneImageState>;
         const cleanedScenes: Record<number, SceneImageState> = {};
@@ -1438,72 +1443,38 @@ export default function CreateEpisodePage() {
         setSceneImages(cleanedScenes);
       }
 
-      // Lazy migration: if old gen has base64 but no URL, upload to Storage
-      // Also prefetch base64 for URL-only images (needed by buildApprovedVisuals)
-      const migrateAndPrefetch = async () => {
-        const uploads: Promise<void>[] = [];
-        // Migrate/prefetch character images
-        for (const [cid, ci] of Object.entries(cleanedChars)) {
-          if (ci.image) {
-            if (ci.image.image_base64 && !ci.image.image_url) {
-              // Old gen: upload base64 to Storage
-              uploads.push((async () => {
-                try {
-                  const url = await uploadGenerationAsset(genId, `characters/${cid}/${Date.now()}_0`, ci.image!.image_base64!, ci.image!.mime_type);
-                  ci.image!.image_url = url;
-                } catch {}
-              })());
-            } else if (ci.image.image_url && !ci.image.image_base64) {
-              // URL-only: prefetch base64 for buildApprovedVisuals
-              uploads.push((async () => {
-                try {
-                  const resp = await fetch(ci.image!.image_url!);
-                  const blob = await resp.blob();
-                  const b64 = await new Promise<string>((resolve) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve((reader.result as string).split(",")[1]);
-                    reader.readAsDataURL(blob);
-                  });
-                  ci.image!.image_base64 = b64;
-                } catch {}
-              })());
-            }
+      // Prefetch base64 for URL-only images (needed by buildApprovedVisuals)
+      const prefetchBase64 = async () => {
+        const tasks: Promise<void>[] = [];
+        const prefetchImg = (img: MoodboardImage) => {
+          if (img.image_url && !img.image_base64) {
+            tasks.push((async () => {
+              try {
+                const resp = await fetch(img.image_url!);
+                const blob = await resp.blob();
+                const b64 = await new Promise<string>((resolve) => {
+                  const reader = new FileReader();
+                  reader.onload = () => resolve((reader.result as string).split(",")[1]);
+                  reader.readAsDataURL(blob);
+                });
+                img.image_base64 = b64;
+              } catch {}
+            })());
           }
+        };
+        for (const ci of Object.values(cleanedChars)) {
+          if (ci.image) prefetchImg(ci.image);
         }
-        // Migrate/prefetch location images
-        for (const [lid, li] of Object.entries(cleanedLocs)) {
-          if (li.image) {
-            if (li.image.image_base64 && !li.image.image_url) {
-              uploads.push((async () => {
-                try {
-                  const url = await uploadGenerationAsset(genId, `locations/${lid}/${Date.now()}_0`, li.image!.image_base64!, li.image!.mime_type);
-                  li.image!.image_url = url;
-                } catch {}
-              })());
-            } else if (li.image.image_url && !li.image.image_base64) {
-              uploads.push((async () => {
-                try {
-                  const resp = await fetch(li.image!.image_url!);
-                  const blob = await resp.blob();
-                  const b64 = await new Promise<string>((resolve) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve((reader.result as string).split(",")[1]);
-                    reader.readAsDataURL(blob);
-                  });
-                  li.image!.image_base64 = b64;
-                } catch {}
-              })());
-            }
-          }
+        for (const li of Object.values(cleanedLocs)) {
+          if (li.image) prefetchImg(li.image);
         }
-        if (uploads.length > 0) {
-          await Promise.all(uploads);
-          // Update state with migrated URLs / prefetched base64
+        if (tasks.length > 0) {
+          await Promise.all(tasks);
           setCharacterImages({ ...cleanedChars });
           setLocationImages({ ...cleanedLocs });
         }
       };
-      migrateAndPrefetch().catch(console.error);
+      prefetchBase64().catch(console.error);
 
       if (s.promptPreview) setPromptPreview({ ...(s.promptPreview as PromptPreviewState), isLoading: false });
       if (s.clipsApproved !== undefined) setClipsApproved(s.clipsApproved as boolean);
@@ -1551,127 +1522,12 @@ export default function CreateEpisodePage() {
             return;
           }
 
+          // Apply completed/failed jobs via shared functions (same logic as Realtime handler)
           for (const job of completedJobs) {
             if (job.status === "failed") {
-              // Show error for failed jobs
-              if (job.job_type === "script") {
-                setError(job.error_message || "Script generation failed");
-                setIsGenerating(false);
-              }
-              continue;
-            }
-
-            const result = job.result as Record<string, unknown>;
-            if (!result) continue;
-
-            switch (job.job_type) {
-              case "script": {
-                // Script completed while tab was closed
-                const storyResult = result.story as Story;
-                if (storyResult) {
-                  setStory(storyResult);
-                  if (result.cost_usd) {
-                    setTotalCost((prev) => ({ ...prev, story: prev.story + (result.cost_usd as number) }));
-                  }
-                  saveNow({ story: storyResult, isGenerating: false }, "drafting");
-                }
-                setIsGenerating(false);
-                break;
-              }
-              case "character_image": {
-                const charId = job.target_id;
-                if (charId && result.image_base64) {
-                  const b64 = result.image_base64 as string;
-                  const mime = (result.mime_type as string) || "image/png";
-                  let imgUrl: string | undefined;
-                  try { imgUrl = await uploadGenerationAsset(genId, `characters/${charId}/${Date.now()}_0`, b64, mime); } catch {}
-                  setCharacterImages((prev) => ({
-                    ...prev,
-                    [charId]: {
-                      ...(prev[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-                      image: { type: "character" as const, image_url: imgUrl, image_base64: b64, mime_type: mime, prompt_used: (result.prompt_used as string) || "" },
-                      approved: true,
-                      isGenerating: false,
-                      error: "",
-                    },
-                  }));
-                }
-                break;
-              }
-              case "location_image": {
-                const locId = job.target_id;
-                if (locId && result.image_base64) {
-                  const b64 = result.image_base64 as string;
-                  const mime = (result.mime_type as string) || "image/png";
-                  let imgUrl: string | undefined;
-                  try { imgUrl = await uploadGenerationAsset(genId, `locations/${locId}/${Date.now()}_0`, b64, mime); } catch {}
-                  setLocationImages((prev) => ({
-                    ...prev,
-                    [locId]: {
-                      ...(prev[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-                      image: { type: "location" as const, image_url: imgUrl, image_base64: b64, mime_type: mime, prompt_used: (result.prompt_used as string) || "" },
-                      approved: true,
-                      isGenerating: false,
-                      error: "",
-                    },
-                  }));
-                }
-                break;
-              }
-              case "scene_descriptions": {
-                const descs = result.descriptions as Array<{ scene_number: number; title: string; visual_description: string }>;
-                if (descs) {
-                  const newSceneImages: Record<number, SceneImageState> = {};
-                  for (const desc of descs) {
-                    newSceneImages[desc.scene_number] = {
-                      sceneNumber: desc.scene_number,
-                      title: desc.title,
-                      visualDescription: desc.visual_description,
-                      image: null,
-                      isGenerating: false,
-                      error: "",
-                      feedback: "",
-                    };
-                  }
-                  setSceneImages(newSceneImages);
-                  setIsGeneratingSceneDescs(false);
-                }
-                break;
-              }
-              case "scene_images": {
-                const sceneImgs = result.scene_images as Array<{ scene_number: number; image: MoodboardImage }>;
-                if (sceneImgs) {
-                  // Upload recovered scene images to Storage
-                  await Promise.all(sceneImgs.map(async (si) => {
-                    if (si.image?.image_base64) {
-                      try {
-                        const url = await uploadGenerationAsset(genId, `scenes/${si.scene_number}/${Date.now()}`, si.image.image_base64, si.image.mime_type);
-                        si.image.image_url = url;
-                      } catch {}
-                    }
-                  }));
-                  setSceneImages((prev) => {
-                    const updated = { ...prev };
-                    for (const si of sceneImgs) {
-                      if (updated[si.scene_number]) {
-                        updated[si.scene_number] = { ...updated[si.scene_number], image: si.image, isGenerating: false };
-                      }
-                    }
-                    return updated;
-                  });
-                }
-                break;
-              }
-              case "scene_image": {
-                const sceneNum = parseInt(job.target_id);
-                if (!isNaN(sceneNum) && result.image) {
-                  setSceneImages((prev) => ({
-                    ...prev,
-                    [sceneNum]: { ...prev[sceneNum], image: result.image as MoodboardImage, isGenerating: false, feedback: "" },
-                  }));
-                }
-                break;
-              }
+              applyFailedJob(job);
+            } else {
+              applyCompletedJob(job);
             }
           }
 
@@ -1734,30 +1590,122 @@ export default function CreateEpisodePage() {
   // Build Your Visuals (Phase 2) Functions
   // ============================================================
 
+  // Remap IDs in a story object (AI-generated IDs → DB UUIDs)
+  const remapStoryIds = (s: Story, idMap: Record<string, string>): Story => {
+    if (Object.keys(idMap).length === 0) return s;
+    const remap = (id: string) => idMap[id] || id;
+    return {
+      ...s,
+      characters: s.characters.map((c) => ({
+        ...c,
+        id: remap(c.id),
+        origin: idMap[c.id] ? "story" as const : c.origin,
+      })),
+      locations: s.locations.map((l) => ({ ...l, id: remap(l.id) })),
+      scenes: (s.scenes || []).map((sc) => ({
+        ...sc,
+        characters_on_screen: (sc.characters_on_screen || []).map(remap),
+        setting_id: remap(sc.setting_id || ""),
+      })),
+      beats: (s.beats || []).map((b) => ({
+        ...b,
+        characters_in_scene: (b.characters_in_scene || []).map(remap),
+        location_id: remap(b.location_id || ""),
+      })),
+    };
+  };
+
   const startBuildVisuals = async () => {
     if (!story) return;
     setVisualsActive(true);
     setVisualsTab("characters");
     const gid = generationIdRef.current;
 
-    // Helper: find character image source by ID first, then fallback to name match
+    // ── Step 1: Ensure a story exists in DB (auto-create if needed) ──
+    let storyId = associatedStoryIdRef.current;
+    if (!storyId) {
+      try {
+        const newStory = await createStory({
+          title: episodeNameRef.current || "Untitled",
+          type: "video",
+          status: "draft",
+        });
+        storyId = newStory.id;
+        setAssociatedStoryId(storyId);
+        associatedStoryIdRef.current = storyId;
+        if (gid) supaUpdateGeneration(gid, { story_id: storyId } as Record<string, unknown>).catch(console.error);
+      } catch (e) {
+        console.error("Failed to auto-create story:", e);
+      }
+    }
+
+    // ── Step 2: Sync AI-generated chars/locs to DB, remap IDs ──
+    const idMap: Record<string, string> = {};
+    let workingStory = story;
+
+    if (storyId) {
+      // Save AI-generated characters to DB
+      for (const char of story.characters) {
+        if (char.origin !== "story") {
+          try {
+            const dbChar = await createStoryCharacter(storyId, {
+              name: char.name, age: char.age, gender: char.gender,
+              description: char.appearance, role: char.role, visual_style: style,
+            });
+            idMap[char.id] = dbChar.id;
+          } catch (e) {
+            console.warn(`Failed to sync char ${char.name} to DB:`, e);
+          }
+        }
+      }
+
+      // Save AI-generated locations to DB
+      for (const loc of story.locations) {
+        const existsInDb = storyLibraryLocs.some((l) => l.id === loc.id);
+        if (!existsInDb) {
+          try {
+            const dbLoc = await createStoryLocation(storyId, {
+              name: loc.name, description: loc.description,
+              atmosphere: loc.atmosphere, visual_style: style,
+            });
+            idMap[loc.id] = dbLoc.id;
+          } catch (e) {
+            console.warn(`Failed to sync loc ${loc.name} to DB:`, e);
+          }
+        }
+      }
+
+      // Apply ID remapping to story object
+      if (Object.keys(idMap).length > 0) {
+        workingStory = remapStoryIds(story, idMap);
+        setStory(workingStory);
+      }
+    }
+
+    // ── Step 3: Build character image states ──
     const findCharImgSource = (char: Character) => {
       const nameLower = char.name.toLowerCase();
       const byId = storyLibraryChars.find((c) => c.id === char.id)
         || selectedChars.find((c) => c.id === char.id);
-      if (byId?.imageBase64) return byId;
+      if (byId && (byId.imageBase64 || byId.imageUrl)) return byId;
       const byName = storyLibraryChars.find((c) => c.name.toLowerCase() === nameLower)
         || selectedChars.find((c) => c.name.toLowerCase() === nameLower);
-      if (byName?.imageBase64) return byName;
+      if (byName && (byName.imageBase64 || byName.imageUrl)) return byName;
       return null;
     };
 
     const charStates: Record<string, CharacterImageState> = {};
-    story.characters.forEach((char) => {
+    workingStory.characters.forEach((char) => {
       const imgSource = findCharImgSource(char);
       if (imgSource) {
         charStates[char.id] = {
-          image: { type: "character", image_base64: imgSource.imageBase64!, mime_type: imgSource.imageMimeType, prompt_used: "" },
+          image: {
+            type: "character",
+            image_base64: imgSource.imageBase64 || undefined,
+            image_url: imgSource.imageUrl || undefined,
+            mime_type: imgSource.imageMimeType,
+            prompt_used: "",
+          },
           images: [], selectedIndex: 0, approved: true,
           isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [],
         };
@@ -1769,24 +1717,30 @@ export default function CreateEpisodePage() {
       }
     });
 
-    // Helper: find location image source by ID first, then fallback to name match
+    // ── Step 4: Build location image states ──
     const findLocImgSource = (loc: Location) => {
       const nameLower = (loc.name || "").toLowerCase();
       const byId = storyLibraryLocs.find((l) => l.id === loc.id)
         || (selectedLocation?.id === loc.id ? selectedLocation : null);
-      if (byId?.imageBase64) return byId;
+      if (byId && (byId.imageBase64 || byId.imageUrl)) return byId;
       const byName = storyLibraryLocs.find((l) => (l.name || "").toLowerCase() === nameLower)
         || (selectedLocation && (selectedLocation.name || "").toLowerCase() === nameLower ? selectedLocation : null);
-      if (byName?.imageBase64) return byName;
+      if (byName && (byName.imageBase64 || byName.imageUrl)) return byName;
       return null;
     };
 
     const locStates: Record<string, LocationImageState> = {};
-    story.locations.forEach((loc) => {
+    workingStory.locations.forEach((loc) => {
       const imgSource = findLocImgSource(loc);
       if (imgSource) {
         locStates[loc.id] = {
-          image: { type: "location", image_base64: imgSource.imageBase64!, mime_type: imgSource.imageMimeType, prompt_used: "" },
+          image: {
+            type: "location",
+            image_base64: imgSource.imageBase64 || undefined,
+            image_url: imgSource.imageUrl || undefined,
+            mime_type: imgSource.imageMimeType,
+            prompt_used: "",
+          },
           images: [], selectedIndex: 0, approved: true,
           isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [],
         };
@@ -1798,26 +1752,28 @@ export default function CreateEpisodePage() {
       }
     });
 
-    // Upload story-library images to Storage in background, then update state with URLs
-    if (gid) {
+    // ── Step 5: Upload library images to Storage + save URLs to DB ──
+    if (gid && storyId) {
       const uploadTasks: Promise<void>[] = [];
       for (const [charId, state] of Object.entries(charStates)) {
         if (state.image?.image_base64) {
           uploadTasks.push((async () => {
-            try {
-              const url = await uploadGenerationAsset(gid, `characters/${charId}/${Date.now()}_0`, state.image!.image_base64!, state.image!.mime_type);
+            const url = await uploadGenerationAsset(gid, `characters/${charId}/${Date.now()}_0`, state.image!.image_base64!, state.image!.mime_type);
+            if (url) {
               state.image!.image_url = url;
-            } catch {}
+              updateStoryCharacter(storyId!, charId, { image_url: url, image_base64: state.image!.image_base64 || null, image_mime_type: state.image!.mime_type }).catch(console.warn);
+            }
           })());
         }
       }
       for (const [locId, state] of Object.entries(locStates)) {
         if (state.image?.image_base64) {
           uploadTasks.push((async () => {
-            try {
-              const url = await uploadGenerationAsset(gid, `locations/${locId}/${Date.now()}_0`, state.image!.image_base64!, state.image!.mime_type);
+            const url = await uploadGenerationAsset(gid, `locations/${locId}/${Date.now()}_0`, state.image!.image_base64!, state.image!.mime_type);
+            if (url) {
               state.image!.image_url = url;
-            } catch {}
+              updateStoryLocation(storyId!, locId, { image_url: url, image_base64: state.image!.image_base64 || null, image_mime_type: state.image!.mime_type }).catch(console.warn);
+            }
           })());
         }
       }
@@ -1826,7 +1782,7 @@ export default function CreateEpisodePage() {
 
     setCharacterImages(charStates);
     setLocationImages(locStates);
-    saveNow({ characterImages: charStates, locationImages: locStates }, "visuals");
+    saveNow({ characterImages: charStates, locationImages: locStates, story: workingStory }, "visuals");
   };
 
   // Character visuals modal save handler
@@ -1840,15 +1796,14 @@ export default function CreateEpisodePage() {
     // Compute updated character images so we can pass fresh data to saveNow
     let updatedCharacterImages = characterImages;
     if (data.imageBase64) {
-      let imgUrl: string | undefined;
-      if (generationIdRef.current) {
-        try { imgUrl = await uploadGenerationAsset(generationIdRef.current, `characters/${charId}/${Date.now()}_0`, data.imageBase64, data.imageMimeType); } catch {}
-      }
+      const imgUrl = generationIdRef.current
+        ? await uploadGenerationAsset(generationIdRef.current, `characters/${charId}/${Date.now()}_0`, data.imageBase64, data.imageMimeType)
+        : null;
       updatedCharacterImages = {
         ...characterImages,
         [charId]: {
           ...(characterImages[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-          image: { type: "character" as const, image_url: imgUrl, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
+          image: { type: "character" as const, image_url: imgUrl || undefined, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
           approved: true,
           isGenerating: false,
           error: "",
@@ -1857,15 +1812,30 @@ export default function CreateEpisodePage() {
       setCharacterImages(updatedCharacterImages);
     }
 
-    // If story-origin char, push visual changes back to story library
+    // Save char image to story library (persists across sessions)
     const char = story.characters.find((c) => c.id === charId);
-    if (char?.origin === "story" && associatedStoryId) {
+    const charImgUrl = updatedCharacterImages[charId]?.image?.image_url || null;
+    if (associatedStoryId) {
       try {
-        await updateStoryCharacter(associatedStoryId, charId, {
-          description: data.description,
-          image_base64: data.imageBase64,
-          image_mime_type: data.imageMimeType,
-        });
+        if (char?.origin === "story") {
+          await updateStoryCharacter(associatedStoryId, charId, {
+            description: data.description,
+            image_base64: data.imageBase64,
+            image_url: charImgUrl,
+            image_mime_type: data.imageMimeType,
+          });
+        } else if (char) {
+          await createStoryCharacter(associatedStoryId, {
+            name: char.name,
+            age: char.age,
+            gender: char.gender,
+            description: data.description,
+            role: data.role,
+            image_base64: data.imageBase64,
+            image_url: charImgUrl,
+            image_mime_type: data.imageMimeType,
+          });
+        }
       } catch { /* non-fatal */ }
     }
 
@@ -1885,15 +1855,14 @@ export default function CreateEpisodePage() {
     // Compute updated location images so we can pass fresh data to saveNow
     let updatedLocationImages = locationImages;
     if (data.imageBase64) {
-      let imgUrl: string | undefined;
-      if (generationIdRef.current) {
-        try { imgUrl = await uploadGenerationAsset(generationIdRef.current, `locations/${locId}/${Date.now()}_0`, data.imageBase64, data.imageMimeType); } catch {}
-      }
+      const imgUrl = generationIdRef.current
+        ? await uploadGenerationAsset(generationIdRef.current, `locations/${locId}/${Date.now()}_0`, data.imageBase64, data.imageMimeType)
+        : null;
       updatedLocationImages = {
         ...locationImages,
         [locId]: {
           ...(locationImages[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
-          image: { type: "location" as const, image_url: imgUrl, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
+          image: { type: "location" as const, image_url: imgUrl || undefined, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
           approved: true,
           isGenerating: false,
           error: "",
@@ -1902,13 +1871,15 @@ export default function CreateEpisodePage() {
       setLocationImages(updatedLocationImages);
     }
 
-    // If story has this location and it's from library, update it
+    // Save loc image to story library (persists across sessions)
+    const locImgUrl = updatedLocationImages[locId]?.image?.image_url || null;
     if (associatedStoryId) {
       try {
         await updateStoryLocation(associatedStoryId, locId, {
           description: data.description,
           atmosphere: data.atmosphere,
           image_base64: data.imageBase64,
+          image_url: locImgUrl,
           image_mime_type: data.imageMimeType,
         });
       } catch { /* non-fatal */ }
@@ -2046,33 +2017,37 @@ export default function CreateEpisodePage() {
     }
   };
 
-  // Updated buildApprovedVisuals — no protagonist dependency
+  // Updated buildApprovedVisuals — sends both image_base64 and image_url
+  // Backend will use base64 if available, or fetch from URL as fallback
   const buildApprovedVisuals = () => {
     if (!story) return null;
 
-    const allCharacterImages: { image_base64: string; mime_type: string }[] = [];
-    const characterImageMap: Record<string, { image_base64: string; mime_type: string }> = {};
+    type ImgRef = { image_base64: string | null; image_url: string | null; mime_type: string };
+    const allCharacterImages: ImgRef[] = [];
+    const characterImageMap: Record<string, ImgRef> = {};
     story.characters.forEach((char) => {
       const charState = characterImages[char.id];
-      if (charState?.image?.image_base64) {
-        const ref = { image_base64: charState.image.image_base64, mime_type: charState.image.mime_type };
+      const img = charState?.image;
+      if (img && (img.image_base64 || img.image_url)) {
+        const ref: ImgRef = { image_base64: img.image_base64 || null, image_url: img.image_url || null, mime_type: img.mime_type };
         allCharacterImages.push(ref);
         characterImageMap[char.id] = ref;
       }
     });
 
-    const locImages: Record<string, { image_base64: string; mime_type: string }> = {};
+    const locImages: Record<string, ImgRef> = {};
     const locDescs: Record<string, string> = {};
     story.locations.forEach((loc) => {
       const locState = locationImages[loc.id];
-      if (locState?.image?.image_base64) {
-        locImages[loc.id] = { image_base64: locState.image.image_base64, mime_type: locState.image.mime_type };
+      const img = locState?.image;
+      if (img && (img.image_base64 || img.image_url)) {
+        locImages[loc.id] = { image_base64: img.image_base64 || null, image_url: img.image_url || null, mime_type: img.mime_type };
       }
       locDescs[loc.id] = `${loc.description}. ${loc.atmosphere}`;
     });
 
     // Backward compat: setting_image from first location
-    let settingImg = undefined;
+    let settingImg: ImgRef | undefined = undefined;
     let settingDesc = "";
     if (Object.keys(locImages).length > 0) {
       const firstLocId = Object.keys(locImages)[0];
@@ -2108,6 +2083,44 @@ export default function CreateEpisodePage() {
   // Phase 4: Film Generation Functions
   // ============================================================
 
+
+  // Story library fallback: fill missing char/loc images from library after restore
+  useEffect(() => {
+    if (!visualsActive || isRestoringRef.current) return;
+    if (storyLibraryChars.length > 0) {
+      setCharacterImages((prev) => {
+        let changed = false;
+        const updated = { ...prev };
+        for (const [charId, state] of Object.entries(updated)) {
+          if (!state.image && !state.isGenerating) {
+            const libChar = storyLibraryChars.find(c => c.id === charId);
+            if (libChar?.imageBase64) {
+              updated[charId] = { ...state, image: { type: "character", image_base64: libChar.imageBase64, mime_type: libChar.imageMimeType, prompt_used: "" }, approved: true };
+              changed = true;
+            }
+          }
+        }
+        return changed ? updated : prev;
+      });
+    }
+    if (storyLibraryLocs.length > 0) {
+      setLocationImages((prev) => {
+        let changed = false;
+        const updated = { ...prev };
+        for (const [locId, state] of Object.entries(updated)) {
+          if (!state.image && !state.isGenerating) {
+            const libLoc = storyLibraryLocs.find(l => l.id === locId);
+            if (libLoc?.imageBase64) {
+              updated[locId] = { ...state, image: { type: "location", image_base64: libLoc.imageBase64, mime_type: libLoc.imageMimeType, prompt_used: "" }, approved: true };
+              changed = true;
+            }
+          }
+        }
+        return changed ? updated : prev;
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storyLibraryChars, storyLibraryLocs, visualsActive]);
 
   // Auto-save generation state when key milestones change
   // Debounced to avoid spamming on rapid state changes
@@ -3049,7 +3062,10 @@ export default function CreateEpisodePage() {
                       </svg>
                     )}
                     <button
-                      onClick={() => setVisualsTab(tab)}
+                      onClick={() => {
+                        setVisualsTab(tab);
+                        saveNow({ visualsTab: tab }, "visuals");
+                      }}
                       className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
                         isActive
                           ? "bg-[#1A1E2F] text-white"
@@ -3160,14 +3176,21 @@ export default function CreateEpisodePage() {
                   {/* Footer navigation */}
                   <div className="mt-10 flex items-center justify-between">
                     <button
-                      onClick={() => setVisualsActive(false)}
+                      onClick={() => {
+                        setVisualsActive(false);
+                        saveNow({ visualsActive: false }, "drafting");
+                      }}
                       className="text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
                     >
                       &larr; Back to Create Your Script
                     </button>
                     <button
-                      onClick={() => setVisualsTab("locations")}
-                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
+                      onClick={() => {
+                        setVisualsTab("locations");
+                        saveNow({ visualsTab: "locations" }, "visuals");
+                      }}
+                      disabled={!story?.characters.every(c => characterImages[c.id]?.image)}
+                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Approve &amp; Continue
                     </button>
@@ -3205,8 +3228,8 @@ export default function CreateEpisodePage() {
                         const imgState = locationImages[loc.id];
                         const hasImage = !!imgState?.image;
                         return (
-                          <div key={loc.id} className="flex-shrink-0 w-[300px]">
-                            <div className="group relative aspect-video bg-[#1A1E2F] rounded-2xl overflow-hidden">
+                          <div key={loc.id} className="flex-shrink-0 w-[220px]">
+                            <div className="group relative aspect-[9/16] bg-[#1A1E2F] rounded-2xl overflow-hidden">
                               {hasImage && imgState?.image ? (
                                 <>
                                   <img
@@ -3262,7 +3285,10 @@ export default function CreateEpisodePage() {
 
                   <div className="mt-10 flex items-center justify-between">
                     <button
-                      onClick={() => setVisualsTab("characters")}
+                      onClick={() => {
+                        setVisualsTab("characters");
+                        saveNow({ visualsTab: "characters" }, "visuals");
+                      }}
                       className="text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
                     >
                       &larr; Back to Your Characters
@@ -3270,11 +3296,13 @@ export default function CreateEpisodePage() {
                     <button
                       onClick={() => {
                         setVisualsTab("scenes");
+                        saveNow({ visualsTab: "scenes" }, "visuals");
                         if (Object.keys(sceneImages).length === 0) {
                           fetchSceneDescriptions();
                         }
                       }}
-                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
+                      disabled={!story?.locations.every(l => locationImages[l.id]?.image)}
+                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Approve &amp; Continue
                     </button>
@@ -3390,7 +3418,10 @@ export default function CreateEpisodePage() {
 
                   <div className="mt-10 flex items-center justify-between">
                     <button
-                      onClick={() => setVisualsTab("locations")}
+                      onClick={() => {
+                        setVisualsTab("locations");
+                        saveNow({ visualsTab: "locations" }, "visuals");
+                      }}
                       className="text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
                     >
                       &larr; Back to Your Locations
@@ -3605,7 +3636,7 @@ export default function CreateEpisodePage() {
               <h2 className="text-xl font-semibold text-white">4. Creating Your Film</h2>
               {(film.status === "ready" || film.status === "failed") && (
                 <button
-                  onClick={() => { setVisualsActive(true); setVisualsTab("scenes"); }}
+                  onClick={() => { setVisualsActive(true); setVisualsTab("scenes"); saveNow({ visualsActive: true, visualsTab: "scenes" }, "visuals"); }}
                   className="text-sm text-[#ADADAD] hover:text-white transition-colors"
                 >
                   ← Visuals

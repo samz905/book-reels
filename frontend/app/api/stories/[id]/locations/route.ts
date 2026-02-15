@@ -98,6 +98,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     atmosphere: body.atmosphere || "",
     visual_style: body.visual_style || null,
     image_base64: body.image_base64 || null,
+    image_url: body.image_url || null,
     image_mime_type: body.image_mime_type || "image/png",
   };
 

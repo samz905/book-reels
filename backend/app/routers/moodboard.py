@@ -3,10 +3,12 @@ Moodboard generation endpoints for AI video workflow.
 Step-by-step visual direction: Characters -> Setting -> Key Moment (SPIKE)
 """
 import asyncio
+import base64
 import uuid
 from typing import Optional, Literal, List, Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import httpx
 
 from ..core import generate_image, generate_image_with_references, COST_IMAGE_GENERATION
 from .story import Story, Character, Setting, Location, Beat
@@ -39,8 +41,21 @@ class MoodboardImage(BaseModel):
 
 class ReferenceImage(BaseModel):
     """A reference image for visual consistency."""
-    image_base64: str
+    image_base64: Optional[str] = None
+    image_url: Optional[str] = None
     mime_type: str
+
+
+async def resolve_ref_base64(ref: "ReferenceImage") -> str:
+    """Return base64 for a ReferenceImage, fetching from URL if needed."""
+    if ref.image_base64:
+        return ref.image_base64
+    if ref.image_url:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(ref.image_url, timeout=30)
+            resp.raise_for_status()
+            return base64.b64encode(resp.content).decode()
+    raise ValueError("ReferenceImage has neither image_base64 nor image_url")
 
 
 # --- Protagonist (Style Anchor) ---
@@ -154,6 +169,21 @@ class ApprovedVisuals(BaseModel):
     character_descriptions: List[str]  # Appearance descriptions from approved chars
     setting_description: Optional[str] = None  # DEPRECATED - backward compat
     location_descriptions: Dict[str, str] = {}  # location_id -> description
+
+    async def resolve_urls(self) -> None:
+        """Pre-fetch base64 for any ReferenceImage that only has a URL."""
+        refs: List[ReferenceImage] = []
+        refs.extend(self.character_images)
+        refs.extend(self.character_image_map.values())
+        if self.setting_image:
+            refs.append(self.setting_image)
+        refs.extend(self.location_images.values())
+        for ref in refs:
+            if not ref.image_base64 and ref.image_url:
+                try:
+                    ref.image_base64 = await resolve_ref_base64(ref)
+                except Exception as e:
+                    print(f"Warning: Failed to fetch image from URL: {e}")
 
 
 class KeyMomentImage(BaseModel):
@@ -990,6 +1020,7 @@ async def generate_key_moment(request: GenerateKeyMomentRequest):
     try:
         story = request.story
         approved = request.approved_visuals
+        await approved.resolve_urls()
 
         # Pick 3 distinct beats across the story arc
         key_beats = get_key_beats(story, count=3)
@@ -1095,6 +1126,7 @@ async def refine_key_moment(request: RefineKeyMomentRequest):
     try:
         story = request.story
         approved = request.approved_visuals
+        await approved.resolve_urls()
 
         # Build reference images list
         reference_images: List[dict] = []
@@ -1202,6 +1234,7 @@ async def generate_scene_images(request: GenerateSceneImagesRequest):
     try:
         story = request.story
         approved = request.approved_visuals
+        await approved.resolve_urls()
         style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
 
         # Build a lookup: scene_number -> Beat (prefer scenes converted to beats, fallback to beats)
@@ -1363,6 +1396,7 @@ async def refine_scene_image(request: RefineSceneImageRequest):
     try:
         story = request.story
         approved = request.approved_visuals
+        await approved.resolve_urls()
         style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
 
         # Find the matching beat

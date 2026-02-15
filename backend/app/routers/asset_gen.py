@@ -43,7 +43,8 @@ STYLE_PREFIXES = {
 # ============================================================
 
 class ReferenceImage(BaseModel):
-    image_base64: str
+    image_base64: Optional[str] = None
+    image_url: Optional[str] = None
     mime_type: str
 
 
