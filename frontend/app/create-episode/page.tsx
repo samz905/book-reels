@@ -612,11 +612,15 @@ export default function CreateEpisodePage() {
           const sid = associatedStoryIdRef.current;
           const saveImg = img || (imgs && imgs[0]);
           if (sid && saveImg) {
+            console.log(`[DB-SAVE] char_image: storyId=${sid}, charId=${charId}, hasUrl=${!!saveImg.image_url}, hasB64=${!!(saveImg.image_base64?.length)}`);
             updateStoryCharacter(sid, charId, {
               image_url: saveImg.image_url || null,
               image_base64: saveImg.image_base64 || null,
               image_mime_type: saveImg.mime_type,
-            }).catch((e) => console.warn("DB char image save failed:", e));
+            }).then(() => console.log(`[DB-SAVE] char_image SUCCESS: charId=${charId}`))
+              .catch((e) => console.error(`[DB-SAVE] char_image FAILED: charId=${charId}, storyId=${sid}`, e));
+          } else {
+            console.error(`[DB-SAVE] char_image SKIPPED: sid=${sid}, charId=${charId}, hasSaveImg=${!!saveImg}`);
           }
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, characters: prev.characters + (result.cost_usd as number) }));
@@ -637,11 +641,15 @@ export default function CreateEpisodePage() {
           // Persist refined image to story_characters DB table immediately
           const sid = associatedStoryIdRef.current;
           if (sid) {
+            console.log(`[DB-SAVE] refine_char: storyId=${sid}, charId=${charId}`);
             updateStoryCharacter(sid, charId, {
               image_url: img.image_url || null,
               image_base64: img.image_base64 || null,
               image_mime_type: img.mime_type,
-            }).catch((e) => console.warn("DB char image save failed:", e));
+            }).then(() => console.log(`[DB-SAVE] refine_char SUCCESS: charId=${charId}`))
+              .catch((e) => console.error(`[DB-SAVE] refine_char FAILED: charId=${charId}, storyId=${sid}`, e));
+          } else {
+            console.error(`[DB-SAVE] refine_char SKIPPED: sid=null, charId=${charId}`);
           }
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, characters: prev.characters + (result.cost_usd as number) }));
@@ -666,11 +674,15 @@ export default function CreateEpisodePage() {
           const sid = associatedStoryIdRef.current;
           const saveImg = img || (imgs && imgs[0]);
           if (sid && saveImg) {
+            console.log(`[DB-SAVE] loc_image: storyId=${sid}, locId=${locId}`);
             updateStoryLocation(sid, locId, {
               image_url: saveImg.image_url || null,
               image_base64: saveImg.image_base64 || null,
               image_mime_type: saveImg.mime_type,
-            }).catch((e) => console.warn("DB loc image save failed:", e));
+            }).then(() => console.log(`[DB-SAVE] loc_image SUCCESS: locId=${locId}`))
+              .catch((e) => console.error(`[DB-SAVE] loc_image FAILED: locId=${locId}, storyId=${sid}`, e));
+          } else {
+            console.error(`[DB-SAVE] loc_image SKIPPED: sid=${sid}, locId=${locId}, hasSaveImg=${!!saveImg}`);
           }
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, locations: prev.locations + (result.cost_usd as number) }));
@@ -1338,9 +1350,12 @@ export default function CreateEpisodePage() {
         getStoryCharacters(storyId),
         getStoryLocations(storyId),
       ]);
+      console.log(`[FETCH-LIB] storyId=${storyId}, chars=${chars.length}, locs=${locs.length}`, chars.map(c => ({
+        id: c.id, name: c.name, hasImg: !!(c.imageBase64?.length || c.imageUrl), saved: c.savedToStory,
+      })));
       setStoryLibraryChars(chars);
       setStoryLibraryLocs(locs);
-    } catch { /* ignore — story may not have any yet */ }
+    } catch (e) { console.error("[FETCH-LIB] error:", e); }
   };
 
   // Handle story selection from picker → show episode modal next
@@ -1397,9 +1412,15 @@ export default function CreateEpisodePage() {
             getStoryCharacters(data.story_id),
             getStoryLocations(data.story_id),
           ]);
+          console.log(`[RESTORE] DB chars (${dbChars.length}):`, dbChars.map(c => ({
+            id: c.id, name: c.name, hasBase64: !!(c.imageBase64?.length), hasUrl: !!c.imageUrl, savedToStory: c.savedToStory,
+          })));
+          console.log(`[RESTORE] DB locs (${dbLocs.length}):`, dbLocs.map(l => ({
+            id: l.id, name: l.name, hasBase64: !!(l.imageBase64?.length), hasUrl: !!l.imageUrl,
+          })));
           setStoryLibraryChars(dbChars);
           setStoryLibraryLocs(dbLocs);
-        } catch { /* non-fatal — fall back to JSONB */ }
+        } catch (e) { console.error("[RESTORE] DB fetch failed:", e); }
       }
       // Fetch storyboards from DB (linked to generation, not story)
       let dbStoryboards: EpisodeStoryboardFE[] = [];
@@ -1782,12 +1803,15 @@ export default function CreateEpisodePage() {
 
       // Apply ID remapping to story object
       if (Object.keys(idMap).length > 0) {
+        console.log(`[BUILD-VIS] ID remapping:`, idMap);
         workingStory = remapStoryIds(story, idMap);
         setStory(workingStory);
       }
 
       // Refresh library state so Save to Library button works with new DB entries
-      fetchStoryLibrary(storyId);
+      console.log(`[BUILD-VIS] Fetching story library for storyId=${storyId}`);
+      await fetchStoryLibrary(storyId);
+      console.log(`[BUILD-VIS] fetchStoryLibrary completed`);
     }
 
     // ── Step 3: Build character image states ──
@@ -1923,15 +1947,22 @@ export default function CreateEpisodePage() {
     // Save char image to story library (persists across sessions)
     // All chars already exist in DB after startBuildVisuals — always update, never create
     const charImgUrl = updatedCharacterImages[charId]?.image?.image_url || null;
-    if (associatedStoryId) {
+    const saveStoryId = associatedStoryId || associatedStoryIdRef.current;
+    if (saveStoryId) {
+      console.log(`[DB-SAVE] handleVisualCharSave: storyId=${saveStoryId}, charId=${charId}, hasB64=${!!(data.imageBase64?.length)}, hasUrl=${!!charImgUrl}`);
       try {
-        await updateStoryCharacter(associatedStoryId, charId, {
+        await updateStoryCharacter(saveStoryId, charId, {
           description: data.description,
           image_base64: data.imageBase64,
           image_url: charImgUrl,
           image_mime_type: data.imageMimeType,
         });
-      } catch { /* non-fatal */ }
+        console.log(`[DB-SAVE] handleVisualCharSave SUCCESS: charId=${charId}`);
+      } catch (e) {
+        console.error(`[DB-SAVE] handleVisualCharSave FAILED: charId=${charId}, storyId=${saveStoryId}`, e);
+      }
+    } else {
+      console.error(`[DB-SAVE] handleVisualCharSave SKIPPED: associatedStoryId=${associatedStoryId}, ref=${associatedStoryIdRef.current}, charId=${charId}`);
     }
 
     setIsSavingVisualChar(false);
@@ -1968,16 +1999,23 @@ export default function CreateEpisodePage() {
 
     // Save loc image to story library (persists across sessions)
     const locImgUrl = updatedLocationImages[locId]?.image?.image_url || null;
-    if (associatedStoryId) {
+    const saveLocStoryId = associatedStoryId || associatedStoryIdRef.current;
+    if (saveLocStoryId) {
+      console.log(`[DB-SAVE] handleVisualLocSave: storyId=${saveLocStoryId}, locId=${locId}, hasB64=${!!(data.imageBase64?.length)}, hasUrl=${!!locImgUrl}`);
       try {
-        await updateStoryLocation(associatedStoryId, locId, {
+        await updateStoryLocation(saveLocStoryId, locId, {
           description: data.description,
           atmosphere: data.atmosphere,
           image_base64: data.imageBase64,
           image_url: locImgUrl,
           image_mime_type: data.imageMimeType,
         });
-      } catch { /* non-fatal */ }
+        console.log(`[DB-SAVE] handleVisualLocSave SUCCESS: locId=${locId}`);
+      } catch (e) {
+        console.error(`[DB-SAVE] handleVisualLocSave FAILED: locId=${locId}, storyId=${saveLocStoryId}`, e);
+      }
+    } else {
+      console.error(`[DB-SAVE] handleVisualLocSave SKIPPED: associatedStoryId=${associatedStoryId}, ref=${associatedStoryIdRef.current}`);
     }
 
     setIsSavingVisualLoc(false);
@@ -1988,17 +2026,28 @@ export default function CreateEpisodePage() {
   // Save an AI-generated char or loc to the story library
   const handleSaveToLibrary = async (type: "character" | "location", id: string) => {
     const sid = associatedStoryIdRef.current;
-    if (!sid) return;
+    console.log(`[SAVE-TO-LIB] type=${type}, id=${id}, sid=${sid}, libCharsCount=${storyLibraryChars.length}, libCharIds=${storyLibraryChars.map(c => c.id).join(",")}`);
+    if (!sid) {
+      console.error(`[SAVE-TO-LIB] ABORTED: associatedStoryIdRef.current is null! associatedStoryId state=${associatedStoryId}`);
+      return;
+    }
     try {
       if (type === "character") {
+        const charInLib = storyLibraryChars.find(c => c.id === id);
+        console.log(`[SAVE-TO-LIB] charInLib=${!!charInLib}, charInLib.savedToStory=${charInLib?.savedToStory}`);
         await updateStoryCharacter(sid, id, { saved_to_story: true });
-        setStoryLibraryChars(prev => prev.map(c => c.id === id ? { ...c, savedToStory: true } : c));
+        console.log(`[SAVE-TO-LIB] API call SUCCESS for char ${id}`);
+        setStoryLibraryChars(prev => {
+          const found = prev.find(c => c.id === id);
+          console.log(`[SAVE-TO-LIB] setState: prevLength=${prev.length}, found=${!!found}`);
+          return prev.map(c => c.id === id ? { ...c, savedToStory: true } : c);
+        });
       } else {
         await updateStoryLocation(sid, id, { saved_to_story: true });
         setStoryLibraryLocs(prev => prev.map(l => l.id === id ? { ...l, savedToStory: true } : l));
       }
     } catch (e) {
-      console.warn("Failed to save to library:", e);
+      console.error("[SAVE-TO-LIB] FAILED:", e);
     }
   };
 
