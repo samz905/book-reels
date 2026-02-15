@@ -3295,8 +3295,8 @@ export default function CreateEpisodePage() {
                             <div className="mt-3">
                               <p className="text-white text-sm font-medium truncate">{char.name}</p>
                               <p className="text-[#ADADAD] text-xs">Role: {char.role === "protagonist" ? "Main Character" : char.role === "antagonist" ? "Antagonist" : "Supporting"}</p>
-                              {hasImage && char.origin !== "story" && (() => {
-                                const isSaved = storyLibraryChars.find(c => c.id === char.id)?.savedToStory;
+                              {hasImage && (() => {
+                                const isSaved = char.origin === "story" || storyLibraryChars.find(c => c.id === char.id)?.savedToStory;
                                 return isSaved ? (
                                   <span className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>
