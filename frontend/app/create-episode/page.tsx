@@ -4007,7 +4007,7 @@ export default function CreateEpisodePage() {
                             }
                           }}
                           className="ml-auto w-7 h-7 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors"
-                          title="Edit script"
+                          title="Edit dialogue"
                         >
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="#B8B6FC">
                             <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
@@ -4020,21 +4020,46 @@ export default function CreateEpisodePage() {
                         <p className="text-white/70 text-sm italic mb-3 leading-relaxed">{currentScene.action}</p>
                       )}
 
-                      {/* Dialogue */}
+                      {/* Dialogue — inline editable lines */}
                       {currentScene.dialogue && (
                         <div className="mb-4 space-y-1">
-                          {currentScene.dialogue.split("\n").map((line, li) => (
-                            <p key={li} className="text-[#ADADAD] text-sm">
-                              {line.includes(":") ? (
-                                <>
-                                  <span className="text-white font-medium">{line.split(":")[0]}:</span>{" "}
-                                  &ldquo;{line.split(":").slice(1).join(":").trim()}&rdquo;
-                                </>
-                              ) : (
-                                <>&ldquo;{line}&rdquo;</>
-                              )}
-                            </p>
-                          ))}
+                          {(() => {
+                            const isEditing = editingSceneIndex !== null && editSceneDraft && editingSceneIndex === scenes.findIndex((s) => s.scene_number === selectedClipScene);
+                            const dialogueLines = currentScene.dialogue.split("\n").filter(Boolean);
+                            return dialogueLines.map((line, li) => {
+                              const colonIdx = line.indexOf(":");
+                              const charName = colonIdx > 0 ? line.slice(0, colonIdx).trim() : "";
+                              const lineText = colonIdx > 0 ? line.slice(colonIdx + 1).trim() : line.trim();
+                              return (
+                                <div key={li} className="text-[#ADADAD] text-sm">
+                                  {charName && <span className="text-white font-medium">{charName}: </span>}
+                                  {isEditing ? (
+                                    <input
+                                      value={(() => {
+                                        const draftLines = (editSceneDraft.dialogue || "").split("\n").filter(Boolean);
+                                        const dl = draftLines[li];
+                                        if (!dl) return lineText;
+                                        const ci = dl.indexOf(":");
+                                        return ci > 0 ? dl.slice(ci + 1).trim() : dl.trim();
+                                      })()}
+                                      onChange={(e) => {
+                                        const draftLines = (editSceneDraft.dialogue || "").split("\n").filter(Boolean);
+                                        // Rebuild this line preserving the character name
+                                        const dl = draftLines[li] || line;
+                                        const ci = dl.indexOf(":");
+                                        const cn = ci > 0 ? dl.slice(0, ci).trim() : "";
+                                        draftLines[li] = cn ? `${cn}: ${e.target.value}` : e.target.value;
+                                        setEditSceneDraft({ ...editSceneDraft, dialogue: draftLines.join("\n") });
+                                      }}
+                                      className="inline-block bg-[#262626] text-[#ADADAD] text-sm rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] w-[calc(100%-100px)]"
+                                    />
+                                  ) : (
+                                    <>&ldquo;{lineText}&rdquo;</>
+                                  )}
+                                </div>
+                              );
+                            });
+                          })()}
                         </div>
                       )}
 
@@ -4066,158 +4091,21 @@ export default function CreateEpisodePage() {
                       )}
 
 
-                      {/* Edit mode (full form matching Step 1) */}
+                      {/* Edit mode — dialogue lines only (storyboards already generated) */}
                       {editingSceneIndex !== null && editSceneDraft && editingSceneIndex === scenes.findIndex((s) => s.scene_number === selectedClipScene) && (
-                        <div className="bg-[#1A1E2F] rounded-xl p-4 mb-4 space-y-3">
-                          {/* Title + Duration */}
-                          <div className="flex gap-2">
-                            <input
-                              value={editSceneDraft.title}
-                              onChange={(e) => setEditSceneDraft({ ...editSceneDraft, title: e.target.value })}
-                              className="flex-1 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                              placeholder="Scene title..."
-                            />
-                            <select
-                              value={editSceneDraft.duration}
-                              onChange={(e) => setEditSceneDraft({ ...editSceneDraft, duration: e.target.value })}
-                              className="w-28 bg-[#262626] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                            >
-                              {[6,7,8,9].map(s => <option key={s} value={`${s} seconds`}>{s}s</option>)}
-                            </select>
-                          </div>
-                          {/* Scene heading */}
-                          <input
-                            value={editSceneDraft.scene_heading || ""}
-                            onChange={(e) => setEditSceneDraft({ ...editSceneDraft, scene_heading: e.target.value })}
-                            placeholder="INT. KITCHEN - NIGHT"
-                            className="w-full bg-[#262626] text-white/50 text-xs font-mono rounded px-2 py-1 placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                          />
-                          {/* Characters on screen (multi-select) */}
-                          <div>
-                            <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Characters</label>
-                            <div className="flex flex-wrap gap-1">
-                              {story.characters.map(c => {
-                                const isIn = (editSceneDraft.characters_on_screen || []).includes(c.id);
-                                return (
-                                  <button
-                                    key={c.id}
-                                    onClick={() => {
-                                      const updated = isIn
-                                        ? editSceneDraft.characters_on_screen.filter((id: string) => id !== c.id)
-                                        : [...(editSceneDraft.characters_on_screen || []), c.id];
-                                      setEditSceneDraft({ ...editSceneDraft, characters_on_screen: updated });
-                                    }}
-                                    className={`text-xs px-2 py-1 rounded-full border transition-colors ${
-                                      isIn ? "border-[#B8B6FC] text-[#B8B6FC] bg-[#B8B6FC]/10" : "border-white/20 text-white/50 hover:border-white/40"
-                                    }`}
-                                  >
-                                    {c.name}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                          {/* Setting (single select) */}
-                          <div>
-                            <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Setting</label>
-                            <select
-                              value={editSceneDraft.setting_id}
-                              onChange={(e) => setEditSceneDraft({ ...editSceneDraft, setting_id: e.target.value })}
-                              className="w-full bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                            >
-                              {story.locations.map(loc => (
-                                <option key={loc.id} value={loc.id}>{loc.name || loc.id}</option>
-                              ))}
-                            </select>
-                          </div>
-                          {/* Action */}
-                          <div>
-                            <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Action</label>
-                            <textarea
-                              value={editSceneDraft.action}
-                              onChange={(e) => setEditSceneDraft({ ...editSceneDraft, action: e.target.value })}
-                              className="w-full bg-[#262626] text-white/70 text-sm italic rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
-                              rows={2}
-                              placeholder="What characters physically do..."
-                            />
-                          </div>
-                          {/* Dialogue — structured per-line editor */}
-                          <div>
-                            <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Dialogue</label>
-                            {(() => {
-                              const charsInScene = (editSceneDraft.characters_on_screen || []).map(id => story.characters.find(c => c.id === id)).filter(Boolean);
-                              const resolveChar = (raw: string) => {
-                                const lower = raw.toLowerCase();
-                                return charsInScene.find(c => c!.name.toLowerCase() === lower || c!.name.toLowerCase().includes(lower) || lower.includes(c!.name.toLowerCase()))?.name || raw;
-                              };
-                              const lines = (editSceneDraft.dialogue || "").split("\n").filter(Boolean).map(raw => {
-                                const idx = raw.indexOf(":");
-                                return idx > 0 ? { character: resolveChar(raw.slice(0, idx).trim()), line: raw.slice(idx + 1).trim() } : { character: "", line: raw.trim() };
-                              });
-                              if (lines.length === 0) lines.push({ character: "", line: "" });
-                              const updateLines = (updated: { character: string; line: string }[]) => {
-                                const serialized = updated.filter(l => l.character || l.line).map(l => l.character ? `${l.character}: ${l.line}` : l.line).join("\n");
-                                setEditSceneDraft({ ...editSceneDraft, dialogue: serialized || null });
-                              };
-                              return (
-                                <div className="space-y-2">
-                                  {lines.map((dl, i) => (
-                                    <div key={i} className="flex gap-2 items-start">
-                                      <select
-                                        value={dl.character}
-                                        onChange={(e) => { const u = [...lines]; u[i] = { ...u[i], character: e.target.value }; updateLines(u); }}
-                                        className="w-[120px] flex-shrink-0 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                                      >
-                                        <option value="">Character...</option>
-                                        {charsInScene.map(c => <option key={c!.id} value={c!.name}>{c!.name}</option>)}
-                                      </select>
-                                      <input
-                                        value={dl.line}
-                                        onChange={(e) => { const u = [...lines]; u[i] = { ...u[i], line: e.target.value }; updateLines(u); }}
-                                        className="flex-1 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                                        placeholder="What they say..."
-                                      />
-                                      {lines.length > 1 && (
-                                        <button onClick={() => { const u = lines.filter((_, j) => j !== i); updateLines(u); }} className="text-white/30 hover:text-red-400 text-sm px-1">✕</button>
-                                      )}
-                                    </div>
-                                  ))}
-                                  <button
-                                    onClick={() => updateLines([...lines, { character: charsInScene[0]?.name || "", line: "" }])}
-                                    className="text-[10px] text-[#B8B6FC] hover:text-white transition-colors"
-                                  >
-                                    + Add line
-                                  </button>
-                                </div>
-                              );
-                            })()}
-                          </div>
-                          {/* Image prompt (collapsible) */}
-                          <details className="group">
-                            <summary className="text-[10px] text-white/40 uppercase tracking-wider cursor-pointer hover:text-white/60">Image Prompt</summary>
-                            <textarea
-                              value={editSceneDraft.image_prompt}
-                              onChange={(e) => setEditSceneDraft({ ...editSceneDraft, image_prompt: e.target.value })}
-                              className="w-full mt-1 bg-[#262626] text-white/60 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
-                              rows={3}
-                              placeholder="Camera sees: composition, framing, lighting..."
-                            />
-                          </details>
-                          {/* Save/Cancel */}
-                          <div className="flex gap-2 pt-2 border-t border-white/10">
-                            <button
-                              onClick={() => saveSceneEdit(editingSceneIndex, editSceneDraft)}
-                              className="px-3 py-1.5 bg-[#B8B6FC] text-black text-xs font-medium rounded-lg hover:opacity-90"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={() => { setEditingSceneIndex(null); setEditSceneDraft(null); }}
-                              className="px-3 py-1.5 bg-[#262626] text-[#ADADAD] text-xs rounded-lg hover:text-white"
-                            >
-                              Cancel
-                            </button>
-                          </div>
+                        <div className="flex gap-2 mb-4">
+                          <button
+                            onClick={() => saveSceneEdit(editingSceneIndex, editSceneDraft)}
+                            className="px-3 py-1.5 bg-[#B8B6FC] text-black text-xs font-medium rounded-lg hover:opacity-90"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => { setEditingSceneIndex(null); setEditSceneDraft(null); }}
+                            className="px-3 py-1.5 bg-[#262626] text-[#ADADAD] text-xs rounded-lg hover:text-white"
+                          >
+                            Cancel
+                          </button>
                         </div>
                       )}
 

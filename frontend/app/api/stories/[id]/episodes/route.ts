@@ -111,7 +111,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     story_id: storyId,
     number: nextNumber,
     name: body.name,
-    is_free: body.is_free ?? false,
+    is_free: body.is_free ?? true, // Beta: all episodes free by default
     media_url: body.media_url || null,
     generation_id: body.generation_id || null,
     status: body.status || "draft",

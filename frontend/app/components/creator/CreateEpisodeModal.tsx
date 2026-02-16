@@ -18,7 +18,7 @@ export default function CreateEpisodeModal({
   nextEpisodeNumber,
 }: CreateEpisodeModalProps) {
   const [episodeName, setEpisodeName] = useState("");
-  const [isFree, setIsFree] = useState(false);
+  const [isFree, setIsFree] = useState(true); // Beta: all episodes free
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -51,12 +51,12 @@ export default function CreateEpisodeModal({
     });
 
     setEpisodeName("");
-    setIsFree(false);
+    setIsFree(true);
   };
 
   const handleClose = () => {
     setEpisodeName("");
-    setIsFree(false);
+    setIsFree(true);
     onClose();
   };
 
@@ -101,27 +101,7 @@ export default function CreateEpisodeModal({
           />
         </div>
 
-        {/* Is Free checkbox */}
-        <div className="mb-6">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <div
-              onClick={() => setIsFree(!isFree)}
-              className={`w-6 h-6 rounded border flex items-center justify-center cursor-pointer ${
-                isFree ? "bg-[#B8B6FC] border-[#B8B6FC]" : "border-[#ADADAD]"
-              }`}
-            >
-              {isFree && (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              )}
-            </div>
-            <span className="text-white text-[17px] font-semibold">Free Episode</span>
-          </label>
-          <p className="text-white/50 text-sm mt-2 ml-9">
-            Free episodes are available to all users without subscription
-          </p>
-        </div>
+        {/* Beta: all episodes are free — checkbox hidden */}
 
         {/* Action buttons */}
         <div className="flex items-center justify-end gap-3">
