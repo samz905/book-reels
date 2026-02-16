@@ -65,7 +65,7 @@ function transformCreatorData(api: ApiCreatorResponse): PublicCreatorProfile {
     : api.creator_settings;
 
   const stories = api.stories || [];
-  const totalEpisodes = stories.reduce((sum, s) => sum + (s.episodes?.length || 0), 0);
+  const totalEpisodes = stories.reduce((sum, s) => sum + (s.episodes?.filter(e => e.status === "published").length || 0), 0);
 
   const profile: CreatorProfile = {
     name: api.name,
@@ -77,22 +77,24 @@ function transformCreatorData(api: ApiCreatorResponse): PublicCreatorProfile {
     newEpisodesWeekly: Math.min(stories.length * 2, 10), // Estimate
   };
 
-  const transformedStories: PublicStory[] = stories.map((story) => ({
+  const transformedStories: PublicStory[] = stories.map((story) => {
+    const publishedEps = (story.episodes || []).filter(e => e.status === "published");
+    return {
     id: story.id,
     title: story.title,
     type: story.type,
-    episodeCount: story.episodes?.length || 0,
+    episodeCount: publishedEps.length,
     viewCount: story.view_count,
     description: story.description || "",
     cover: story.cover_url || "https://picsum.photos/seed/default/300/450",
     likes: story.likes,
     genre: story.genres,
-    episodes: (story.episodes || []).map((ep): Episode => ({
+    episodes: publishedEps.map((ep): Episode => ({
       id: ep.id,
       number: ep.number,
       name: ep.name,
       isFree: ep.is_free,
-      status: ep.status as "draft" | "published" | undefined,
+      status: ep.status as "published",
       mediaUrl: ep.media_url || null,
     })),
     ebooks: (story.ebooks || []).map((eb): Ebook => ({
@@ -102,7 +104,8 @@ function transformCreatorData(api: ApiCreatorResponse): PublicCreatorProfile {
       cover: eb.cover_url || "https://picsum.photos/seed/default/100/160",
       price: Number(eb.price),
     })),
-  }));
+  };
+  });
 
   return {
     profile,

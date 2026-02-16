@@ -425,6 +425,9 @@ export default function CreateEpisodePage() {
   const [assembledVideoUrl, setAssembledVideoUrl] = useState<string | null>(null);
   const [isAssembling, setIsAssembling] = useState(false);
   const [showFilmPreview, setShowFilmPreview] = useState(false);
+  const publishAfterAssemblyRef = useRef(false);
+  const [publishedEpisodeId, setPublishedEpisodeId] = useState<string | null>(null);
+  const [showUnpublishConfirm, setShowUnpublishConfirm] = useState(false);
 
   // Cost tracking across all phases
   const [totalCost, setTotalCost] = useState<TotalCost>({
@@ -579,6 +582,42 @@ export default function CreateEpisodePage() {
       case "assemble":
         setIsAssembling(false);
         break;
+    }
+  };
+
+  // Upsert episode: find existing by generation_id, update if found, create if not
+  const upsertEpisode = async (storyId: string, data: { name: string; media_url?: string | null; generation_id?: string | null; status: string }) => {
+    const genId = data.generation_id || generationIdRef.current;
+    if (genId) {
+      // Check for existing episode with this generation_id
+      const res = await fetch(`/api/stories/${storyId}/episodes`);
+      if (res.ok) {
+        const eps = (await res.json()) as Array<{ id: string; generation_id: string | null }>;
+        const existing = eps.find(e => e.generation_id === genId);
+        if (existing) {
+          // Update existing episode
+          const putRes = await fetch(`/api/episodes/${existing.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: data.name, media_url: data.media_url, status: data.status }),
+          });
+          if (putRes.ok) {
+            const updated = await putRes.json();
+            if (data.status === "published") setPublishedEpisodeId(updated.id);
+          }
+          return;
+        }
+      }
+    }
+    // No existing episode found — create new
+    const postRes = await fetch(`/api/stories/${storyId}/episodes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...data, generation_id: genId }),
+    });
+    if (postRes.ok) {
+      const created = await postRes.json();
+      if (data.status === "published") setPublishedEpisodeId(created.id);
     }
   };
 
@@ -825,13 +864,6 @@ export default function CreateEpisodePage() {
           cost: (r.cost as { scene_refs_usd: number; videos_usd: number; total_usd: number }) || { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
         });
         if (r.cost) setTotalCost((prev) => ({ ...prev, film: (r.cost as { total_usd: number }).total_usd }));
-        if ((r.status as string) === "ready" && associatedStoryIdRef.current) {
-          fetch(`/api/stories/${associatedStoryIdRef.current}/episodes`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: episodeNameRef.current || "Untitled Episode", media_url: (r.final_video_url as string) || null, status: "draft" }),
-          }).catch((err) => console.error("Failed to save episode:", err));
-        }
         break;
       }
       case "shot_regenerate": {
@@ -884,7 +916,25 @@ export default function CreateEpisodePage() {
         const assembledUrl = result.assembled_video_url as string | undefined;
         if (assembledUrl) {
           setAssembledVideoUrl(assembledUrl);
-          setShowFilmPreview(true);
+          if (publishAfterAssemblyRef.current) {
+            // Direct publish flow: assemble completed, now publish and navigate
+            publishAfterAssemblyRef.current = false;
+            const storyId = associatedStoryIdRef.current;
+            if (storyId) {
+              upsertEpisode(storyId, {
+                name: episodeNameRef.current || "Untitled Episode",
+                media_url: assembledUrl,
+                status: "published",
+              })
+                .then(() => {
+                  saveNow({}, "published");
+                  window.location.href = `/create/${storyId}`;
+                })
+                .catch((err) => console.error("Publish failed:", err));
+            }
+          } else {
+            setShowFilmPreview(true);
+          }
         }
         setIsAssembling(false);
         break;
@@ -1371,7 +1421,7 @@ export default function CreateEpisodePage() {
   const handleSaveDraft = () => {
     if (!generationIdRef.current || !story) return;
     setDraftSaveStatus("saving");
-    saveNow({}, "drafting");
+    saveNow({});
     // Show "saved" confirmation briefly
     setTimeout(() => setDraftSaveStatus("saved"), 400);
     setTimeout(() => setDraftSaveStatus("idle"), 2500);
@@ -1439,6 +1489,14 @@ export default function CreateEpisodePage() {
         fetch(`/api/stories/${data.story_id}`)
           .then(res => res.ok ? res.json() : null)
           .then(d => { if (d?.title) setAssociatedStoryName(d.title); })
+          .catch(() => {});
+        // Check if an episode is already published for this generation
+        fetch(`/api/stories/${data.story_id}/episodes`)
+          .then(res => res.ok ? res.json() : [])
+          .then((eps: Array<{ id: string; generation_id: string | null; status: string }>) => {
+            const published = eps.find(e => e.generation_id === genId && e.status === "published");
+            if (published) setPublishedEpisodeId(published.id);
+          })
           .catch(() => {});
         // Await DB fetch — these are the source of truth for images
         try {
@@ -1773,6 +1831,9 @@ export default function CreateEpisodePage() {
     setAssembledVideoUrl(null);
     setIsAssembling(false);
     setShowFilmPreview(false);
+    publishAfterAssemblyRef.current = false;
+    setPublishedEpisodeId(null);
+    setShowUnpublishConfirm(false);
     setSelectedChars([]);
     setSelectedLocation(null);
     setStoryLibraryChars([]);
@@ -3933,10 +3994,25 @@ export default function CreateEpisodePage() {
                         <p className="text-white/50 text-xs font-mono mb-3 tracking-wider">{currentScene.scene_heading}</p>
                       )}
 
-                      {/* Location + Scene number */}
+                      {/* Location + Scene number + Edit icon */}
                       <div className="flex items-center gap-2 mb-3">
                         <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-white/50">{locationName}</span>
                         <span className="text-white/30 text-xs">Scene {currentScene.scene_number}</span>
+                        <button
+                          onClick={() => {
+                            const idx = scenes.findIndex((s) => s.scene_number === selectedClipScene);
+                            if (idx >= 0) {
+                              setEditingSceneIndex(idx);
+                              setEditSceneDraft({ ...currentScene });
+                            }
+                          }}
+                          className="ml-auto w-7 h-7 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors"
+                          title="Edit script"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="#B8B6FC">
+                            <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                          </svg>
+                        </button>
                       </div>
 
                       {/* Action */}
@@ -3989,21 +4065,6 @@ export default function CreateEpisodePage() {
                         </div>
                       )}
 
-                      {/* Edit script link */}
-                      <div className="mb-4">
-                        <button
-                          onClick={() => {
-                            const idx = scenes.findIndex((s) => s.scene_number === selectedClipScene);
-                            if (idx >= 0) {
-                              setEditingSceneIndex(idx);
-                              setEditSceneDraft({ ...currentScene });
-                            }
-                          }}
-                          className="text-xs text-[#B8B6FC] hover:text-[#9C99FF] font-medium"
-                        >
-                          Edit Script
-                        </button>
-                      </div>
 
                       {/* Edit mode (full form matching Step 1) */}
                       {editingSceneIndex !== null && editSceneDraft && editingSceneIndex === scenes.findIndex((s) => s.scene_number === selectedClipScene) && (
@@ -4160,24 +4221,6 @@ export default function CreateEpisodePage() {
                         </div>
                       )}
 
-                      {/* Feedback for regeneration (only when clip exists) */}
-                      {currentClip?.status === "completed" && (
-                        <div className="mb-3">
-                          <input
-                            type="text"
-                            placeholder="Feedback for regeneration (optional)"
-                            value={currentClip.feedback}
-                            onChange={(e) =>
-                              setClipStates((prev) => ({
-                                ...prev,
-                                [selectedClipScene]: { ...prev[selectedClipScene], feedback: e.target.value },
-                              }))
-                            }
-                            className="w-full bg-[#1A1E2F] text-white text-xs rounded-lg px-3 py-2 placeholder-[#555] focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                          />
-                        </div>
-                      )}
-
                       {/* Generate / Regenerate button */}
                       <button
                         onClick={() => generateClip(selectedClipScene)}
@@ -4190,7 +4233,7 @@ export default function CreateEpisodePage() {
                             Generating...
                           </>
                         ) : currentClip?.status === "completed" ? (
-                          currentClip.feedback.trim() ? "Regenerate with Feedback" : "Regenerate Scene"
+                          "Regenerate Scene"
                         ) : currentClip?.status === "failed" ? (
                           "Retry Scene"
                         ) : (
@@ -4325,17 +4368,6 @@ export default function CreateEpisodePage() {
                     )}
                   </div>
 
-                  {/* Veo prompt collapsible — pinned at bottom */}
-                  {currentClip?.veoPrompt && (
-                    <details className="px-3 py-2 bg-black/60 border-t border-white/5">
-                      <summary className="text-[10px] text-[#9C99FF] cursor-pointer hover:text-white">
-                        View Veo Prompt
-                      </summary>
-                      <pre className="mt-1 text-[9px] text-[#888] whitespace-pre-wrap break-words max-h-32 overflow-y-auto leading-relaxed">
-                        {currentClip.veoPrompt}
-                      </pre>
-                    </details>
-                  )}
                   </div>{/* close aspect-ratio inner */}
                 </div>{/* close right pane */}
               </div>
@@ -4380,38 +4412,46 @@ export default function CreateEpisodePage() {
                       </span>
                     ) : draftSaveStatus === "saving" ? "Saving..." : "Save to Drafts"}
                   </button>
-                  <button
-                    onClick={async () => {
-                      // Publish: assemble if needed, then create episode
-                      if (!assembledVideoUrl) {
-                        await assembleClips();
-                        // Will publish after assembly completes via Realtime
-                        return;
-                      }
-                      // Already assembled — publish now
-                      if (associatedStoryIdRef.current) {
-                        try {
-                          await fetch(`/api/stories/${associatedStoryIdRef.current}/episodes`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                              name: episodeNameRef.current || "Untitled Episode",
-                              media_url: assembledVideoUrl,
-                              generation_id: generationIdRef.current || null,
-                              status: "published",
-                            }),
-                          });
-                          saveNow({}, "published");
-                          // Navigate to story page to see the published episode
-                          window.location.href = `/create/${associatedStoryIdRef.current}`;
-                        } catch (err) { console.error("Publish failed:", err); }
-                      }
-                    }}
-                    disabled={isAssembling}
-                    className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50"
-                  >
-                    Publish
-                  </button>
+                  {publishedEpisodeId ? (
+                    <button
+                      onClick={() => setShowUnpublishConfirm(true)}
+                      className="px-6 py-3 bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl font-medium hover:bg-red-500/30 transition-colors"
+                    >
+                      Unpublish
+                    </button>
+                  ) : (
+                    <button
+                      onClick={async () => {
+                        // Publish: assemble if needed, then create episode
+                        if (!assembledVideoUrl) {
+                          publishAfterAssemblyRef.current = true;
+                          await assembleClips();
+                          return;
+                        }
+                        // Already assembled — publish now
+                        if (associatedStoryIdRef.current) {
+                          try {
+                            await fetch(`/api/stories/${associatedStoryIdRef.current}/episodes`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                name: episodeNameRef.current || "Untitled Episode",
+                                media_url: assembledVideoUrl,
+                                generation_id: generationIdRef.current || null,
+                                status: "published",
+                              }),
+                            });
+                            saveNow({}, "published");
+                            window.location.href = `/create/${associatedStoryIdRef.current}`;
+                          } catch (err) { console.error("Publish failed:", err); }
+                        }
+                      }}
+                      disabled={isAssembling}
+                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50"
+                    >
+                      {isAssembling ? "Publishing..." : "Publish"}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -4425,6 +4465,45 @@ export default function CreateEpisodePage() {
           videoUrl={assembledVideoUrl || ""}
           title={episodeName || "Preview"}
         />
+
+        {/* Unpublish confirmation dialog */}
+        {showUnpublishConfirm && (
+          <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" onClick={() => setShowUnpublishConfirm(false)}>
+            <div className="bg-[#1A1E2F] rounded-xl p-6 max-w-sm mx-4" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-white text-lg font-semibold mb-2">Unpublish Episode?</h3>
+              <p className="text-white/60 text-sm mb-6">
+                This episode will be hidden from viewers. You can re-publish it later.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowUnpublishConfirm(false)}
+                  className="px-4 py-2 bg-white/5 text-white/60 text-sm rounded-lg border border-white/10 hover:bg-white/10"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!publishedEpisodeId) return;
+                    try {
+                      await fetch(`/api/episodes/${publishedEpisodeId}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ status: "draft" }),
+                      });
+                      setPublishedEpisodeId(null);
+                      setShowUnpublishConfirm(false);
+                    } catch (err) {
+                      console.error("Unpublish failed:", err);
+                    }
+                  }}
+                  className="px-4 py-2 bg-red-500/20 text-red-400 text-sm rounded-lg border border-red-500/30 hover:bg-red-500/30"
+                >
+                  Unpublish
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
       <Footer />

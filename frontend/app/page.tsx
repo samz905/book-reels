@@ -7,6 +7,9 @@ import CategoryTabs from "./components/CategoryTabs";
 import StoryGrid from "./components/StoryGrid";
 import { StoryGridSkeleton } from "./components/skeletons";
 import { CATEGORIES, type Category, type Story } from "./data/mockStories";
+import type { Episode } from "./data/mockCreatorData";
+import EpisodeList from "./components/creator/EpisodeList";
+import Image from "next/image";
 
 // API response types
 interface ApiStory {
@@ -64,6 +67,11 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Story detail popup
+  const [selectedStory, setSelectedStory] = useState<Story | null>(null);
+  const [storyEpisodes, setStoryEpisodes] = useState<Episode[]>([]);
+  const [episodesLoading, setEpisodesLoading] = useState(false);
+
   // Fetch stories from API
   const fetchStories = useCallback(async () => {
     setLoading(true);
@@ -117,6 +125,36 @@ export default function Home() {
     }
     return stories.filter((story) => story.category === activeCategory);
   }, [stories, activeCategory]);
+
+  // Handle story card click — fetch episodes and show popup
+  const handleStoryClick = useCallback(async (story: Story) => {
+    setSelectedStory(story);
+    setStoryEpisodes([]);
+    setEpisodesLoading(true);
+    try {
+      const res = await fetch(`/api/stories/${story.id}/episodes`);
+      if (res.ok) {
+        const eps = await res.json();
+        setStoryEpisodes(
+          (eps as Array<{ id: string; number: number; name: string; is_free: boolean; status: string; media_url: string | null; generation_id: string | null }>)
+            .filter((e) => e.status === "published")
+            .map((e) => ({
+              id: e.id,
+              number: e.number,
+              name: e.name,
+              isFree: e.is_free,
+              status: e.status as "published",
+              mediaUrl: e.media_url,
+              generationId: e.generation_id,
+            }))
+        );
+      }
+    } catch {
+      // non-fatal
+    } finally {
+      setEpisodesLoading(false);
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-page relative overflow-clip">
@@ -189,12 +227,68 @@ export default function Home() {
               </button>
             </div>
           ) : (
-            <StoryGrid stories={filteredStories} />
+            <StoryGrid stories={filteredStories} onStoryClick={handleStoryClick} />
           )}
         </section>
       </main>
 
       <Footer />
+
+      {/* Story detail popup with episodes */}
+      {selectedStory && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setSelectedStory(null)}>
+          <div className="bg-[#0F0E13] rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            {/* Header with cover + info */}
+            <div className="p-6 flex gap-5">
+              <div className="w-[120px] h-[170px] rounded-xl overflow-hidden flex-shrink-0">
+                <Image
+                  src={selectedStory.coverImage}
+                  alt={selectedStory.title}
+                  width={120}
+                  height={170}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-white text-xl font-bold mb-2">{selectedStory.title}</h2>
+                <p className="text-white/60 text-sm line-clamp-3 mb-3">{selectedStory.description}</p>
+                <div className="flex items-center gap-2">
+                  <Image
+                    src={selectedStory.creatorAvatar}
+                    alt={selectedStory.creatorName}
+                    width={20}
+                    height={20}
+                    className="rounded-full"
+                  />
+                  <span className="text-white/70 text-sm">{selectedStory.creatorName}</span>
+                </div>
+              </div>
+              {/* Close button */}
+              <button
+                onClick={() => setSelectedStory(null)}
+                className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors flex-shrink-0 self-start"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Episodes */}
+            <div className="px-6 pb-6">
+              {episodesLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-6 h-6 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : storyEpisodes.length > 0 ? (
+                <EpisodeList episodes={storyEpisodes} freeCount={4} />
+              ) : (
+                <p className="text-white/40 text-sm text-center py-8">No episodes published yet.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

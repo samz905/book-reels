@@ -77,6 +77,8 @@ export default function StoryManagementPage() {
   const [isCharSaving, setIsCharSaving] = useState(false);
   const [isLocSaving, setIsLocSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showStatusConfirm, setShowStatusConfirm] = useState(false);
+  const [isTogglingStatus, setIsTogglingStatus] = useState(false);
 
   // ============ Story Handlers ============
 
@@ -378,9 +380,23 @@ export default function StoryManagementPage() {
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-white text-2xl font-bold">Stories</h2>
             <div className="flex items-center gap-3">
-              <span className={`text-sm font-semibold ${story.status === "draft" ? "text-[#FF8C00]" : "text-[#1ED760]"}`}>
-                {story.status === "draft" ? "DRAFT" : "PUBLISHED"}
-              </span>
+              {story.status === "draft" ? (
+                <button
+                  onClick={() => setShowStatusConfirm(true)}
+                  disabled={isTogglingStatus}
+                  className="px-4 py-1.5 bg-[#1ED760]/20 text-[#1ED760] text-sm font-semibold rounded-lg border border-[#1ED760]/30 hover:bg-[#1ED760]/30 transition-colors disabled:opacity-50"
+                >
+                  Publish
+                </button>
+              ) : (
+                <button
+                  onClick={() => setShowStatusConfirm(true)}
+                  disabled={isTogglingStatus}
+                  className="px-4 py-1.5 bg-red-500/10 text-red-400 text-sm font-semibold rounded-lg border border-red-500/20 hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                >
+                  Unpublish
+                </button>
+              )}
               <button
                 onClick={() => setShowEditModal(true)}
                 className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors"
@@ -708,6 +724,53 @@ export default function StoryManagementPage() {
         message={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
         isDeleting={isDeleting}
       />
+
+      {/* Publish / Unpublish confirmation dialog */}
+      {showStatusConfirm && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" onClick={() => setShowStatusConfirm(false)}>
+          <div className="bg-[#1A1E2F] rounded-xl p-6 max-w-sm mx-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-white text-lg font-semibold mb-2">
+              {story.status === "draft" ? "Publish Story?" : "Unpublish Story?"}
+            </h3>
+            <p className="text-white/60 text-sm mb-6">
+              {story.status === "draft"
+                ? "This story and its published episodes will be visible to everyone."
+                : "This story will be hidden from viewers. You can re-publish it later."}
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowStatusConfirm(false)}
+                className="px-4 py-2 bg-white/5 text-white/60 text-sm rounded-lg border border-white/10 hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={isTogglingStatus}
+                onClick={async () => {
+                  setIsTogglingStatus(true);
+                  try {
+                    const newStatus = story.status === "draft" ? "published" : "draft";
+                    await updateStory(story.id, { status: newStatus });
+                    queryClient.setQueryData(queryKeys.story(storyId), { ...story, status: newStatus });
+                    setShowStatusConfirm(false);
+                  } catch (err) {
+                    console.error("Failed to update story status:", err);
+                  } finally {
+                    setIsTogglingStatus(false);
+                  }
+                }}
+                className={`px-4 py-2 text-sm rounded-lg border transition-colors disabled:opacity-50 ${
+                  story.status === "draft"
+                    ? "bg-[#1ED760]/20 text-[#1ED760] border-[#1ED760]/30 hover:bg-[#1ED760]/30"
+                    : "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
+                }`}
+              >
+                {isTogglingStatus ? "Updating..." : story.status === "draft" ? "Publish" : "Unpublish"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

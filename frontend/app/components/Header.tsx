@@ -52,10 +52,10 @@ export default function Header() {
       {/* Center nav */}
       <nav className="absolute left-1/2 -translate-x-1/2 flex items-center gap-8">
         <Link
-          href="/creators"
+          href="/"
           className="text-white text-base font-semibold leading-[120%] hover:opacity-80 transition-opacity"
         >
-          For Creators
+          Browse
         </Link>
         <Link
           href="/create"

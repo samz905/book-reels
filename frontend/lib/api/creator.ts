@@ -69,19 +69,19 @@ export function mapDbEbookToFrontend(dbEbook: DbEbook): FrontendEbook {
 export function mapDbStoryToFrontend(
   dbStory: DbStory & { episodes?: DbEpisode[]; ebooks?: DbEbook[] }
 ): FrontendStory {
-  const episodes = dbStory.episodes || [];
+  const allEpisodes = dbStory.episodes || [];
   const ebooks = dbStory.ebooks || [];
-  const publishedCount = episodes.filter(e => e.status === "published").length;
+  const publishedEpisodes = allEpisodes.filter(e => e.status === "published");
 
   return {
     id: dbStory.id,
     title: dbStory.title,
     type: dbStory.type,
-    episodeCount: publishedCount,
+    episodeCount: publishedEpisodes.length,
     viewCount: dbStory.view_count,
     description: dbStory.description,
     cover: dbStory.cover_url || "",
-    episodes: episodes.map(mapDbEpisodeToFrontend),
+    episodes: publishedEpisodes.map(mapDbEpisodeToFrontend),
     likes: dbStory.likes,
     genre: dbStory.genres,
     status: dbStory.status,

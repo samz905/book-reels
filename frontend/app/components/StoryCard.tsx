@@ -7,9 +7,10 @@ import type { Story } from "../data/mockStories";
 
 interface StoryCardProps {
   story: Story;
+  onClick?: () => void;
 }
 
-export default function StoryCard({ story }: StoryCardProps) {
+export default function StoryCard({ story, onClick }: StoryCardProps) {
   const [isHovered, setIsHovered] = useState(false);
 
   return (
@@ -17,6 +18,7 @@ export default function StoryCard({ story }: StoryCardProps) {
       className="cursor-pointer w-full"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      onClick={onClick}
     >
       <div className="relative aspect-[205/290] rounded-card overflow-hidden mb-2">
         <Image
