@@ -20,7 +20,7 @@ async def _retry_on_resource_exhausted(fn, *args, **kwargs):
     """Retry a sync function with exponential backoff on 429 RESOURCE_EXHAUSTED errors."""
     for attempt in range(MAX_RETRIES + 1):
         try:
-            return fn(*args, **kwargs)
+            return await asyncio.to_thread(fn, *args, **kwargs)
         except Exception as e:
             error_str = str(e)
             is_retryable = ("429" in error_str or "RESOURCE_EXHAUSTED" in error_str

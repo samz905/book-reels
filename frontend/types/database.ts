@@ -304,7 +304,7 @@ export interface Database {
           image_base64: string | null;
           image_url: string | null;
           image_mime_type: string;
-          saved_to_story: boolean;
+
           created_at: string;
           updated_at: string;
         };
@@ -320,7 +320,7 @@ export interface Database {
           image_base64?: string | null;
           image_url?: string | null;
           image_mime_type?: string;
-          saved_to_story?: boolean;
+
         };
         Update: {
           name?: string;
@@ -332,7 +332,7 @@ export interface Database {
           image_base64?: string | null;
           image_url?: string | null;
           image_mime_type?: string;
-          saved_to_story?: boolean;
+
         };
       };
       story_locations: {
@@ -346,7 +346,7 @@ export interface Database {
           image_base64: string | null;
           image_url: string | null;
           image_mime_type: string;
-          saved_to_story: boolean;
+
           created_at: string;
           updated_at: string;
         };
@@ -360,7 +360,7 @@ export interface Database {
           image_base64?: string | null;
           image_url?: string | null;
           image_mime_type?: string;
-          saved_to_story?: boolean;
+
         };
         Update: {
           name?: string;
@@ -370,7 +370,7 @@ export interface Database {
           image_base64?: string | null;
           image_url?: string | null;
           image_mime_type?: string;
-          saved_to_story?: boolean;
+
         };
       };
       episode_storyboards: {

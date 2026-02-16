@@ -368,7 +368,6 @@ export function mapDbCharacterToFrontend(db: DbStoryCharacter): StoryCharacterFE
     imageBase64: db.image_base64,
     imageUrl: db.image_url,
     imageMimeType: db.image_mime_type,
-    savedToStory: db.saved_to_story,
   };
 }
 
@@ -382,7 +381,6 @@ export function mapDbLocationToFrontend(db: DbStoryLocation): StoryLocationFE {
     imageBase64: db.image_base64,
     imageUrl: db.image_url,
     imageMimeType: db.image_mime_type,
-    savedToStory: db.saved_to_story,
   };
 }
 
@@ -449,7 +447,6 @@ export async function updateStoryCharacter(
     image_base64?: string | null;
     image_url?: string | null;
     image_mime_type?: string;
-    saved_to_story?: boolean;
   }
 ): Promise<StoryCharacterFE> {
   const response = await fetch(`/api/stories/${storyId}/characters/${characterId}`, {
@@ -513,7 +510,6 @@ export async function updateStoryLocation(
     image_base64?: string | null;
     image_url?: string | null;
     image_mime_type?: string;
-    saved_to_story?: boolean;
   }
 ): Promise<StoryLocationFE> {
   const response = await fetch(`/api/stories/${storyId}/locations/${locationId}`, {

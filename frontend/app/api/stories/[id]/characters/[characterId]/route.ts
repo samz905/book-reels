@@ -58,7 +58,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
   const allowedFields: (keyof StoryCharacterUpdate)[] = [
     "name", "age", "gender", "description", "role",
-    "visual_style", "image_base64", "image_url", "image_mime_type", "saved_to_story",
+    "visual_style", "image_base64", "image_url", "image_mime_type",
   ];
   const updateData: StoryCharacterUpdate = {};
   for (const field of allowedFields) {

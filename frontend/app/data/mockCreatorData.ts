@@ -68,7 +68,7 @@ export interface StoryCharacterFE {
   imageBase64: string | null;
   imageUrl: string | null;
   imageMimeType: string;
-  savedToStory: boolean;
+
 }
 
 export interface StoryLocationFE {
@@ -80,7 +80,7 @@ export interface StoryLocationFE {
   imageBase64: string | null;
   imageUrl: string | null;
   imageMimeType: string;
-  savedToStory: boolean;
+
 }
 
 export interface EpisodeStoryboardFE {
