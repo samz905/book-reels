@@ -114,6 +114,7 @@ export interface Database {
           name: string;
           is_free: boolean;
           media_url: string | null;
+          generation_id: string | null;
           status: ContentStatus;
           created_at: string;
           updated_at: string;
@@ -125,6 +126,7 @@ export interface Database {
           name: string;
           is_free?: boolean;
           media_url?: string | null;
+          generation_id?: string | null;
           status?: ContentStatus;
           created_at?: string;
           updated_at?: string;
@@ -134,6 +136,7 @@ export interface Database {
           name?: string;
           is_free?: boolean;
           media_url?: string | null;
+          generation_id?: string | null;
           status?: ContentStatus;
           updated_at?: string;
         };
@@ -224,6 +227,7 @@ export interface Database {
           style: string;
           status: string;
           film_id: string | null;
+          episode_id: string | null;
           thumbnail_base64: string | null;
           state: Record<string, unknown>;
           cost_total: number;
@@ -236,6 +240,7 @@ export interface Database {
           style?: string;
           status?: string;
           film_id?: string | null;
+          episode_id?: string | null;
           thumbnail_base64?: string | null;
           state?: Record<string, unknown>;
           cost_total?: number;
@@ -245,6 +250,7 @@ export interface Database {
           style?: string;
           status?: string;
           film_id?: string | null;
+          episode_id?: string | null;
           thumbnail_base64?: string | null;
           state?: Record<string, unknown>;
           cost_total?: number;
@@ -413,6 +419,37 @@ export interface Database {
           error_message?: string | null;
         };
       };
+      episode_clips: {
+        Row: {
+          id: string;
+          generation_id: string;
+          scene_number: number;
+          status: string;
+          video_url: string | null;
+          veo_prompt: string | null;
+          error_message: string | null;
+          cost: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          generation_id: string;
+          scene_number: number;
+          status?: string;
+          video_url?: string | null;
+          veo_prompt?: string | null;
+          error_message?: string | null;
+          cost?: number;
+        };
+        Update: {
+          status?: string;
+          video_url?: string | null;
+          veo_prompt?: string | null;
+          error_message?: string | null;
+          cost?: number;
+        };
+      };
       cart_items: {
         Row: {
           id: string;
@@ -485,6 +522,10 @@ export type StoryLocationUpdate = Database["public"]["Tables"]["story_locations"
 export type EpisodeStoryboard = Database["public"]["Tables"]["episode_storyboards"]["Row"];
 export type EpisodeStoryboardInsert = Database["public"]["Tables"]["episode_storyboards"]["Insert"];
 export type EpisodeStoryboardUpdate = Database["public"]["Tables"]["episode_storyboards"]["Update"];
+
+export type EpisodeClip = Database["public"]["Tables"]["episode_clips"]["Row"];
+export type EpisodeClipInsert = Database["public"]["Tables"]["episode_clips"]["Insert"];
+export type EpisodeClipUpdate = Database["public"]["Tables"]["episode_clips"]["Update"];
 
 export type CartItem = Database["public"]["Tables"]["cart_items"]["Row"];
 export type CartItemInsert = Database["public"]["Tables"]["cart_items"]["Insert"];

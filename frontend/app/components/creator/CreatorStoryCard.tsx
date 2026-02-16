@@ -135,10 +135,7 @@ export default function CreatorStoryCard({
   return (
     <div className="bg-[#0F0E13] rounded-xl p-6">
       {/* Action buttons row */}
-      <div className="flex items-center justify-between mb-4">
-        <button className="text-[#539ED3] text-sm hover:underline">
-          Back to Creator Dashboard
-        </button>
+      <div className="flex items-center justify-end mb-4">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setShowCreateEpisodeModal(true)}
@@ -265,7 +262,7 @@ export default function CreatorStoryCard({
 
           {/* Episode list (collapsible) */}
           {showEpisodes && (
-            <EpisodeList episodes={story.episodes} freeCount={freeCount} />
+            <EpisodeList episodes={story.episodes} freeCount={freeCount} editable />
           )}
 
         </div>

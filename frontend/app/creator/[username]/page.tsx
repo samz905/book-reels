@@ -23,6 +23,7 @@ interface ApiEpisode {
   name: string;
   is_free: boolean;
   status: string;
+  media_url: string | null;
 }
 
 interface ApiEbook {
@@ -92,6 +93,7 @@ function transformCreatorData(api: ApiCreatorResponse): PublicCreatorProfile {
       name: ep.name,
       isFree: ep.is_free,
       status: ep.status as "draft" | "published" | undefined,
+      mediaUrl: ep.media_url || null,
     })),
     ebooks: (story.ebooks || []).map((eb): Ebook => ({
       id: eb.id,

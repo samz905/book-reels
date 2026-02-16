@@ -49,6 +49,8 @@ export function mapDbEpisodeToFrontend(dbEpisode: DbEpisode): FrontendEpisode {
     name: dbEpisode.name,
     isFree: dbEpisode.is_free,
     status: dbEpisode.status,
+    mediaUrl: dbEpisode.media_url || null,
+    generationId: dbEpisode.generation_id || null,
   };
 }
 
@@ -594,6 +596,72 @@ export async function deleteEpisodeStoryboard(generationId: string, storyboardId
     credentials: "include",
   });
   await handleResponse<{ success: boolean }>(response);
+}
+
+// ============ Episode Clips (per-scene video) ============
+
+export interface EpisodeClipFE {
+  id: string;
+  generationId: string;
+  sceneNumber: number;
+  status: string;
+  videoUrl: string | null;
+  veoPrompt: string | null;
+  errorMessage: string | null;
+  cost: number;
+}
+
+interface DbEpisodeClip {
+  id: string;
+  generation_id: string;
+  scene_number: number;
+  status: string;
+  video_url: string | null;
+  veo_prompt: string | null;
+  error_message: string | null;
+  cost: number;
+}
+
+function mapDbClipToFrontend(row: DbEpisodeClip): EpisodeClipFE {
+  return {
+    id: row.id,
+    generationId: row.generation_id,
+    sceneNumber: row.scene_number,
+    status: row.status,
+    videoUrl: row.video_url,
+    veoPrompt: row.veo_prompt,
+    errorMessage: row.error_message,
+    cost: row.cost,
+  };
+}
+
+export async function getEpisodeClips(generationId: string): Promise<EpisodeClipFE[]> {
+  const response = await fetch(`/api/generations/${generationId}/clips`, {
+    credentials: "include",
+  });
+  const data = await handleResponse<DbEpisodeClip[]>(response);
+  return data.map(mapDbClipToFrontend);
+}
+
+export async function upsertEpisodeClips(
+  generationId: string,
+  rows: Array<{
+    scene_number: number;
+    status?: string;
+    video_url?: string | null;
+    veo_prompt?: string | null;
+    error_message?: string | null;
+    cost?: number;
+  }>
+): Promise<EpisodeClipFE[]> {
+  const response = await fetch(`/api/generations/${generationId}/clips`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(rows),
+  });
+  const data = await handleResponse<DbEpisodeClip[]>(response);
+  return data.map(mapDbClipToFrontend);
 }
 
 // ============ Generation context (for persistent job tracking) ============

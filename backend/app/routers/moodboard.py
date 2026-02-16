@@ -1363,12 +1363,20 @@ Portrait orientation, 9:16 aspect ratio."""
 # Refine Scene Image Endpoint
 # ============================================================
 
+class RefineSceneImageCurrentImage(BaseModel):
+    image_base64: Optional[str] = None
+    image_url: Optional[str] = None
+    mime_type: str = "image/png"
+
+
 class RefineSceneImageRequest(BaseModel):
-    story: Story
-    approved_visuals: ApprovedVisuals
     scene_number: int
-    visual_description: str
-    feedback: str = ""
+    feedback: str
+    current_image: RefineSceneImageCurrentImage
+    # Legacy fields — accepted but ignored when current_image is present
+    story: Optional[Story] = None
+    approved_visuals: Optional[ApprovedVisuals] = None
+    visual_description: Optional[str] = None
 
 
 class RefineSceneImageResponse(BaseModel):
@@ -1381,106 +1389,28 @@ class RefineSceneImageResponse(BaseModel):
 @router.post("/refine-scene-image", response_model=RefineSceneImageResponse)
 async def refine_scene_image(request: RefineSceneImageRequest):
     """
-    Refine a single scene image with feedback.
-    Uses approved character and location IMAGES for visual consistency.
-
-    Input: {
-        "story": {...},
-        "approved_visuals": {...},
-        "scene_number": 3,
-        "visual_description": "...",
-        "feedback": "make the lighting warmer"
-    }
-    Output: { "scene_number": 3, "image": {...}, "prompt_used": "..." }
+    Edit a scene image using the current image + feedback only.
+    This is a pure editing operation — no refs, no original prompt.
     """
     try:
-        story = request.story
-        approved = request.approved_visuals
-        await approved.resolve_urls()
-        style_prefix = STYLE_PREFIXES.get(story.style, STYLE_PREFIXES["cinematic"])
+        # Resolve current image to base64
+        img = request.current_image
+        image_b64 = img.image_base64
+        if not image_b64 and img.image_url:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(img.image_url, timeout=30)
+                resp.raise_for_status()
+                image_b64 = base64.b64encode(resp.content).decode()
+        if not image_b64:
+            raise ValueError("No current image provided (neither base64 nor url)")
 
-        # Find the matching beat
-        beat = None
-        for b in story.beats:
-            if b.number == request.scene_number:
-                beat = b
-                break
-        # Fallback: derive from scenes
-        if not beat and story.scenes:
-            from .story import scene_to_beat, Scene as StoryScene
-            for scene in story.scenes:
-                if scene.scene_number == request.scene_number:
-                    beat_data = scene_to_beat(scene)
-                    beat = Beat(**beat_data)
-                    break
+        prompt = f"Edit this image: {request.feedback}"
 
-        # Build per-scene reference images
-        refs: List[dict] = []
-
-        # Add character refs relevant to this scene
-        if beat and beat.characters_in_scene and approved.character_image_map:
-            for char_id in beat.characters_in_scene:
-                if char_id in approved.character_image_map:
-                    char_ref = approved.character_image_map[char_id]
-                    refs.append({"image_base64": char_ref.image_base64, "mime_type": char_ref.mime_type})
-        # Fallback: use all character images
-        if not refs:
-            for char_img in approved.character_images[:5]:
-                refs.append({"image_base64": char_img.image_base64, "mime_type": char_img.mime_type})
-
-        # Add location image
-        location_id = beat.location_id if beat else None
-        location_img = None
-        if location_id and location_id in approved.location_images:
-            location_img = approved.location_images[location_id]
-        elif approved.location_images:
-            location_img = next(iter(approved.location_images.values()))
-        elif approved.setting_image:
-            location_img = approved.setting_image
-
-        if location_img:
-            refs.append({"image_base64": location_img.image_base64, "mime_type": location_img.mime_type})
-
-        # Build character appearance context
-        chars_in_scene = beat.characters_in_scene if beat and beat.characters_in_scene else [c.id for c in story.characters]
-        char_lines = []
-        for cid in chars_in_scene:
-            char = next((c for c in story.characters if c.id == cid), None)
-            if char:
-                char_lines.append(f"- {char.name} ({char.age} {char.gender}): {char.appearance}")
-        chars_description = "\n".join(char_lines) if char_lines else "Characters present in scene"
-
-        # Get location description
-        setting_desc = ""
-        if location_id and approved.location_descriptions:
-            setting_desc = approved.location_descriptions.get(location_id, "")
-        if not setting_desc and approved.setting_description:
-            setting_desc = approved.setting_description
-
-        prompt = f"""{style_prefix}
-
-SCENE {request.scene_number}: {request.visual_description}
-
-SETTING: {setting_desc}
-
-CHARACTERS IN SCENE:
-{chars_description}
-
-Show the full scene with characters in action, not a close-up portrait.
-Medium or wide shot showing body language and environment context.
-Dynamic cinematic composition.
-
-Portrait orientation, 9:16 aspect ratio."""
-
-        if request.feedback.strip():
-            prompt += f"\n\nAdditional direction: {request.feedback}"
-
-        print(f"Generating scene {request.scene_number}" + (f" with feedback: {request.feedback}" if request.feedback.strip() else ""))
-        print(f"  {len(refs)} refs, prompt: {prompt[:200]}...")
+        print(f"Editing scene {request.scene_number} with feedback: {request.feedback}")
 
         result = await generate_image_with_references(
             prompt=prompt,
-            reference_images=refs,
+            reference_images=[{"image_base64": image_b64, "mime_type": img.mime_type}],
             aspect_ratio="9:16",
         )
 
@@ -1498,5 +1428,5 @@ Portrait orientation, 9:16 aspect ratio."""
 
     except Exception as e:
         import traceback
-        print(f"Error refining scene image: {traceback.format_exc()}")
+        print(f"Error editing scene image: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))

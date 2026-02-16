@@ -481,7 +481,7 @@ export default function StoryManagementPage() {
               </button>
 
               {showEpisodes && (
-                <EpisodeList episodes={story.episodes.filter(e => e.status === "published")} freeCount={freeCount} />
+                <EpisodeList episodes={story.episodes.filter(e => e.status === "published")} freeCount={freeCount} editable />
               )}
 
             </div>

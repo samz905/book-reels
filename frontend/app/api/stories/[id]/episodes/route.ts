@@ -113,6 +113,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     name: body.name,
     is_free: body.is_free ?? false,
     media_url: body.media_url || null,
+    generation_id: body.generation_id || null,
     status: body.status || "draft",
   };
 

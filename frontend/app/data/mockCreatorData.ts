@@ -30,6 +30,8 @@ export interface Episode {
   name: string;
   isFree: boolean;
   status?: "draft" | "published";
+  mediaUrl?: string | null;
+  generationId?: string | null;
 }
 
 export interface Ebook {

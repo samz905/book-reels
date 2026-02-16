@@ -724,6 +724,20 @@ async def handle_asset_location_image(payload: dict) -> dict:
     return result.model_dump()
 
 
+async def handle_clip_generate(payload: dict, job_id: str = "") -> dict:
+    """Handle /film/generate-clip — generate a single scene clip."""
+    req = film_mod.GenerateClipRequest(**payload)
+    result = await film_mod.generate_single_clip(req)
+    return result
+
+
+async def handle_assemble_clips(payload: dict, job_id: str = "") -> dict:
+    """Handle /film/assemble-clips — assemble clips into final video."""
+    req = film_mod.AssembleClipsRequest(**payload)
+    result = await film_mod.assemble_clips(req)
+    return result
+
+
 # ============================================================
 # Route Handler Map
 # ============================================================
@@ -752,6 +766,10 @@ ROUTE_HANDLERS = {
     "/film/generate-with-prompts": handle_film_with_prompts,
     "/film/preview-prompts": handle_prompt_preview,
     "/film/shot/regenerate": handle_shot_regenerate,
+
+    # Clips (per-scene video generation)
+    "/film/generate-clip": handle_clip_generate,
+    "/film/assemble-clips": handle_assemble_clips,
 
     # Asset gen (creator dashboard)
     "/assets/generate-character-image": handle_asset_character_image,

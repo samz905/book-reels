@@ -46,7 +46,7 @@ def _get_veo_semaphore() -> asyncio.Semaphore:
     return _veo_semaphore
 from ..config import TEMP_DIR, GOOGLE_GENAI_API_KEY, AI_ASSETS_BUCKET
 from ..supabase_client import get_supabase
-from .story import Story, Beat, SceneBlock
+from .story import Story, Beat, Scene, SceneBlock
 from .moodboard import ApprovedVisuals, ReferenceImage
 
 router = APIRouter()
@@ -1275,3 +1275,201 @@ async def run_shot_regeneration(job: FilmJob, beat: Beat, feedback: Optional[str
         print(traceback.format_exc())
         job.error_message = f"Shot {beat.number} regeneration failed: {e}"
         await persist_film_job(job)
+
+
+# ============================================================
+# Per-Scene Clip Generation (Clips Stage)
+# ============================================================
+
+def scene_to_beat(scene: "Scene", story: Story) -> Beat:
+    """Convert a Scene object to a Beat for the existing video pipeline."""
+    from .story import BEAT_NUMBER_TO_TYPE, BEAT_TIME_RANGES, DialogueLine
+
+    # Parse dialogue string into DialogueLine list
+    dialogue_lines = None
+    if scene.dialogue:
+        dialogue_lines = []
+        for line in scene.dialogue.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            if ":" in line:
+                parts = line.split(":", 1)
+                dialogue_lines.append(DialogueLine(character=parts[0].strip(), line=parts[1].strip()))
+            else:
+                dialogue_lines.append(DialogueLine(character="", line=line))
+
+    # Build blocks from scene fields
+    blocks = []
+    if scene.action:
+        blocks.append(SceneBlock(type="action", text=scene.action))
+    if dialogue_lines:
+        for dl in dialogue_lines:
+            blocks.append(SceneBlock(type="dialogue", text=dl.line, character=dl.character))
+
+    return Beat(
+        scene_number=scene.scene_number,
+        beat_type=BEAT_NUMBER_TO_TYPE.get(scene.scene_number, "rise"),
+        time_range=BEAT_TIME_RANGES.get(scene.scene_number, ""),
+        scene_heading=scene.scene_heading,
+        blocks=blocks,
+        scene_change=scene.scene_change,
+        characters_in_scene=scene.characters_on_screen,
+        location_id=scene.setting_id,
+        description=scene.image_prompt or None,
+        action=scene.action or None,
+        dialogue=dialogue_lines,
+    )
+
+
+class GenerateClipRequest(BaseModel):
+    story: Story
+    approved_visuals: ApprovedVisuals
+    scene_number: int
+    scene: Scene
+    feedback: Optional[str] = None
+    generation_id: Optional[str] = None
+
+
+class AssembleClipsRequest(BaseModel):
+    generation_id: str
+    clip_urls: List[dict]  # [{scene_number: int, video_url: str}]
+
+
+async def generate_single_clip(req: GenerateClipRequest) -> dict:
+    """Generate a single video clip for one scene.
+
+    Pipeline: director script → 3 scene refs → Veo prompt → Veo call → upload.
+    Returns: {video_url, veo_prompt, cost}
+    """
+    beat = scene_to_beat(req.scene, req.story)
+    generation_id = req.generation_id
+
+    print(f"\n{'='*60}")
+    print(f"Generating single clip for scene {req.scene_number}")
+    print(f"{'='*60}\n")
+
+    # Resolve reference images
+    await req.approved_visuals.resolve_urls()
+
+    # Step 1: Director script (single scene)
+    director_script = default_director_script(beat)
+    try:
+        scripts = await generate_director_scripts(req.story, [beat])
+        if scripts:
+            director_script = scripts[0]
+    except Exception as e:
+        print(f"Director script generation failed, using defaults: {e}")
+
+    cost_scene_refs = 0.0
+    cost_video = 0.0
+
+    # Step 2: Generate 3 scene-specific reference images
+    print(f"[Clip {req.scene_number}] Generating 3 scene refs...")
+    scene_refs = await generate_scene_references(
+        beat=beat,
+        story=req.story,
+        approved_visuals=req.approved_visuals,
+        director_script=director_script,
+    )
+    cost_scene_refs = COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT
+    print(f"[Clip {req.scene_number}] Scene refs done (cost: ${cost_scene_refs:.3f})")
+
+    # Step 3: Build Veo prompt (with optional feedback adjustment)
+    veo_prompt = build_veo_prompt(beat, req.story, director_script)
+    if req.feedback:
+        veo_prompt += f"\nADJUSTMENT: {req.feedback}"
+
+    # Step 4: Generate video with rate limiting
+    print(f"[Clip {req.scene_number}] Generating video...")
+    video_result = await generate_shot_with_retry(
+        beat=beat,
+        prompt=veo_prompt,
+        reference_images=scene_refs,
+    )
+    cost_video = COST_PER_VIDEO
+    print(f"[Clip {req.scene_number}] Video done (cost: ${cost_video:.2f})")
+
+    # Step 5: Download + upload to Storage
+    clip_id = uuid.uuid4().hex[:12]
+    video_path, storage_url = await download_video(
+        video_result["video_url"],
+        clip_id,
+        req.scene_number,
+        generation_id=generation_id,
+    )
+
+    total_cost = cost_scene_refs + cost_video
+    print(f"[Clip {req.scene_number}] Complete! Total cost: ${total_cost:.2f}")
+
+    return {
+        "video_url": storage_url,
+        "veo_prompt": veo_prompt,
+        "cost": round(total_cost, 4),
+    }
+
+
+async def assemble_clips(req: AssembleClipsRequest) -> dict:
+    """Assemble multiple clips into a single video.
+
+    Downloads clip videos, concatenates via ffmpeg, uploads assembled video.
+    Returns: {assembled_video_url}
+    """
+    print(f"\n{'='*60}")
+    print(f"Assembling {len(req.clip_urls)} clips for generation {req.generation_id}")
+    print(f"{'='*60}\n")
+
+    # Sort by scene number
+    sorted_clips = sorted(req.clip_urls, key=lambda c: c["scene_number"])
+
+    # Download all clips
+    video_paths = []
+    for clip in sorted_clips:
+        url = clip["video_url"]
+        scene_num = clip["scene_number"]
+        filename = f"assemble_{req.generation_id}_{scene_num:02d}.mp4"
+        filepath = os.path.join(TEMP_DIR, filename)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, follow_redirects=True, timeout=120.0)
+            response.raise_for_status()
+            with open(filepath, "wb") as f:
+                f.write(response.content)
+
+        video_paths.append(filepath)
+        print(f"  Downloaded clip scene {scene_num}")
+
+    # Assemble
+    assembly_result = await assemble_videos(video_paths, crossfade_duration=0.0)
+    assembled_path = assembly_result["output_path"]
+
+    # Upload to Storage
+    assembled_url = ""
+    sb = get_supabase()
+    if sb and assembled_path:
+        try:
+            with open(assembled_path, "rb") as f:
+                video_bytes = f.read()
+            storage_path = f"{req.generation_id}/film/assembled.mp4"
+            sb.storage.from_(AI_ASSETS_BUCKET).upload(
+                storage_path, video_bytes,
+                file_options={"content-type": "video/mp4", "upsert": "true"}
+            )
+            assembled_url = sb.storage.from_(AI_ASSETS_BUCKET).get_public_url(storage_path)
+            print(f"Uploaded assembled video to Storage")
+        except Exception as e:
+            print(f"Warning: Assembly upload failed: {e}")
+
+    # Cleanup temp files
+    for p in video_paths:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    try:
+        os.remove(assembled_path)
+    except OSError:
+        pass
+
+    print(f"Assembly complete! URL: {assembled_url}")
+    return {"assembled_video_url": assembled_url}

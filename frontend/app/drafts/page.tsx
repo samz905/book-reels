@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { useQueryClient } from "@tanstack/react-query";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import { useAuth } from "../context/AuthContext";
@@ -10,7 +11,9 @@ import {
   useGenerationsWithStories,
   useMyStories,
   GenerationWithStory,
+  queryKeys,
 } from "@/lib/hooks/queries";
+import { deleteGeneration } from "@/lib/supabase/ai-generations";
 import StoryPickerModal from "../components/creator/StoryPickerModal";
 import CreateEpisodeModal from "../components/creator/CreateEpisodeModal";
 
@@ -127,10 +130,13 @@ function ProgressDots({ status }: { status: string }) {
 function DraftCard({
   draft,
   onClick,
+  onDelete,
 }: {
   draft: GenerationWithStory;
   onClick: () => void;
+  onDelete: (id: string) => void;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const step = getStepIndex(draft.status);
   const isFailed = step === -1;
   const updatedDate = new Date(draft.updated_at).toLocaleDateString(undefined, {
@@ -140,67 +146,98 @@ function DraftCard({
   const styleLabel = styleLabels[draft.style] || draft.style;
 
   return (
-    <button
-      onClick={onClick}
-      className="bg-[#0F0E13] border border-[#1A1E2F] rounded-xl p-4 text-left hover:border-[#9C99FF]/40 transition-all group w-full"
-    >
-      <div className="flex items-start gap-3">
-        {/* Thumbnail or icon */}
-        {draft.thumbnail_base64 ? (
-          <div className="w-11 h-11 rounded-lg overflow-hidden flex-shrink-0 bg-[#1A1E2F]">
-            <img
-              src={`data:image/jpeg;base64,${draft.thumbnail_base64}`}
-              alt=""
-              className="w-full h-full object-cover"
-            />
-          </div>
-        ) : (
-          <div className="w-11 h-11 rounded-lg bg-[#1A1E2F] flex items-center justify-center flex-shrink-0">
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="#555"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+    <div className="relative bg-[#0F0E13] border border-[#1A1E2F] rounded-xl text-left hover:border-[#9C99FF]/40 transition-all group">
+      {/* Delete confirmation overlay */}
+      {confirmDelete && (
+        <div className="absolute inset-0 z-10 bg-black/80 rounded-xl flex flex-col items-center justify-center gap-2 p-3">
+          <p className="text-white text-xs text-center">Delete this draft?</p>
+          <div className="flex gap-2">
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(draft.id); }}
+              className="px-3 py-1.5 bg-red-500/20 text-red-400 text-xs rounded-lg border border-red-500/30 hover:bg-red-500/30"
             >
-              <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-          </div>
-        )}
-
-        <div className="flex-1 min-w-0">
-          {/* Title */}
-          <h3 className="text-white font-medium text-sm truncate group-hover:text-[#B8B6FC] transition-colors">
-            {draft.title || "Untitled"}
-          </h3>
-
-          {/* Progress + status label */}
-          <div className="flex items-center gap-2 mt-2">
-            <ProgressDots status={draft.status} />
-            <span
-              className={`text-[10px] font-medium ${
-                isFailed ? "text-red-400" : "text-white/40"
-              }`}
+              Delete
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
+              className="px-3 py-1.5 bg-white/5 text-white/60 text-xs rounded-lg border border-white/10 hover:bg-white/10"
             >
-              {getStatusLabel(draft.status)}
-            </span>
-          </div>
-
-          {/* Meta row */}
-          <div className="flex items-center gap-2 mt-2">
-            {styleLabel && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-white/30">
-                {styleLabel}
-              </span>
-            )}
-            <span className="text-[10px] text-white/20">{updatedDate}</span>
+              Cancel
+            </button>
           </div>
         </div>
-      </div>
-    </button>
+      )}
+
+      <button onClick={onClick} className="w-full p-4 text-left">
+        <div className="flex items-start gap-3">
+          {/* Thumbnail or icon */}
+          {draft.thumbnail_base64 ? (
+            <div className="w-11 h-11 rounded-lg overflow-hidden flex-shrink-0 bg-[#1A1E2F]">
+              <img
+                src={`data:image/jpeg;base64,${draft.thumbnail_base64}`}
+                alt=""
+                className="w-full h-full object-cover"
+              />
+            </div>
+          ) : (
+            <div className="w-11 h-11 rounded-lg bg-[#1A1E2F] flex items-center justify-center flex-shrink-0">
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#555"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            </div>
+          )}
+
+          <div className="flex-1 min-w-0">
+            {/* Title */}
+            <h3 className="text-white font-medium text-sm truncate group-hover:text-[#B8B6FC] transition-colors">
+              {draft.title || "Untitled"}
+            </h3>
+
+            {/* Progress + status label */}
+            <div className="flex items-center gap-2 mt-2">
+              <ProgressDots status={draft.status} />
+              <span
+                className={`text-[10px] font-medium ${
+                  isFailed ? "text-red-400" : "text-white/40"
+                }`}
+              >
+                {getStatusLabel(draft.status)}
+              </span>
+            </div>
+
+            {/* Meta row */}
+            <div className="flex items-center gap-2 mt-2">
+              {styleLabel && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-white/30">
+                  {styleLabel}
+                </span>
+              )}
+              <span className="text-[10px] text-white/20">{updatedDate}</span>
+            </div>
+          </div>
+        </div>
+      </button>
+
+      {/* Delete button (top-right, visible on hover) */}
+      <button
+        onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
+        className="absolute top-2 right-2 w-7 h-7 rounded-full bg-white/5 flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500/20 transition-all"
+        title="Delete draft"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+        </svg>
+      </button>
+    </div>
   );
 }
 
@@ -209,11 +246,13 @@ function StorySection({
   coverUrl,
   drafts,
   onDraftClick,
+  onDraftDelete,
 }: {
   storyName: string;
   coverUrl: string | null;
   drafts: GenerationWithStory[];
   onDraftClick: (id: string) => void;
+  onDraftDelete: (id: string) => void;
 }) {
   return (
     <div className="border-l-2 border-[#9C99FF]/40 pl-5">
@@ -251,6 +290,7 @@ function StorySection({
             key={draft.id}
             draft={draft}
             onClick={() => onDraftClick(draft.id)}
+            onDelete={onDraftDelete}
           />
         ))}
       </div>
@@ -336,9 +376,23 @@ export default function DraftsPage() {
     return counts;
   }, [drafts]);
 
+  const queryClient = useQueryClient();
+
   const handleDraftClick = (id: string) => {
     router.push(`/create-episode?g=${id}`);
   };
+
+  const handleDraftDelete = useCallback(
+    async (id: string) => {
+      try {
+        await deleteGeneration(id);
+        queryClient.invalidateQueries({ queryKey: queryKeys.generations() });
+      } catch (err) {
+        console.error("Failed to delete draft:", err);
+      }
+    },
+    [queryClient]
+  );
 
   const storyPickerData = stories.map((s) => ({
     id: s.id,
@@ -547,6 +601,7 @@ export default function DraftsPage() {
                 coverUrl={group.story?.cover_url || null}
                 drafts={group.drafts}
                 onDraftClick={handleDraftClick}
+                onDraftDelete={handleDraftDelete}
               />
             ))}
           </div>

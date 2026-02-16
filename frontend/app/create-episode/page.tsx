@@ -12,7 +12,7 @@ import {
   type GenJob,
 } from "@/lib/supabase/ai-generations";
 import { useAuth } from "@/app/context/AuthContext";
-import { getMyStories, getStoryCharacters, getStoryLocations, createStoryCharacter, createStoryLocation, createStory, submitJob, getEpisodeStoryboards, upsertEpisodeStoryboards } from "@/lib/api/creator";
+import { getMyStories, getStoryCharacters, getStoryLocations, createStoryCharacter, createStoryLocation, createStory, submitJob, getEpisodeStoryboards, upsertEpisodeStoryboards, getEpisodeClips, upsertEpisodeClips, type EpisodeClipFE } from "@/lib/api/creator";
 import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 import { useGenJobs } from "@/lib/hooks/useGenJobs";
 import type { StoryCharacterFE, StoryLocationFE, EpisodeStoryboardFE } from "@/app/data/mockCreatorData";
@@ -20,6 +20,7 @@ import StoryPickerModal from "@/app/components/creator/StoryPickerModal";
 import CreateEpisodeModal from "@/app/components/creator/CreateEpisodeModal";
 import CharacterModal from "@/app/components/creator/CharacterModal";
 import LocationModal from "@/app/components/creator/LocationModal";
+import FilmPreviewModal from "@/app/components/creator/FilmPreviewModal";
 import CharacterLocationPicker, { type SelectedCharacter } from "./components/CharacterLocationPicker";
 
 // ============================================================
@@ -264,6 +265,16 @@ interface PromptPreviewState {
   isLoading: boolean;
 }
 
+// Clip state for per-scene video generation (Step 3)
+interface ClipState {
+  sceneNumber: number;
+  status: "idle" | "generating" | "completed" | "failed";
+  videoUrl: string | null;
+  veoPrompt: string | null;
+  error: string | null;
+  feedback: string;
+}
+
 // Cost tracking across all phases
 interface TotalCost {
   story: number;
@@ -407,6 +418,14 @@ export default function CreateEpisodePage() {
     isLoading: false,
   });
 
+  // Phase 5: Clips stage (per-scene video generation)
+  const [clipsActive, setClipsActive] = useState(false);
+  const [clipStates, setClipStates] = useState<Record<number, ClipState>>({});
+  const [selectedClipScene, setSelectedClipScene] = useState(1);
+  const [assembledVideoUrl, setAssembledVideoUrl] = useState<string | null>(null);
+  const [isAssembling, setIsAssembling] = useState(false);
+  const [showFilmPreview, setShowFilmPreview] = useState(false);
+
   // Cost tracking across all phases
   const [totalCost, setTotalCost] = useState<TotalCost>({
     story: 0,
@@ -542,6 +561,23 @@ export default function CreateEpisodePage() {
         break;
       case "shot_regenerate":
         setRegeneratingShotNum(null);
+        break;
+      case "clip": {
+        const failedScene = parseInt(job.target_id);
+        if (!isNaN(failedScene)) {
+          setClipStates((prev) => ({
+            ...prev,
+            [failedScene]: { ...prev[failedScene], status: "failed", error: errMsg },
+          }));
+          const genId = generationIdRef.current;
+          if (genId) {
+            upsertEpisodeClips(genId, [{ scene_number: failedScene, status: "failed", error_message: errMsg }]).catch(() => {});
+          }
+        }
+        break;
+      }
+      case "assemble":
+        setIsAssembling(false);
         break;
     }
   };
@@ -810,6 +846,47 @@ export default function CreateEpisodePage() {
         }
         if (result.cost) setTotalCost((prev) => ({ ...prev, film: (result.cost as { total_usd: number }).total_usd }));
         setRegeneratingShotNum(null);
+        break;
+      }
+      case "clip": {
+        const sceneNum = parseInt(job.target_id);
+        const videoUrl = result.video_url as string | undefined;
+        const veoPrompt = result.veo_prompt as string | undefined;
+        const cost = result.cost as number | undefined;
+        if (!isNaN(sceneNum) && videoUrl) {
+          setClipStates((prev) => ({
+            ...prev,
+            [sceneNum]: {
+              ...prev[sceneNum],
+              status: "completed",
+              videoUrl,
+              veoPrompt: veoPrompt || null,
+              error: null,
+              feedback: "",
+            },
+          }));
+          // Persist to DB
+          const genId = generationIdRef.current;
+          if (genId) {
+            upsertEpisodeClips(genId, [{
+              scene_number: sceneNum,
+              status: "completed",
+              video_url: videoUrl,
+              veo_prompt: veoPrompt || null,
+              cost: cost || 0,
+            }]).catch(() => {});
+          }
+          if (cost) setTotalCost((prev) => ({ ...prev, film: prev.film + cost }));
+        }
+        break;
+      }
+      case "assemble": {
+        const assembledUrl = result.assembled_video_url as string | undefined;
+        if (assembledUrl) {
+          setAssembledVideoUrl(assembledUrl);
+          setShowFilmPreview(true);
+        }
+        setIsAssembling(false);
         break;
       }
     }
@@ -1197,8 +1274,8 @@ export default function CreateEpisodePage() {
     // isGenerating intentionally omitted — transient state, always false on restore
     visualsActive,
     visualsTab,
-    // Images are DB-authoritative (story_characters/story_locations tables).
-    // JSONB only stores supplementary state — no image data.
+    // Images are DB-authoritative for library chars (story_characters/story_locations tables).
+    // JSONB also stores image_url (lightweight) so AI-only chars survive restore.
     characterImages: Object.fromEntries(
       Object.entries(characterImages).map(([k, v]) => [k, {
         selectedIndex: v.selectedIndex,
@@ -1206,6 +1283,8 @@ export default function CreateEpisodePage() {
         feedback: v.feedback,
         promptUsed: v.promptUsed,
         refImages: v.refImages.map((r) => ({ url: r.url, mimeType: r.mimeType, name: r.name })),
+        // Persist image URL (not base64) so non-library chars survive refresh
+        image: v.image ? { type: v.image.type, image_url: v.image.image_url, mime_type: v.image.mime_type, prompt_used: v.image.prompt_used } : null,
       }])
     ),
     locationImages: Object.fromEntries(
@@ -1215,6 +1294,7 @@ export default function CreateEpisodePage() {
         feedback: v.feedback,
         promptUsed: v.promptUsed,
         refImages: v.refImages.map((r) => ({ url: r.url, mimeType: r.mimeType, name: r.name })),
+        image: v.image ? { type: v.image.type, image_url: v.image.image_url, mime_type: v.image.mime_type, prompt_used: v.image.prompt_used } : null,
       }])
     ),
     // Scene images are DB-authoritative (episode_storyboards table).
@@ -1237,11 +1317,15 @@ export default function CreateEpisodePage() {
     film,
     clipsApproved,
     shotFeedback,
+    clipsActive,
+    selectedClipScene,
     totalCost,
   });
 
   /** Derive generation status from current state — single source of truth */
   const inferStatus = (): string => {
+    if (clipsActive && allClipsCompleted) return "ready";
+    if (clipsActive) return "filming";
     if (film.status === "generating" || film.status === "assembling") return "filming";
     if (film.status === "ready") return "ready";
     if (film.status === "failed") return "failed";
@@ -1544,6 +1628,44 @@ export default function CreateEpisodePage() {
       if (s.shotFeedback) setShotFeedback(s.shotFeedback as Record<number, string>);
       if (s.totalCost) setTotalCost(s.totalCost as TotalCost);
 
+      // Restore clips stage from DB
+      if (s.clipsActive) {
+        setClipsActive(true);
+        if (s.selectedClipScene) setSelectedClipScene(s.selectedClipScene as number);
+        try {
+          const dbClips = await getEpisodeClips(genId);
+          const restoredStoryInner = s.story as Story | null;
+          const scenes = restoredStoryInner ? getScenes(restoredStoryInner) : [];
+          const clipMap: Record<number, ClipState> = {};
+          // Init all scenes as idle
+          for (const scene of scenes) {
+            clipMap[scene.scene_number] = {
+              sceneNumber: scene.scene_number,
+              status: "idle",
+              videoUrl: null,
+              veoPrompt: null,
+              error: null,
+              feedback: "",
+            };
+          }
+          // Overlay DB clips
+          for (const clip of dbClips) {
+            clipMap[clip.sceneNumber] = {
+              sceneNumber: clip.sceneNumber,
+              status: clip.status === "completed" ? "completed"
+                : clip.status === "generating" ? "generating"
+                : clip.status === "failed" ? "failed"
+                : "idle",
+              videoUrl: clip.videoUrl,
+              veoPrompt: clip.veoPrompt,
+              error: clip.errorMessage,
+              feedback: "",
+            };
+          }
+          setClipStates(clipMap);
+        } catch { /* non-fatal */ }
+      }
+
       // Restore film state — film_job from Supabase is source of truth; fallback to snapshot
       if (data.film_job) {
         const fj = data.film_job;
@@ -1645,6 +1767,12 @@ export default function CreateEpisodePage() {
     setRegeneratingShotNum(null);
     setShotFeedback({});
     setPromptPreview({ shots: [], editedPrompts: {}, estimatedCostUsd: 0, isLoading: false });
+    setClipsActive(false);
+    setClipStates({});
+    setSelectedClipScene(1);
+    setAssembledVideoUrl(null);
+    setIsAssembling(false);
+    setShowFilmPreview(false);
     setSelectedChars([]);
     setSelectedLocation(null);
     setStoryLibraryChars([]);
@@ -1959,14 +2087,11 @@ export default function CreateEpisodePage() {
     );
   };
 
-  // Refine a single scene image with feedback
+  // Refine a single scene image with feedback — edit-only: current image + feedback
   const refineSceneImage = async (sceneNumber: number) => {
     if (!story) return;
     const scene = sceneImages[sceneNumber];
-    if (!scene || !scene.feedback.trim()) return;
-
-    const approvedVisuals = buildApprovedVisuals();
-    if (!approvedVisuals) return;
+    if (!scene || !scene.feedback.trim() || !scene.image) return;
 
     setSceneImages((prev) => ({
       ...prev,
@@ -1987,11 +2112,13 @@ export default function CreateEpisodePage() {
         "scene_image",
         "/moodboard/refine-scene-image",
         {
-          story,
-          approved_visuals: approvedVisuals,
           scene_number: sceneNumber,
-          visual_description: scene.visualDescription,
           feedback: scene.feedback,
+          current_image: {
+            image_base64: scene.image.image_base64 || null,
+            image_url: scene.image.image_url || null,
+            mime_type: scene.image.mime_type,
+          },
         },
         { generationId: generationIdRef.current!, targetId: String(sceneNumber) }
       );
@@ -2175,7 +2302,7 @@ export default function CreateEpisodePage() {
   }, [
     generationId, story, visualsActive, visualsTab,
     characterImages, locationImages, sceneImages, promptPreview,
-    film, clipsApproved, totalCost,
+    film, clipsApproved, clipsActive, clipStates, totalCost,
     episodeName, episodeNumber, episodeIsFree,
   ]);
 
@@ -2418,6 +2545,12 @@ export default function CreateEpisodePage() {
     resetVisualDirection();
     setStory(null);
     setIdea("");
+    setClipsActive(false);
+    setClipStates({});
+    setSelectedClipScene(1);
+    setAssembledVideoUrl(null);
+    setIsAssembling(false);
+    setShowFilmPreview(false);
     // Reset all costs
     setTotalCost({
       story: 0,
@@ -2427,6 +2560,154 @@ export default function CreateEpisodePage() {
       film: 0,
     });
   };
+
+  // ============================================================
+  // Phase 5: Per-Scene Clip Generation (Clips Stage)
+  // ============================================================
+
+  /** Enter the clips stage from the visuals approval */
+  const enterClipsStage = async () => {
+    if (!story) return;
+    const scenes = getScenes(story);
+    // Initialize clip states for all scenes
+    const initial: Record<number, ClipState> = {};
+    for (const scene of scenes) {
+      initial[scene.scene_number] = {
+        sceneNumber: scene.scene_number,
+        status: "idle",
+        videoUrl: null,
+        veoPrompt: null,
+        error: null,
+        feedback: "",
+      };
+    }
+    setClipStates(initial);
+    setSelectedClipScene(1);
+    setClipsActive(true);
+    setAssembledVideoUrl(null);
+    saveNow({ clipsActive: true });
+
+    // Fetch existing clips from DB (for restore scenarios)
+    const genId = generationIdRef.current;
+    if (genId) {
+      try {
+        const dbClips = await getEpisodeClips(genId);
+        if (dbClips.length > 0) {
+          setClipStates((prev) => {
+            const updated = { ...prev };
+            for (const clip of dbClips) {
+              updated[clip.sceneNumber] = {
+                sceneNumber: clip.sceneNumber,
+                status: clip.status === "completed" ? "completed"
+                  : clip.status === "generating" ? "generating"
+                  : clip.status === "failed" ? "failed"
+                  : "idle",
+                videoUrl: clip.videoUrl,
+                veoPrompt: clip.veoPrompt,
+                error: clip.errorMessage,
+                feedback: "",
+              };
+            }
+            return updated;
+          });
+        }
+      } catch (e) { console.warn("Failed to fetch existing clips:", e); }
+    }
+  };
+
+  /** Generate a single clip for the given scene number */
+  const generateClip = async (sceneNumber: number) => {
+    if (!story) return;
+    const scenes = getScenes(story);
+    const scene = scenes.find((s) => s.scene_number === sceneNumber);
+    if (!scene) return;
+
+    const approvedVisuals = buildApprovedVisuals();
+    if (!approvedVisuals) return;
+
+    const feedbackText = clipStates[sceneNumber]?.feedback || "";
+
+    // Update local state to generating
+    setClipStates((prev) => ({
+      ...prev,
+      [sceneNumber]: { ...prev[sceneNumber], status: "generating", error: null },
+    }));
+
+    // Upsert DB row to generating
+    const genId = generationIdRef.current;
+    if (genId) {
+      upsertEpisodeClips(genId, [{ scene_number: sceneNumber, status: "generating" }]).catch(() => {});
+    }
+
+    try {
+      clearProcessedJob("clip", String(sceneNumber));
+      await submitJob(
+        "clip",
+        "/film/generate-clip",
+        {
+          story,
+          approved_visuals: approvedVisuals,
+          scene_number: sceneNumber,
+          scene,
+          feedback: feedbackText || undefined,
+          generation_id: genId,
+        },
+        { generationId: genId!, targetId: String(sceneNumber) }
+      );
+    } catch (err) {
+      setClipStates((prev) => ({
+        ...prev,
+        [sceneNumber]: {
+          ...prev[sceneNumber],
+          status: "failed",
+          error: err instanceof Error ? err.message : "Failed to submit clip generation",
+        },
+      }));
+    }
+  };
+
+  /** Assemble all clips into a single video via backend */
+  const assembleClips = async () => {
+    const genId = generationIdRef.current;
+    if (!genId) return;
+
+    const clipUrls = Object.values(clipStates)
+      .filter((c) => c.status === "completed" && c.videoUrl)
+      .sort((a, b) => a.sceneNumber - b.sceneNumber)
+      .map((c) => ({ scene_number: c.sceneNumber, video_url: c.videoUrl! }));
+
+    if (clipUrls.length === 0) return;
+
+    setIsAssembling(true);
+    try {
+      clearProcessedJob("assemble");
+      await submitJob(
+        "assemble",
+        "/film/assemble-clips",
+        { generation_id: genId, clip_urls: clipUrls },
+        { generationId: genId }
+      );
+      // Result handled by Realtime
+    } catch (err) {
+      setIsAssembling(false);
+      console.error("Assembly failed:", err);
+    }
+  };
+
+  /** Preview the assembled film — assemble if needed, then show modal */
+  const previewFilm = async () => {
+    if (assembledVideoUrl) {
+      setShowFilmPreview(true);
+      return;
+    }
+    await assembleClips();
+    // Modal will open when assembly completes via Realtime
+  };
+
+  // Check if all clips are completed
+  const allClipsCompleted = story
+    ? getScenes(story).length > 0 && getScenes(story).every((s) => clipStates[s.scene_number]?.status === "completed")
+    : false;
 
   // Calculate grand total cost
   const grandTotalCost = totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film;
@@ -2532,13 +2813,13 @@ export default function CreateEpisodePage() {
         {/* Step Indicator + Save Draft */}
         <div className="relative flex items-center justify-center gap-2 mb-8">
           {[
-            { num: 1, label: "Create Your Script", active: !visualsActive && film.status === "idle" },
-            { num: 2, label: "Build Your Visuals", active: visualsActive && film.status === "idle" },
-            { num: 3, label: "Create Your Video", active: film.status !== "idle" },
+            { num: 1, label: "Create Your Script", active: !visualsActive && !clipsActive },
+            { num: 2, label: "Build Your Visuals", active: visualsActive && !clipsActive },
+            { num: 3, label: "Create Your Video", active: clipsActive },
           ].map((step, i) => {
-            const isCompleted = step.num === 1 ? (visualsActive || film.status !== "idle")
-              : step.num === 2 ? film.status !== "idle"
-              : film.status === "ready";
+            const isCompleted = step.num === 1 ? (visualsActive || clipsActive)
+              : step.num === 2 ? clipsActive
+              : allClipsCompleted;
             return (
               <div key={step.num} className="flex items-center gap-2">
                 {i > 0 && <div className={`w-16 sm:w-24 h-[2px] ${isCompleted || step.active ? "bg-[#9C99FF]" : "bg-white/10"}`} />}
@@ -2596,7 +2877,7 @@ export default function CreateEpisodePage() {
           )}
         </div>
 
-        {!visualsActive && film.status === "idle" && (
+        {!visualsActive && !clipsActive && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column: Input Form */}
           <div className="bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
@@ -2936,16 +3217,56 @@ export default function CreateEpisodePage() {
                                   placeholder="What characters physically do..."
                                 />
                               </div>
-                              {/* Dialogue */}
+                              {/* Dialogue — structured per-line editor */}
                               <div>
                                 <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Dialogue</label>
-                                <textarea
-                                  value={draft.dialogue || ""}
-                                  onChange={(e) => setEditSceneDraft({ ...draft, dialogue: e.target.value || null })}
-                                  className="w-full bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
-                                  rows={2}
-                                  placeholder="CHARACTER: What they say..."
-                                />
+                                {(() => {
+                                  const charsInScene = (draft.characters_on_screen || []).map(id => story.characters.find(c => c.id === id)).filter(Boolean);
+                                  const resolveChar = (raw: string) => {
+                                    const lower = raw.toLowerCase();
+                                    return charsInScene.find(c => c!.name.toLowerCase() === lower || c!.name.toLowerCase().includes(lower) || lower.includes(c!.name.toLowerCase()))?.name || raw;
+                                  };
+                                  const lines = (draft.dialogue || "").split("\n").filter(Boolean).map(raw => {
+                                    const idx = raw.indexOf(":");
+                                    return idx > 0 ? { character: resolveChar(raw.slice(0, idx).trim()), line: raw.slice(idx + 1).trim() } : { character: "", line: raw.trim() };
+                                  });
+                                  if (lines.length === 0) lines.push({ character: "", line: "" });
+                                  const updateLines = (updated: { character: string; line: string }[]) => {
+                                    const serialized = updated.filter(l => l.character || l.line).map(l => l.character ? `${l.character}: ${l.line}` : l.line).join("\n");
+                                    setEditSceneDraft({ ...draft, dialogue: serialized || null });
+                                  };
+                                  return (
+                                    <div className="space-y-2">
+                                      {lines.map((dl, i) => (
+                                        <div key={i} className="flex gap-2 items-start">
+                                          <select
+                                            value={dl.character}
+                                            onChange={(e) => { const u = [...lines]; u[i] = { ...u[i], character: e.target.value }; updateLines(u); }}
+                                            className="w-[120px] flex-shrink-0 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                                          >
+                                            <option value="">Character...</option>
+                                            {charsInScene.map(c => <option key={c!.id} value={c!.name}>{c!.name}</option>)}
+                                          </select>
+                                          <input
+                                            value={dl.line}
+                                            onChange={(e) => { const u = [...lines]; u[i] = { ...u[i], line: e.target.value }; updateLines(u); }}
+                                            className="flex-1 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                                            placeholder="What they say..."
+                                          />
+                                          {lines.length > 1 && (
+                                            <button onClick={() => { const u = lines.filter((_, j) => j !== i); updateLines(u); }} className="text-white/30 hover:text-red-400 text-sm px-1">✕</button>
+                                          )}
+                                        </div>
+                                      ))}
+                                      <button
+                                        onClick={() => updateLines([...lines, { character: charsInScene[0]?.name || "", line: "" }])}
+                                        className="text-[10px] text-[#B8B6FC] hover:text-white transition-colors"
+                                      >
+                                        + Add line
+                                      </button>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                               {/* Image prompt (collapsible) */}
                               <details className="group">
@@ -3080,7 +3401,7 @@ export default function CreateEpisodePage() {
         )}
 
         {/* Section 2: Build Your Visuals */}
-        {visualsActive && story && (
+        {visualsActive && !clipsActive && story && (
           <>
             {/* Sub-tab breadcrumb navigation */}
             <div className="flex items-center gap-2 mb-6">
@@ -3508,11 +3829,11 @@ export default function CreateEpisodePage() {
                       &larr; Back to Your Locations
                     </button>
                     <button
-                      onClick={fetchPromptPreviews}
-                      disabled={promptPreview.isLoading || !Object.values(sceneImages).every(s => s.image)}
+                      onClick={enterClipsStage}
+                      disabled={!Object.values(sceneImages).every(s => s.image)}
                       className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {promptPreview.isLoading ? "Generating Prompts..." : "Approve & Continue"}
+                      Approve & Continue
                     </button>
                   </div>
                 </div>
@@ -3583,461 +3904,527 @@ export default function CreateEpisodePage() {
           />
         )}
 
-        {/* Section 3.5: Pre-Flight Check (Prompt Preview) */}
-        {promptPreview.shots.length > 0 && film.status === "idle" && (
-          <div className="mt-8 bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
-            <h2 className="text-xl font-semibold text-white mb-2">Pre-Flight Check</h2>
-            <p className="text-[#ADADAD] mb-6 text-sm">
-              Review and edit the Veo prompts before generating. Each prompt drives one 8-second clip.
-            </p>
+        {/* Section 3: Create Your Video (3-Pane Clips UI) */}
+        {clipsActive && story && (() => {
+          const scenes = getScenes(story);
+          const currentScene = scenes.find((s) => s.scene_number === selectedClipScene) || scenes[0];
+          const currentClip = clipStates[selectedClipScene];
+          const locationName = story.locations.find((l) => l.id === currentScene?.setting_id)?.name || currentScene?.setting_id || "";
+          const storyboardImg = sceneImages[selectedClipScene]?.image;
 
-            <div className="space-y-4">
-              {promptPreview.shots.map((shot) => {
-                const editedPrompt = promptPreview.editedPrompts[shot.beat_number] || shot.veo_prompt;
-                const isEdited = editedPrompt !== shot.veo_prompt;
+          return (
+            <div>
+              {/* Back to visuals */}
+              <button
+                onClick={() => { setClipsActive(false); saveNow({ clipsActive: false }); }}
+                className="text-sm text-[#ADADAD] hover:text-white transition-colors mb-4"
+              >
+                &larr; Back to Visuals
+              </button>
 
-                return (
-                  <div key={shot.beat_number} className="bg-[#1A1E2F] rounded-xl p-4">
-                    {/* Header: beat number + scene heading + copy */}
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 bg-[#B8B6FC] rounded-full flex items-center justify-center text-black font-bold text-sm">
-                          {shot.beat_number}
-                        </div>
-                        <span className="text-white font-medium text-sm">
-                          {shot.scene_heading || `Scene ${shot.beat_number}`}
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(editedPrompt)}
-                        className="text-xs text-[#ADADAD] hover:text-white px-2 py-1 rounded hover:bg-white/10 transition-colors"
-                      >
-                        Copy
-                      </button>
-                    </div>
+              <div className="flex gap-0 bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] overflow-hidden" style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
 
-                    {/* Scene storyboard image for this shot */}
-                    <div className="flex items-center gap-2 mb-3">
-                      {(() => {
-                        const si = sceneImages[shot.beat_number];
-                        if (!si?.image) return <span className="text-[10px] text-[#555]">No scene ref</span>;
-                        return (
-                          <>
-                            <img
-                              src={getImageSrc(si.image)}
-                              className="w-10 h-14 object-cover rounded border border-[#B8B6FC]/30"
-                              title={`Scene ${shot.beat_number} storyboard`}
-                            />
-                            <span className="text-[10px] text-[#555] ml-1">
-                              Scene ref (1 image)
-                            </span>
-                          </>
-                        );
-                      })()}
-                    </div>
-
-                    {/* Editable prompt textarea */}
-                    <textarea
-                      value={editedPrompt}
-                      onChange={(e) =>
-                        setPromptPreview((prev) => ({
-                          ...prev,
-                          editedPrompts: {
-                            ...prev.editedPrompts,
-                            [shot.beat_number]: e.target.value,
-                          },
-                        }))
-                      }
-                      className="w-full h-28 bg-[#262626] text-white text-sm font-mono rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                    />
-                    <div className="flex justify-between mt-1">
-                      <span className="text-[10px] text-[#555]">
-                        {editedPrompt.split(/\s+/).filter(Boolean).length} words
-                      </span>
-                      {isEdited && (
-                        <button
-                          onClick={() =>
-                            setPromptPreview((prev) => ({
-                              ...prev,
-                              editedPrompts: {
-                                ...prev.editedPrompts,
-                                [shot.beat_number]: shot.veo_prompt,
-                              },
-                            }))
-                          }
-                          className="text-[10px] text-[#ADADAD] hover:text-white transition-colors"
-                        >
-                          Reset to original
-                        </button>
+                {/* === LEFT PANE: Script + Generate (max 50%) === */}
+                <div className="flex-1 min-w-0 p-5 overflow-y-auto border-r border-white/5" style={{ maxWidth: "50%" }}>
+                  {currentScene && (
+                    <>
+                      {/* Scene heading */}
+                      {currentScene.scene_heading && (
+                        <p className="text-white/50 text-xs font-mono mb-3 tracking-wider">{currentScene.scene_heading}</p>
                       )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
 
-            {/* Cost + action buttons */}
-            <div className="mt-6 pt-6 border-t border-white/10">
-              <p className="text-amber-200/80 text-xs mb-4">
-                This will generate {promptPreview.shots.length} video clips (~${promptPreview.estimatedCostUsd.toFixed(0)}). Please ensure prompts look good before proceeding.
-              </p>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-[#ADADAD] text-sm">
-                    Estimated cost: <span className="text-white font-medium">~${promptPreview.estimatedCostUsd.toFixed(2)}</span>
-                  </p>
-                  <p className="text-[10px] text-[#555]">
-                    {promptPreview.shots.length} clips x 8s (key moment refs)
-                  </p>
+                      {/* Location + Scene number */}
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-white/50">{locationName}</span>
+                        <span className="text-white/30 text-xs">Scene {currentScene.scene_number}</span>
+                      </div>
+
+                      {/* Action */}
+                      {currentScene.action && (
+                        <p className="text-white/70 text-sm italic mb-3 leading-relaxed">{currentScene.action}</p>
+                      )}
+
+                      {/* Dialogue */}
+                      {currentScene.dialogue && (
+                        <div className="mb-4 space-y-1">
+                          {currentScene.dialogue.split("\n").map((line, li) => (
+                            <p key={li} className="text-[#ADADAD] text-sm">
+                              {line.includes(":") ? (
+                                <>
+                                  <span className="text-white font-medium">{line.split(":")[0]}:</span>{" "}
+                                  &ldquo;{line.split(":").slice(1).join(":").trim()}&rdquo;
+                                </>
+                              ) : (
+                                <>&ldquo;{line}&rdquo;</>
+                              )}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Characters in this scene */}
+                      {(currentScene.characters_on_screen || []).length > 0 && (
+                        <div className="mb-4 pt-3 border-t border-white/5">
+                          <p className="text-[10px] text-white/40 uppercase tracking-wider mb-2">Characters in Scene</p>
+                          <div className="flex flex-wrap gap-2">
+                            {currentScene.characters_on_screen.map((charId) => {
+                              const char = story.characters.find((c) => c.id === charId);
+                              const charImg = characterImages[charId]?.image;
+                              return (
+                                <div key={charId} className="flex items-center gap-1.5">
+                                  {charImg ? (
+                                    <img
+                                      src={getImageSrc(charImg)}
+                                      alt={char?.name}
+                                      className="w-8 h-11 rounded object-cover"
+                                    />
+                                  ) : (
+                                    <div className="w-8 h-11 rounded bg-white/10 flex items-center justify-center text-[8px] text-white/30">?</div>
+                                  )}
+                                  <span className="text-white/60 text-xs">{char?.name || charId}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Edit script link */}
+                      <div className="mb-4">
+                        <button
+                          onClick={() => {
+                            const idx = scenes.findIndex((s) => s.scene_number === selectedClipScene);
+                            if (idx >= 0) {
+                              setEditingSceneIndex(idx);
+                              setEditSceneDraft({ ...currentScene });
+                            }
+                          }}
+                          className="text-xs text-[#B8B6FC] hover:text-[#9C99FF] font-medium"
+                        >
+                          Edit Script
+                        </button>
+                      </div>
+
+                      {/* Edit mode (full form matching Step 1) */}
+                      {editingSceneIndex !== null && editSceneDraft && editingSceneIndex === scenes.findIndex((s) => s.scene_number === selectedClipScene) && (
+                        <div className="bg-[#1A1E2F] rounded-xl p-4 mb-4 space-y-3">
+                          {/* Title + Duration */}
+                          <div className="flex gap-2">
+                            <input
+                              value={editSceneDraft.title}
+                              onChange={(e) => setEditSceneDraft({ ...editSceneDraft, title: e.target.value })}
+                              className="flex-1 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                              placeholder="Scene title..."
+                            />
+                            <select
+                              value={editSceneDraft.duration}
+                              onChange={(e) => setEditSceneDraft({ ...editSceneDraft, duration: e.target.value })}
+                              className="w-28 bg-[#262626] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                            >
+                              {[6,7,8,9].map(s => <option key={s} value={`${s} seconds`}>{s}s</option>)}
+                            </select>
+                          </div>
+                          {/* Scene heading */}
+                          <input
+                            value={editSceneDraft.scene_heading || ""}
+                            onChange={(e) => setEditSceneDraft({ ...editSceneDraft, scene_heading: e.target.value })}
+                            placeholder="INT. KITCHEN - NIGHT"
+                            className="w-full bg-[#262626] text-white/50 text-xs font-mono rounded px-2 py-1 placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                          />
+                          {/* Characters on screen (multi-select) */}
+                          <div>
+                            <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Characters</label>
+                            <div className="flex flex-wrap gap-1">
+                              {story.characters.map(c => {
+                                const isIn = (editSceneDraft.characters_on_screen || []).includes(c.id);
+                                return (
+                                  <button
+                                    key={c.id}
+                                    onClick={() => {
+                                      const updated = isIn
+                                        ? editSceneDraft.characters_on_screen.filter((id: string) => id !== c.id)
+                                        : [...(editSceneDraft.characters_on_screen || []), c.id];
+                                      setEditSceneDraft({ ...editSceneDraft, characters_on_screen: updated });
+                                    }}
+                                    className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                                      isIn ? "border-[#B8B6FC] text-[#B8B6FC] bg-[#B8B6FC]/10" : "border-white/20 text-white/50 hover:border-white/40"
+                                    }`}
+                                  >
+                                    {c.name}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          {/* Setting (single select) */}
+                          <div>
+                            <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Setting</label>
+                            <select
+                              value={editSceneDraft.setting_id}
+                              onChange={(e) => setEditSceneDraft({ ...editSceneDraft, setting_id: e.target.value })}
+                              className="w-full bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                            >
+                              {story.locations.map(loc => (
+                                <option key={loc.id} value={loc.id}>{loc.name || loc.id}</option>
+                              ))}
+                            </select>
+                          </div>
+                          {/* Action */}
+                          <div>
+                            <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Action</label>
+                            <textarea
+                              value={editSceneDraft.action}
+                              onChange={(e) => setEditSceneDraft({ ...editSceneDraft, action: e.target.value })}
+                              className="w-full bg-[#262626] text-white/70 text-sm italic rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
+                              rows={2}
+                              placeholder="What characters physically do..."
+                            />
+                          </div>
+                          {/* Dialogue — structured per-line editor */}
+                          <div>
+                            <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Dialogue</label>
+                            {(() => {
+                              const charsInScene = (editSceneDraft.characters_on_screen || []).map(id => story.characters.find(c => c.id === id)).filter(Boolean);
+                              const resolveChar = (raw: string) => {
+                                const lower = raw.toLowerCase();
+                                return charsInScene.find(c => c!.name.toLowerCase() === lower || c!.name.toLowerCase().includes(lower) || lower.includes(c!.name.toLowerCase()))?.name || raw;
+                              };
+                              const lines = (editSceneDraft.dialogue || "").split("\n").filter(Boolean).map(raw => {
+                                const idx = raw.indexOf(":");
+                                return idx > 0 ? { character: resolveChar(raw.slice(0, idx).trim()), line: raw.slice(idx + 1).trim() } : { character: "", line: raw.trim() };
+                              });
+                              if (lines.length === 0) lines.push({ character: "", line: "" });
+                              const updateLines = (updated: { character: string; line: string }[]) => {
+                                const serialized = updated.filter(l => l.character || l.line).map(l => l.character ? `${l.character}: ${l.line}` : l.line).join("\n");
+                                setEditSceneDraft({ ...editSceneDraft, dialogue: serialized || null });
+                              };
+                              return (
+                                <div className="space-y-2">
+                                  {lines.map((dl, i) => (
+                                    <div key={i} className="flex gap-2 items-start">
+                                      <select
+                                        value={dl.character}
+                                        onChange={(e) => { const u = [...lines]; u[i] = { ...u[i], character: e.target.value }; updateLines(u); }}
+                                        className="w-[120px] flex-shrink-0 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                                      >
+                                        <option value="">Character...</option>
+                                        {charsInScene.map(c => <option key={c!.id} value={c!.name}>{c!.name}</option>)}
+                                      </select>
+                                      <input
+                                        value={dl.line}
+                                        onChange={(e) => { const u = [...lines]; u[i] = { ...u[i], line: e.target.value }; updateLines(u); }}
+                                        className="flex-1 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                                        placeholder="What they say..."
+                                      />
+                                      {lines.length > 1 && (
+                                        <button onClick={() => { const u = lines.filter((_, j) => j !== i); updateLines(u); }} className="text-white/30 hover:text-red-400 text-sm px-1">✕</button>
+                                      )}
+                                    </div>
+                                  ))}
+                                  <button
+                                    onClick={() => updateLines([...lines, { character: charsInScene[0]?.name || "", line: "" }])}
+                                    className="text-[10px] text-[#B8B6FC] hover:text-white transition-colors"
+                                  >
+                                    + Add line
+                                  </button>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                          {/* Image prompt (collapsible) */}
+                          <details className="group">
+                            <summary className="text-[10px] text-white/40 uppercase tracking-wider cursor-pointer hover:text-white/60">Image Prompt</summary>
+                            <textarea
+                              value={editSceneDraft.image_prompt}
+                              onChange={(e) => setEditSceneDraft({ ...editSceneDraft, image_prompt: e.target.value })}
+                              className="w-full mt-1 bg-[#262626] text-white/60 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
+                              rows={3}
+                              placeholder="Camera sees: composition, framing, lighting..."
+                            />
+                          </details>
+                          {/* Save/Cancel */}
+                          <div className="flex gap-2 pt-2 border-t border-white/10">
+                            <button
+                              onClick={() => saveSceneEdit(editingSceneIndex, editSceneDraft)}
+                              className="px-3 py-1.5 bg-[#B8B6FC] text-black text-xs font-medium rounded-lg hover:opacity-90"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => { setEditingSceneIndex(null); setEditSceneDraft(null); }}
+                              className="px-3 py-1.5 bg-[#262626] text-[#ADADAD] text-xs rounded-lg hover:text-white"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Feedback for regeneration (only when clip exists) */}
+                      {currentClip?.status === "completed" && (
+                        <div className="mb-3">
+                          <input
+                            type="text"
+                            placeholder="Feedback for regeneration (optional)"
+                            value={currentClip.feedback}
+                            onChange={(e) =>
+                              setClipStates((prev) => ({
+                                ...prev,
+                                [selectedClipScene]: { ...prev[selectedClipScene], feedback: e.target.value },
+                              }))
+                            }
+                            className="w-full bg-[#1A1E2F] text-white text-xs rounded-lg px-3 py-2 placeholder-[#555] focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
+                          />
+                        </div>
+                      )}
+
+                      {/* Generate / Regenerate button */}
+                      <button
+                        onClick={() => generateClip(selectedClipScene)}
+                        disabled={currentClip?.status === "generating"}
+                        className="w-full py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {currentClip?.status === "generating" ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Generating...
+                          </>
+                        ) : currentClip?.status === "completed" ? (
+                          currentClip.feedback.trim() ? "Regenerate with Feedback" : "Regenerate Scene"
+                        ) : currentClip?.status === "failed" ? (
+                          "Retry Scene"
+                        ) : (
+                          "Generate Scene"
+                        )}
+                      </button>
+                    </>
+                  )}
                 </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() =>
-                      setPromptPreview({ shots: [], editedPrompts: {}, estimatedCostUsd: 0, isLoading: false })
-                    }
-                    className="px-4 py-2 bg-[#262626] text-white text-sm rounded-lg hover:bg-[#333] transition-colors"
-                  >
-                    ← Back
-                  </button>
-                  <button
-                    onClick={startFilmWithEditedPrompts}
-                    className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
-                  >
-                    Try {promptPreview.shots.length} Clips (~${promptPreview.estimatedCostUsd.toFixed(0)})
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Section 4: Film Generation */}
-        {(film.status === "generating" || film.status === "assembling" || film.status === "ready" || film.status === "failed") && (
-          <div className="mt-8 bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-xl font-semibold text-white">4. Creating Your Film</h2>
-              {(film.status === "ready" || film.status === "failed") && (
-                <button
-                  onClick={() => { setVisualsActive(true); setVisualsTab("scenes"); saveNow({ visualsActive: true, visualsTab: "scenes" }, "visuals"); }}
-                  className="text-sm text-[#ADADAD] hover:text-white transition-colors"
-                >
-                  ← Visuals
-                </button>
-              )}
-            </div>
-            {/* Story title removed — episode name shown in header */}
-
-            {/* Generating State — card grid with lazy-loading clips */}
-            {(film.status === "generating" || film.status === "assembling") && (
-              <div>
-                {/* Progress bar */}
-                <div className="mb-6">
-                  <div className="flex justify-between text-sm text-[#ADADAD] mb-2">
-                    <span>
-                      {film.status === "assembling"
-                        ? "Assembling final video..."
-                        : "Filming scenes..."}
-                    </span>
-                    <span>{film.completedShots.length} of {film.totalShots} shots</span>
-                  </div>
-                  <div className="h-2 bg-[#262626] rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-[#9C99FF] to-[#7370FF] transition-all duration-500"
-                      style={{ width: `${(film.completedShots.length / film.totalShots) * 100}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Card grid — all shots as cards, populate as they complete */}
-                <div className="flex flex-wrap items-start justify-center gap-2 mb-8">
-                  {Array.from({ length: film.totalShots }, (_, i) => {
-                    const shotNum = i + 1;
-                    const completedShot = film.completedShots.find((s) => s.number === shotNum);
+                {/* === MIDDLE PANE: Scene Navigation (80px) === */}
+                <div className="w-20 flex-shrink-0 py-3 px-1.5 overflow-y-auto scrollbar-hide bg-[#0A0A0F] space-y-2">
+                  {scenes.map((scene) => {
+                    const clip = clipStates[scene.scene_number];
+                    const isSelected = selectedClipScene === scene.scene_number;
+                    const sbImg = sceneImages[scene.scene_number]?.image;
+                    const isGenerating = clip?.status === "generating";
+                    const isCompleted = clip?.status === "completed";
+                    const isFailed = clip?.status === "failed";
 
                     return (
-                      <div key={shotNum} className="flex items-start gap-2">
-                        <div className="w-40 flex-shrink-0">
-                          <div className="relative aspect-[9/16] bg-black rounded-xl overflow-hidden mb-2">
-                            {completedShot ? (
-                              <video
-                                key={`gen-${shotNum}-${completedShot.preview_url}`}
-                                src={resolveVideoUrl(completedShot.storage_url || completedShot.preview_url || "")}
-                                controls
-                                playsInline
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="text-center">
-                                  <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                                  <p className="text-xs text-[#ADADAD]">Generating...</p>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                          <p className="text-white text-sm font-medium text-center mb-1">
-                            Scene {shotNum}
-                          </p>
-                          {completedShot?.veo_prompt && (
-                            <details className="mb-1">
-                              <summary className="text-[10px] text-[#9C99FF] cursor-pointer hover:text-white text-center">
-                                View Veo Prompt
-                              </summary>
-                              <pre className="mt-1 text-[9px] text-[#888] bg-[#0D0F1A] rounded p-2 whitespace-pre-wrap break-words max-h-40 overflow-y-auto leading-relaxed">
-                                {completedShot.veo_prompt}
-                              </pre>
-                            </details>
+                      <button
+                        key={scene.scene_number}
+                        onClick={() => setSelectedClipScene(scene.scene_number)}
+                        className={`relative w-full rounded-lg overflow-hidden transition-all ${
+                          isSelected
+                            ? "ring-2 ring-[#B8B6FC] ring-offset-1 ring-offset-[#0A0A0F]"
+                            : isGenerating
+                            ? "ring-1 ring-[#9C99FF] animate-pulse"
+                            : "ring-1 ring-white/10 hover:ring-white/30"
+                        }`}
+                      >
+                        {/* Thumbnail (9:16) */}
+                        <div className="aspect-[9/16] bg-[#1A1E2F]">
+                          {sbImg ? (
+                            <img
+                              src={getImageSrc(sbImg)}
+                              alt={`Scene ${scene.scene_number}`}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-white/20 text-lg font-bold">
+                              {scene.scene_number}
+                            </div>
                           )}
                         </div>
 
-                        {/* Plus connector between cards */}
-                        {i < film.totalShots - 1 && (
-                          <div className="flex items-center self-center mt-16">
-                            <span className="text-[#555] text-2xl font-light">+</span>
+                        {/* Scene number overlay */}
+                        <div className="absolute top-1 left-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center text-white text-[9px] font-bold">
+                          {scene.scene_number}
+                        </div>
+
+                        {/* Status badge */}
+                        {isCompleted && (
+                          <div className="absolute top-1 right-1 w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center">
+                            <svg width="8" height="8" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="3">
+                              <path d="M5 13l4 4L19 7" />
+                            </svg>
                           </div>
                         )}
-                      </div>
+                        {isFailed && (
+                          <div className="absolute top-1 right-1 w-4 h-4 rounded-full bg-red-500" />
+                        )}
+                        {isGenerating && (
+                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                            <div className="w-5 h-5 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
+                          </div>
+                        )}
+                      </button>
                     );
                   })}
                 </div>
 
-                <p className="text-center text-[#ADADAD] text-sm mt-6">
-                  {film.status === "assembling"
-                    ? "Almost there! Stitching your scenes together..."
-                    : "All scenes generating in parallel. Each takes about 30-60 seconds."}
-                </p>
-
-                {/* Live cost during generation */}
-                {film.cost.total_usd > 0 && (
-                  <p className="text-center text-[#ADADAD] text-xs mt-4">
-                    Video cost so far: <span className="text-white">${film.cost.total_usd.toFixed(2)}</span>
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* Ready State: Clip Review */}
-            {film.status === "ready" && !clipsApproved && (
-              <div>
-                <p className="text-[#ADADAD] mb-6">
-                  Review each clip. Regenerate any that don&apos;t look right.
-                </p>
-
-                {/* Clip timeline: [Clip 1] + [Clip 2] + [Clip 3] */}
-                <div className="flex flex-wrap items-start justify-center gap-2 mb-8">
-                  {film.completedShots
-                    .slice()
-                    .sort((a, b) => a.number - b.number)
-                    .map((shot, idx) => {
-                      const isRegenerating = regeneratingShotNum === shot.number;
-                      const hasFeedback = (shotFeedback[shot.number] || "").trim().length > 0;
-
-                      return (
-                        <div key={shot.number} className="flex items-start gap-2">
-                          {/* The clip card */}
-                          <div className="w-40 flex-shrink-0">
-                            <div className="relative aspect-[9/16] bg-black rounded-xl overflow-hidden mb-2">
-                              {isRegenerating ? (
-                                <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-                                  <div className="text-center">
-                                    <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                                    <p className="text-xs text-[#ADADAD]">Regenerating...</p>
-                                  </div>
-                                </div>
-                              ) : (
-                                <video
-                                  key={`${shot.number}-${shot.preview_url}`}
-                                  src={resolveVideoUrl(shot.storage_url || shot.preview_url || "")}
-                                  controls
-                                  playsInline
-                                  className="w-full h-full object-cover"
-                                />
-                              )}
-                            </div>
-
-                            <p className="text-white text-sm font-medium text-center mb-1">
-                              Scene {shot.number}
-                            </p>
-
-                            {/* Veo prompt toggle */}
-                            {shot.veo_prompt && (
-                              <details className="mb-2">
-                                <summary className="text-[10px] text-[#9C99FF] cursor-pointer hover:text-white text-center">
-                                  View Veo Prompt
-                                </summary>
-                                <pre className="mt-1 text-[9px] text-[#888] bg-[#0D0F1A] rounded p-2 whitespace-pre-wrap break-words max-h-40 overflow-y-auto leading-relaxed">
-                                  {shot.veo_prompt}
-                                </pre>
-                              </details>
-                            )}
-
-                            {/* Feedback input + regenerate */}
-                            <input
-                              type="text"
-                              placeholder="Feedback (optional)"
-                              value={shotFeedback[shot.number] || ""}
-                              onChange={(e) =>
-                                setShotFeedback((prev) => ({
-                                  ...prev,
-                                  [shot.number]: e.target.value,
-                                }))
-                              }
-                              disabled={isRegenerating || regeneratingShotNum !== null}
-                              className="w-full bg-[#1A1E2F] text-white text-xs rounded-lg px-3 py-2 mb-2 placeholder-[#555] disabled:opacity-50"
-                            />
-                            <button
-                              onClick={() => regenerateShot(shot.number)}
-                              disabled={isRegenerating || regeneratingShotNum !== null}
-                              className="w-full text-xs py-1.5 rounded-lg bg-[#262626] text-[#ADADAD] hover:bg-[#333] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                              {isRegenerating ? "Regenerating..." : hasFeedback ? "Regenerate with Feedback" : "Regenerate"}
-                            </button>
+                {/* === RIGHT PANE: Video Preview (centered 9:16 portrait) === */}
+                <div className="flex-1 min-w-0 flex items-stretch justify-center bg-black">
+                  {/* 9:16 portrait container — full height, width derived from aspect ratio */}
+                  <div className="h-full aspect-[9/16] flex flex-col">
+                    <div className="flex-1 relative overflow-hidden">
+                    {currentClip?.status === "completed" && currentClip.videoUrl ? (
+                      /* Completed: video player */
+                      <video
+                        key={`clip-${selectedClipScene}-${currentClip.videoUrl}`}
+                        src={resolveVideoUrl(currentClip.videoUrl)}
+                        controls
+                        playsInline
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
+                    ) : currentClip?.status === "generating" ? (
+                      /* Generating: blurred storyboard + spinner */
+                      <>
+                        {storyboardImg && (
+                          <img
+                            src={getImageSrc(storyboardImg)}
+                            className="absolute inset-0 w-full h-full object-cover blur-sm opacity-40"
+                          />
+                        )}
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="text-center">
+                            <div className="w-10 h-10 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                            <p className="text-white/60 text-sm">Generating clip...</p>
+                            <p className="text-white/30 text-xs mt-1">~1-2 minutes</p>
                           </div>
-
-                          {/* Plus connector between clips */}
-                          {idx < film.completedShots.length - 1 && (
-                            <div className="flex items-center self-center mt-16">
-                              <span className="text-[#555] text-2xl font-light">+</span>
-                            </div>
-                          )}
                         </div>
-                      );
-                    })}
-                </div>
+                      </>
+                    ) : currentClip?.status === "failed" ? (
+                      /* Failed: error message */
+                      <div className="absolute inset-0 flex items-center justify-center p-4">
+                        <div className="text-center">
+                          <div className="text-red-400 mb-2">
+                            <svg className="w-10 h-10 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          </div>
+                          <p className="text-red-400 text-sm font-medium mb-1">Generation Failed</p>
+                          <p className="text-white/40 text-xs">{currentClip.error || "Unknown error"}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Idle: storyboard fills pane */
+                      <>
+                        {storyboardImg ? (
+                          <img
+                            src={getImageSrc(storyboardImg)}
+                            className="absolute inset-0 w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <p className="text-white/30 text-sm">No storyboard image</p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
 
-                {/* Action buttons */}
-                <div className="flex gap-4 justify-center border-t border-white/10 pt-6">
+                  {/* Veo prompt collapsible — pinned at bottom */}
+                  {currentClip?.veoPrompt && (
+                    <details className="px-3 py-2 bg-black/60 border-t border-white/5">
+                      <summary className="text-[10px] text-[#9C99FF] cursor-pointer hover:text-white">
+                        View Veo Prompt
+                      </summary>
+                      <pre className="mt-1 text-[9px] text-[#888] whitespace-pre-wrap break-words max-h-32 overflow-y-auto leading-relaxed">
+                        {currentClip.veoPrompt}
+                      </pre>
+                    </details>
+                  )}
+                  </div>{/* close aspect-ratio inner */}
+                </div>{/* close right pane */}
+              </div>
+
+              {/* Bottom bar: Preview Film / Save to Drafts / Publish */}
+              {allClipsCompleted && (
+                <div className="mt-6 flex items-center justify-center gap-4">
                   <button
-                    onClick={() => setClipsApproved(true)}
-                    disabled={regeneratingShotNum !== null}
+                    onClick={previewFilm}
+                    disabled={isAssembling}
+                    className="px-6 py-3 bg-[#1A1E2F] text-white rounded-xl font-medium hover:bg-[#262626] transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {isAssembling ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Assembling...
+                      </>
+                    ) : (
+                      <>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                          <path d="M8 5v14l11-7z" />
+                        </svg>
+                        Preview Film
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => { handleSaveDraft(); }}
+                    disabled={draftSaveStatus === "saving"}
+                    className={`px-6 py-3 rounded-xl font-medium transition-all duration-300 ${
+                      draftSaveStatus === "saved"
+                        ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                        : "bg-[#262626] text-white hover:bg-[#333]"
+                    }`}
+                  >
+                    {draftSaveStatus === "saved" ? (
+                      <span className="flex items-center gap-2">
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        Saved
+                      </span>
+                    ) : draftSaveStatus === "saving" ? "Saving..." : "Save to Drafts"}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      // Publish: assemble if needed, then create episode
+                      if (!assembledVideoUrl) {
+                        await assembleClips();
+                        // Will publish after assembly completes via Realtime
+                        return;
+                      }
+                      // Already assembled — publish now
+                      if (associatedStoryIdRef.current) {
+                        try {
+                          await fetch(`/api/stories/${associatedStoryIdRef.current}/episodes`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              name: episodeNameRef.current || "Untitled Episode",
+                              media_url: assembledVideoUrl,
+                              generation_id: generationIdRef.current || null,
+                              status: "published",
+                            }),
+                          });
+                          saveNow({}, "published");
+                          // Navigate to story page to see the published episode
+                          window.location.href = `/create/${associatedStoryIdRef.current}`;
+                        } catch (err) { console.error("Publish failed:", err); }
+                      }
+                    }}
+                    disabled={isAssembling}
                     className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50"
                   >
-                    Looks Good — Assemble Film
+                    Publish
                   </button>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+          );
+        })()}
 
-            {/* Approved State: Final Video */}
-            {film.status === "ready" && clipsApproved && film.finalVideoUrl && (
-              <div className="text-center">
-                <div className="aspect-[9/16] max-w-sm mx-auto bg-black rounded-xl overflow-hidden mb-6">
-                  <video
-                    src={resolveVideoUrl(film.finalVideoUrl)}
-                    controls
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-
-                <p className="text-green-400 mb-4">Your film is ready!</p>
-
-                {/* Cost Summary */}
-                <div className="bg-[#1A1E2F] rounded-xl p-4 mb-6 max-w-md mx-auto text-left">
-                  <h4 className="text-white font-medium mb-3 text-center">Generation Cost Summary</h4>
-                  <div className="space-y-1 text-sm">
-                    {totalCost.story > 0 && (
-                      <div className="flex justify-between text-[#ADADAD]">
-                        <span>Story generation</span>
-                        <span>${totalCost.story.toFixed(4)}</span>
-                      </div>
-                    )}
-                    {totalCost.characters > 0 && (
-                      <div className="flex justify-between text-[#ADADAD]">
-                        <span>Character images</span>
-                        <span>${totalCost.characters.toFixed(2)}</span>
-                      </div>
-                    )}
-                    {totalCost.locations > 0 && (
-                      <div className="flex justify-between text-[#ADADAD]">
-                        <span>Location images</span>
-                        <span>${totalCost.locations.toFixed(2)}</span>
-                      </div>
-                    )}
-                    {totalCost.keyMoments > 0 && (
-                      <div className="flex justify-between text-[#ADADAD]">
-                        <span>Key moment images</span>
-                        <span>${totalCost.keyMoments.toFixed(2)}</span>
-                      </div>
-                    )}
-                    {film.cost.scene_refs_usd > 0 && (
-                      <div className="flex justify-between text-[#ADADAD]">
-                        <span>Scene references</span>
-                        <span>${film.cost.scene_refs_usd.toFixed(2)}</span>
-                      </div>
-                    )}
-                    {film.cost.videos_usd > 0 && (
-                      <div className="flex justify-between text-[#ADADAD]">
-                        <span>Video clips ({film.totalShots} × 8s)</span>
-                        <span>${film.cost.videos_usd.toFixed(2)}</span>
-                      </div>
-                    )}
-                    <div className="border-t border-white/10 pt-2 mt-2 flex justify-between text-white font-medium">
-                      <span>Total</span>
-                      <span>${grandTotalCost.toFixed(2)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex gap-4 justify-center">
-                  <a
-                    href={resolveVideoUrl(film.finalVideoUrl)}
-                    download
-                    className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
-                  >
-                    Download Video
-                  </a>
-                  <button
-                    onClick={() => setClipsApproved(false)}
-                    className="px-6 py-3 bg-[#262626] text-white rounded-xl font-medium hover:bg-[#333]"
-                  >
-                    Back to Clips
-                  </button>
-                  <button
-                    onClick={resetAll}
-                    className="px-6 py-3 bg-[#262626] text-white rounded-xl font-medium hover:bg-[#333]"
-                  >
-                    Make New Film
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Failed State */}
-            {film.status === "failed" && (
-              <div className="text-center">
-                <div className="text-red-400 mb-4">
-                  <svg className="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <p className="font-medium">Film generation failed</p>
-                  {film.error && <p className="text-sm mt-2 opacity-80">{film.error}</p>}
-                </div>
-
-                {/* Show completed shots if any */}
-                {film.completedShots.length > 0 && (
-                  <p className="text-[#ADADAD] text-sm mb-4">
-                    {film.completedShots.length} of {film.totalShots} shots were completed before the error.
-                  </p>
-                )}
-
-                <div className="flex gap-4 justify-center">
-                  <button
-                    onClick={startFilmGeneration}
-                    className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
-                  >
-                    Try Again
-                  </button>
-                  <button
-                    onClick={resetFilm}
-                    className="px-6 py-3 bg-[#262626] text-white rounded-xl font-medium hover:bg-[#333]"
-                  >
-                    Go Back
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        {/* Film Preview Modal */}
+        <FilmPreviewModal
+          isOpen={showFilmPreview}
+          onClose={() => setShowFilmPreview(false)}
+          videoUrl={assembledVideoUrl || ""}
+          title={episodeName || "Preview"}
+        />
       </main>
 
       <Footer />
