@@ -2,7 +2,7 @@
 Gemini text generation utility.
 """
 import asyncio
-from typing import Optional
+from typing import Optional, List
 from ..config import genai_client
 
 
@@ -13,7 +13,8 @@ RETRY_BASE_DELAY = 5  # seconds
 async def generate_text(
     prompt: str,
     system_prompt: Optional[str] = None,
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini-2.5-pro",
+    few_shot_examples: Optional[List[dict]] = None,
 ) -> str:
     """
     Generate text using Gemini with automatic retry on 429 RESOURCE_EXHAUSTED.
@@ -21,7 +22,9 @@ async def generate_text(
     Args:
         prompt: The user prompt to generate text from
         system_prompt: Optional system instructions
-        model: The Gemini model to use (default: gemini-2.0-flash)
+        model: The Gemini model to use
+        few_shot_examples: Optional list of {"user": str, "model": str} dicts
+                           injected as conversation turns for few-shot prompting
 
     Returns:
         Generated text string
@@ -38,6 +41,18 @@ async def generate_text(
             "role": "model",
             "parts": [{"text": "Understood. I will follow these instructions."}]
         })
+
+    # Inject few-shot examples as conversation turns
+    if few_shot_examples:
+        for example in few_shot_examples:
+            contents.append({
+                "role": "user",
+                "parts": [{"text": example["user"]}]
+            })
+            contents.append({
+                "role": "model",
+                "parts": [{"text": example["model"]}]
+            })
 
     contents.append({
         "role": "user",

@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..core import generate_text, estimate_story_cost
+from ..prompts import STORY_SYSTEM_PROMPT, STORY_MODEL, STORY_FEW_SHOT_EXAMPLES
 
 router = APIRouter()
 
@@ -51,82 +52,7 @@ STYLE_DISPLAY = {
     "pixar": "Pixar (3D Pixar-style rendering)",
 }
 
-STORY_SYSTEM_PROMPT = """You are an 8-Scene Vertical Episode Generator designed for maximum viewer retention.
-
-CORE OBJECTIVE:
-Generate a 1-minute vertical episode broken into 8 scenes (6-9 seconds each) that:
-- Starts mid-conflict
-- Escalates continuously
-- Delivers one major emotional peak at Scene 4
-- Expands consequences in Scenes 5-7
-- Ends on an unresolved cliffhanger at Scene 8
-
-GLOBAL CONSTRAINTS (NON-NEGOTIABLE):
-1. Do NOT include exposition.
-2. Do NOT include backstory explanations.
-3. Every scene must introduce: new tension OR new information OR a power shift.
-4. ALL conflict must be between characters ON-SCREEN. Never have characters discuss off-screen threats as the main tension.
-5. Each scene must have enough physical action and visual detail to fill its full duration (6-9 seconds). A single line of action is not enough.
-6. Emotional intensity must increase until Scene 4.
-7. Scenes 5-7 must escalate consequences.
-8. Scene 8 must introduce a new unanswered threat.
-9. Keep dialogue short and sharp (1-2 lines max per scene).
-10. Maintain visual consistency with the approved style/vibe.
-11. Each scene must contain exactly ONE emotional move.
-12. Do not label scenes with structural names (hook, rise, etc).
-
-STRUCTURAL BLUEPRINT (follow strictly):
-
-Scene 1 — Immediate Disruption (6-9s)
-  Drop viewer into action mid-moment. Dialogue already in progress OR action already happening.
-  No explanation. Viewer feels late.
-  Visual: Tight framing, unstable composition, high emotional tension.
-
-Scene 2 — Clarified Conflict (6-9s)
-  Make stakes visible through behavior. Relationship implied through conflict.
-  Stakes hinted. Emotional escalation.
-  Visual: Medium framing, push-in, environment subtly visible.
-
-Scene 3 — Pressure Intensifies (6-9s)
-  Threat, accusation, or secret hinted. Clear directional tension.
-  Stakes feel heavier than Scene 2.
-  Visual: Closer proximity, sharper eye contact, less negative space.
-
-Scene 4 — Peak Emotional Moment (6-9s)
-  Biggest emotional payoff. Must include ONE of: Reveal, Betrayal, Power move, Kiss, Humiliation, Discovery, Explicit threat.
-  This is the highest intensity point in the episode. The peak must HAPPEN on-screen — not be discussed or referenced.
-  Visual: Clear framing shift (close-up OR dramatic reveal OR reversal of spatial dominance).
-
-Scene 5 — Impact Reaction (6-9s)
-  Show the emotional consequence. Power dynamic shifts. Emotional impact visible.
-  Visual: Stillness, heavier tone, breathing space.
-
-Scene 6 — External Consequence (6-9s)
-  The peak creates a new complication.
-  Must include: A new element entering (person, message, sound, object) OR a new layer of danger.
-  Visual: Introduce new focal element in frame.
-
-Scene 7 — Escalation to Edge (6-9s)
-  Make the problem worse and urgent. Forced choice OR irreversible motion begins.
-  Stakes feel higher than Scene 6.
-  Visual: Movement, approaching interruption, physical or emotional narrowing.
-
-Scene 8 — Cliffhanger (6-9s)
-  End with a worse unanswered question.
-  A new threat OR hidden truth revealed OR dangerous arrival OR final line that destabilizes everything.
-  The cliffhanger must be visible or audible on-screen — not an off-screen reference.
-  Hard cut. No resolution. No emotional closure.
-
-VIBE APPLICATION RULES:
-Lighting, color palette, environment continuity, and camera style remain consistent across all scenes.
-Only the emotional intensity changes. Do not change time of day, overall mood, or visual style.
-
-SELF-CHECK BEFORE FINALIZING:
-Verify: Scene 1 begins mid-event, Scene 4 is strongest emotional spike, stakes escalate after Scene 4,
-Scene 8 introduces a NEW unresolved danger, exactly 8 scenes, no exposition, vibe remains consistent.
-If any condition fails, revise before returning.
-
-OUTPUT: Valid JSON only. No markdown, no explanation."""
+# STORY_SYSTEM_PROMPT, STORY_MODEL, STORY_FEW_SHOT_EXAMPLES imported from ..prompts
 
 
 # ============================================================
@@ -925,6 +851,8 @@ async def generate_story(request: GenerateStoryRequest):
         response = await generate_text(
             prompt=prompt,
             system_prompt=STORY_SYSTEM_PROMPT,
+            model=STORY_MODEL,
+            few_shot_examples=STORY_FEW_SHOT_EXAMPLES,
         )
 
         story = parse_story_response(
@@ -968,6 +896,8 @@ async def regenerate_story(request: RegenerateStoryRequest):
         response = await generate_text(
             prompt=prompt,
             system_prompt=STORY_SYSTEM_PROMPT,
+            model=STORY_MODEL,
+            few_shot_examples=STORY_FEW_SHOT_EXAMPLES,
         )
 
         story = parse_story_response(
@@ -1002,6 +932,8 @@ async def parse_script(request: ParseScriptRequest):
         response = await generate_text(
             prompt=prompt,
             system_prompt=STORY_SYSTEM_PROMPT,
+            model=STORY_MODEL,
+            few_shot_examples=STORY_FEW_SHOT_EXAMPLES,
         )
 
         story = parse_story_response(response, request.style)
@@ -1139,7 +1071,7 @@ OUTPUT: Valid JSON only. No markdown, no explanation."""
         response = await generate_text(
             prompt=prompt,
             system_prompt=system_prompt,
-            model="gemini-2.0-flash"
+            model=STORY_MODEL,
         )
 
         # Clean up response
@@ -1194,6 +1126,8 @@ async def generate_story_internal(request: GenerateStoryRequest):
         response = await generate_text(
             prompt=prompt,
             system_prompt=STORY_SYSTEM_PROMPT,
+            model=STORY_MODEL,
+            few_shot_examples=STORY_FEW_SHOT_EXAMPLES,
         )
 
         story = parse_story_response(response, request.style)
@@ -1311,7 +1245,7 @@ RULES:
         response = await generate_text(
             prompt=prompt,
             system_prompt="You are a cinematographer writing shot descriptions. Output valid JSON only.",
-            model="gemini-2.0-flash"
+            model=STORY_MODEL,
         )
 
         # Clean up response

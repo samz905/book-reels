@@ -25,6 +25,7 @@ from ..core import (
     estimate_story_cost,
     COST_IMAGE_GENERATION,
 )
+from ..prompts import STORY_MODEL
 
 # Import router modules for their handler logic
 from . import story as story_mod
@@ -377,7 +378,7 @@ OUTPUT: Valid JSON only. No markdown, no explanation."""
     response = await generate_text(
         prompt=prompt,
         system_prompt=system_prompt,
-        model="gemini-2.0-flash"
+        model=STORY_MODEL
     )
 
     cleaned = response.strip()
@@ -481,7 +482,7 @@ RULES:
     response = await generate_text(
         prompt=prompt,
         system_prompt="You are a cinematographer writing shot descriptions. Output valid JSON only.",
-        model="gemini-2.0-flash"
+        model=STORY_MODEL
     )
 
     cleaned = response.strip()

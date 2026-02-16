@@ -122,7 +122,9 @@
       "Bash(cmd /c \"cd /d c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\\\\frontend && npx next build 2>&1\")",
       "Bash(git rm:*)",
       "Bash(grep:*)",
-      "Bash(python -m uvicorn:*)"
+      "Bash(python -m uvicorn:*)",
+      "Bash(find:*)",
+      "Bash(python:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

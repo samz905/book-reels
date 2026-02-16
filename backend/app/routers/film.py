@@ -23,6 +23,7 @@ from ..core import (
     COST_IMAGE_GENERATION,
     COST_VIDEO_VEO_FAST_PER_SECOND,
 )
+from ..prompts import STORY_MODEL
 
 # Video duration and cost
 VIDEO_DURATION_SECONDS = 8
@@ -325,7 +326,7 @@ RULES:
 Return ONLY the JSON array, no markdown fences or extra text."""
 
     try:
-        response = await generate_text(prompt=prompt, model="gemini-2.0-flash")
+        response = await generate_text(prompt=prompt, model=STORY_MODEL)
 
         # Clean response - strip markdown fences if present
         cleaned = response.strip()
