@@ -36,18 +36,18 @@ export default function PublicProfileHeader({
 
   return (
     <div
-      className="rounded-xl p-8 relative"
+      className="rounded-xl p-4 sm:p-6 md:p-8 relative"
       style={{
         background:
           "linear-gradient(180deg, rgba(115, 112, 255, 0) 4.21%, rgba(115, 112, 255, 0.3) 100%), #0F0E13",
       }}
     >
-      {/* Main content row */}
-      <div className="flex items-start justify-between gap-6">
+      {/* Main content — stacked on mobile, side-by-side on md+ */}
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-5 md:gap-6">
         {/* Left side: Avatar + Info */}
         <div className="flex items-start gap-4 flex-1 min-w-0">
-          {/* Avatar - 84x84 */}
-          <div className="w-[84px] h-[84px] rounded-full overflow-hidden bg-card-bg-2 flex-shrink-0">
+          {/* Avatar */}
+          <div className="w-16 h-16 sm:w-[84px] sm:h-[84px] rounded-full overflow-hidden bg-card-bg-2 flex-shrink-0">
             {profile.avatar ? (
               <Image
                 src={profile.avatar}
@@ -73,38 +73,38 @@ export default function PublicProfileHeader({
 
           {/* Name + Username + Bio */}
           <div className="flex-1 min-w-0">
-            <h1 className="text-white text-xl font-bold leading-[25px]">
+            <h1 className="text-white text-lg sm:text-xl font-bold leading-[25px]">
               {profile.name}
             </h1>
-            <p className="text-[#ADADAD] text-sm leading-[19px] tracking-tight mt-2">
+            <p className="text-[#ADADAD] text-sm leading-[19px] tracking-tight mt-1 sm:mt-2">
               @{profile.username}
             </p>
-            <p className="text-white text-sm leading-[19px] tracking-tight mt-4 line-clamp-2 max-w-[875px]">
+            <p className="text-white text-sm leading-[19px] tracking-tight mt-3 sm:mt-4 line-clamp-2 max-w-[875px]">
               {profile.bio}
             </p>
           </div>
         </div>
 
-        {/* Right side: Subscribe button + description */}
-        <div className="flex flex-col items-end flex-shrink-0">
+        {/* Subscribe button + description — full-width on mobile */}
+        <div className="flex flex-col items-stretch md:items-end md:flex-shrink-0">
           <button
-            className="px-10 py-3.5 rounded-[14px] font-bold text-white text-lg whitespace-nowrap"
+            className="px-6 md:px-10 py-3 md:py-3.5 rounded-[14px] font-bold text-white text-base md:text-lg text-center"
             style={{
               background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",
             }}
           >
             Subscribe for ${subscriptionPrice.toFixed(2)} / month
           </button>
-          <p className="text-[#ADADAD] text-sm leading-7 mt-2 text-right">
+          <p className="text-[#ADADAD] text-xs sm:text-sm leading-6 sm:leading-7 mt-2 text-left md:text-right">
             {subscriptionDescription}
           </p>
         </div>
       </div>
 
       {/* Stats row + Share button */}
-      <div className="flex items-center justify-between mt-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0 mt-5 md:mt-6">
         {/* Stats with icons */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {/* Stories */}
           <div className="flex items-center gap-1">
             <svg
@@ -119,7 +119,7 @@ export default function PublicProfileHeader({
                 fill="#ADADAD"
               />
             </svg>
-            <span className="text-[#ADADAD] text-base font-medium leading-[19px] tracking-tight">
+            <span className="text-[#ADADAD] text-sm sm:text-base font-medium leading-[19px] tracking-tight">
               {profile.storiesCount} Stories
             </span>
           </div>
@@ -130,7 +130,7 @@ export default function PublicProfileHeader({
               <circle cx="12" cy="12" r="10" fill="#ADADAD" />
               <path d="M10 8.5L15 12L10 15.5V8.5Z" fill="#000" />
             </svg>
-            <span className="text-[#ADADAD] text-base font-medium leading-[19px] tracking-tight">
+            <span className="text-[#ADADAD] text-sm sm:text-base font-medium leading-[19px] tracking-tight">
               {profile.episodesCount} Episodes
             </span>
           </div>
@@ -143,7 +143,7 @@ export default function PublicProfileHeader({
                 fill="#ADADAD"
               />
             </svg>
-            <span className="text-[#ADADAD] text-base font-medium leading-[19px] tracking-tight">
+            <span className="text-[#ADADAD] text-sm sm:text-base font-medium leading-[19px] tracking-tight">
               New Episodes Weekly
             </span>
           </div>
@@ -160,7 +160,7 @@ export default function PublicProfileHeader({
               fill="#CDCDCD"
             />
           </svg>
-          <span className="text-base font-bold leading-[19px] tracking-tight uppercase">
+          <span className="text-sm sm:text-base font-bold leading-[19px] tracking-tight uppercase">
             Share
           </span>
         </button>

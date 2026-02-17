@@ -99,10 +99,10 @@ export default function PaymentPayoutCard({
   };
 
   return (
-    <div className="bg-[#0F0E13] rounded-2xl p-6">
-      <div className="flex">
+    <div className="bg-panel rounded-2xl p-6">
+      <div className="flex flex-col md:flex-row">
         {/* Payment Method Section */}
-        <div className="flex-1 pr-6">
+        <div className="flex-1 pr-0 md:pr-6 pb-6 md:pb-0">
           <h2 className="text-white text-2xl font-bold mb-4">Payment Method</h2>
 
           {editingPayment ? (
@@ -118,7 +118,7 @@ export default function PaymentPayoutCard({
                     setPaymentForm({ ...paymentForm, name: e.target.value })
                   }
                   placeholder="John Doe"
-                  className="w-full bg-[#16151D] border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
+                  className="w-full bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
                 />
               </div>
               <div>
@@ -135,7 +135,7 @@ export default function PaymentPayoutCard({
                     })
                   }
                   placeholder="1234 1234 1234 1234"
-                  className="w-full bg-[#16151D] border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
+                  className="w-full bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -153,7 +153,7 @@ export default function PaymentPayoutCard({
                       })
                     }
                     placeholder="MM/YY"
-                    className="w-full bg-[#16151D] border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
+                    className="w-full bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
                   />
                 </div>
                 <div>
@@ -167,7 +167,7 @@ export default function PaymentPayoutCard({
                       setPaymentForm({ ...paymentForm, cvv: e.target.value })
                     }
                     placeholder="CVV"
-                    className="w-full bg-[#16151D] border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
+                    className="w-full bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
                   />
                 </div>
               </div>
@@ -206,11 +206,12 @@ export default function PaymentPayoutCard({
           )}
         </div>
 
-        {/* Divider */}
-        <div className="w-px bg-[#272727] mx-6" />
+        {/* Divider — vertical on desktop, horizontal on mobile */}
+        <div className="hidden md:block w-px bg-[#272727] mx-6" />
+        <div className="md:hidden border-t border-[#272727]" />
 
         {/* Payout Method Section */}
-        <div className="flex-1 pl-6">
+        <div className="flex-1 pl-0 md:pl-6 pt-6 md:pt-0">
           <h2 className="text-white text-2xl font-bold mb-4">Payout Method</h2>
 
           {editingPayout ? (
@@ -228,7 +229,7 @@ export default function PaymentPayoutCard({
                       accountHolderName: e.target.value,
                     })
                   }
-                  className="w-full bg-[#16151D] border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
+                  className="w-full bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
                 />
               </div>
               <div>
@@ -273,7 +274,7 @@ export default function PaymentPayoutCard({
                       routingNumber: e.target.value,
                     })
                   }
-                  className="w-full bg-[#16151D] border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
+                  className="w-full bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
                 />
               </div>
               <div>
@@ -289,7 +290,7 @@ export default function PaymentPayoutCard({
                       accountNumber: e.target.value,
                     })
                   }
-                  className="w-full bg-[#16151D] border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
+                  className="w-full bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
                 />
               </div>
               <div>
@@ -302,7 +303,7 @@ export default function PaymentPayoutCard({
                   onChange={(e) =>
                     setPayoutForm({ ...payoutForm, address: e.target.value })
                   }
-                  className="w-full bg-[#16151D] border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
+                  className="w-full bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
                 />
               </div>
               <div className="flex items-center gap-3 pt-2">

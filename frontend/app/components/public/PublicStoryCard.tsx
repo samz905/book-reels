@@ -52,15 +52,15 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
 
   return (
     <div
-      className="rounded-xl p-6"
+      className="rounded-xl p-4 sm:p-6"
       style={{
         background:
           "linear-gradient(180deg, rgba(115, 112, 255, 0) 4.21%, rgba(115, 112, 255, 0.3) 100%), #0F0E13",
       }}
     >
-      <div className="flex gap-6">
-        {/* Cover image - 205x290 per spec */}
-        <div className="w-[205px] h-[290px] rounded-xl overflow-hidden border border-[#262626] flex-shrink-0">
+      <div className="flex flex-col sm:flex-row gap-4 sm:gap-6">
+        {/* Cover image */}
+        <div className="w-full sm:w-[205px] aspect-[205/290] sm:aspect-auto sm:h-[290px] rounded-xl overflow-hidden border border-[#262626] flex-shrink-0">
           <Image
             src={story.cover}
             alt={story.title}
@@ -73,8 +73,8 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
         {/* Story info */}
         <div className="flex-1 min-w-0">
           {/* Title row with share button */}
-          <div className="flex items-start justify-between mb-3">
-            <h3 className="text-white text-2xl font-bold">{story.title}</h3>
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <h3 className="text-white text-xl sm:text-2xl font-bold">{story.title}</h3>
             <ShareButton />
           </div>
 
@@ -134,7 +134,7 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
           {/* Show Episodes toggle - green, 22px bold */}
           <button
             onClick={() => setShowEpisodes(!showEpisodes)}
-            className="flex items-center gap-2 text-[#1ED760] text-[22px] font-bold hover:opacity-80 transition-opacity"
+            className="flex items-center gap-2 text-[#1ED760] text-lg sm:text-[22px] font-bold hover:opacity-80 transition-opacity"
           >
             Show Episodes
             <svg
@@ -215,8 +215,8 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
               <div className="flex gap-6 min-w-max">
                 {story.ebooks.map((ebook, index) => (
                   <div key={ebook.id} className="flex items-stretch">
-                    {/* Ebook card - 354px wide with 322px content area */}
-                    <div className="w-[354px] flex gap-3">
+                    {/* Ebook card */}
+                    <div className="w-[280px] sm:w-[354px] flex gap-3">
                       {/* Cover with price + buy below */}
                       <div className="flex flex-col gap-2 flex-shrink-0">
                         <div className="w-[100px] h-[160px] rounded bg-card-bg-2">

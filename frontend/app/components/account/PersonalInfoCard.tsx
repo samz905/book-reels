@@ -61,12 +61,12 @@ export default function PersonalInfoCard({
   );
 
   return (
-    <div className="bg-[#0F0E13] rounded-2xl p-6">
+    <div className="bg-panel rounded-2xl p-6">
       <h2 className="text-white text-2xl font-bold mb-8">
         Personal Information
       </h2>
 
-      <div className="flex items-end gap-6">
+      <div className="flex flex-col md:flex-row md:items-end gap-6">
         {/* Name Field */}
         <div className="flex-1">
           <label className="text-[#ADADAD] text-[17px] font-semibold block mb-3">
@@ -78,7 +78,7 @@ export default function PersonalInfoCard({
                 type="text"
                 value={nameValue}
                 onChange={(e) => setNameValue(e.target.value)}
-                className="bg-[#16151D] border border-[#272727] rounded-lg px-4 py-2 text-white text-xl font-semibold focus:outline-none focus:border-purple"
+                className="bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white text-xl font-semibold focus:outline-none focus:border-purple"
                 autoFocus
               />
               <button
@@ -103,7 +103,7 @@ export default function PersonalInfoCard({
         </div>
 
         {/* Divider */}
-        <div className="w-px h-[61px] bg-[#272727]" />
+        <div className="hidden md:block w-px h-[61px] bg-[#272727]" />
 
         {/* Email Field */}
         <div className="flex-1">
@@ -114,7 +114,7 @@ export default function PersonalInfoCard({
         </div>
 
         {/* Divider */}
-        <div className="w-px h-[61px] bg-[#272727]" />
+        <div className="hidden md:block w-px h-[61px] bg-[#272727]" />
 
         {/* Password Field */}
         <div className="flex-1">
@@ -132,7 +132,7 @@ export default function PersonalInfoCard({
                     type="password"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full bg-[#16151D] border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
+                    className="w-full bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
                     placeholder="••••••••"
                   />
                 </div>
@@ -148,7 +148,7 @@ export default function PersonalInfoCard({
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full bg-[#16151D] border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
+                  className="w-full bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
                   placeholder="••••••••"
                 />
               </div>
