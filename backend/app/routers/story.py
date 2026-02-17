@@ -481,7 +481,7 @@ For each scene provide ALL of these fields:
 - duration: "X seconds" (6-9)
 - characters_on_screen: Array of character IDs present in the scene
 - setting_id: Location ID for this scene
-- action: 4-8 short fragment sentences (each micro-action its own sentence, use "Beat." and "Silence." as pacing)
+- action: JSON ARRAY of 4-8 short fragment strings (each micro-action its own element, use "Beat." and "Silence." as pacing)
 - dialogue: 2-4 rapid-fire "CHARACTER: line" exchanges (verbal sparring, thrust-and-parry), or null for silent scenes
 - image_prompt: What the camera sees — composition, framing, lighting, character positions, expressions, key objects. Write for a camera operator.
 - regenerate_notes: What can vary visually without breaking story continuity
@@ -526,7 +526,7 @@ OUTPUT FORMAT (JSON):
       "duration": "8 seconds",
       "characters_on_screen": ["char_1", "char_2"],
       "setting_id": "loc_1",
-      "action": "He steps closer. Blocking her path.\nShe doesn't flinch.\nBeat.\nHe stiffens.",
+      "action": ["He steps closer.", "Blocking her path.", "She doesn't flinch.", "Beat.", "He stiffens."],
       "dialogue": "VICTOR: Sit down.\nANA: Make me.",
       "image_prompt": "Tight close-up of two faces in harsh kitchen light, granite countertop between them, one hand flat on surface, other backing toward door",
       "regenerate_notes": "Exact hand positions and background objects can vary",
@@ -723,6 +723,9 @@ def parse_story_response(
             # Default setting_id to first location if not specified
             if not scene.get("setting_id") and data.get("locations"):
                 scene["setting_id"] = data["locations"][0]["id"]
+            # Strategy B: Gemini returns action as array → join to \n string
+            if isinstance(scene.get("action"), list):
+                scene["action"] = "\n".join(scene["action"])
 
         # Derive beats from scenes for backward compatibility with pipeline
         data["beats"] = [scene_to_beat(Scene(**s)) for s in data["scenes"]]
@@ -1054,7 +1057,7 @@ OUTPUT FORMAT (JSON only, no explanation):
   "duration": "{current_scene.duration}",
   "characters_on_screen": {json.dumps(current_scene.characters_on_screen or all_char_ids)},
   "setting_id": "{current_scene.setting_id or (location_ids[0] if location_ids else 'loc_main')}",
-  "action": "4-8 short fragment sentences (each micro-action its own sentence)",
+  "action": ["Fragment 1.", "Fragment 2.", "Beat.", "Fragment 3."],
   "dialogue": "2-4 rapid-fire CHARACTER: line exchanges, or null for silent scenes",
   "image_prompt": "What the camera sees — composition, framing, lighting, expressions",
   "regenerate_notes": "What can vary visually without breaking continuity",
@@ -1096,6 +1099,9 @@ OUTPUT: Valid JSON only. No markdown, no explanation."""
             scene_data["characters_on_screen"] = all_char_ids
         if not scene_data.get("setting_id") and location_ids:
             scene_data["setting_id"] = location_ids[0]
+        # Strategy B: Gemini returns action as array → join to \n string
+        if isinstance(scene_data.get("action"), list):
+            scene_data["action"] = "\n".join(scene_data["action"])
 
         # Build Scene object, then convert to Beat for backward compat response
         refined_scene = Scene(**scene_data)

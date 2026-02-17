@@ -72,6 +72,12 @@ interface DialogueLine {
   line: string;
 }
 
+/** Split action text into one line per fragment sentence.
+ *  Backend guarantees \n separators (Strategy B: Gemini array → \n join). */
+function splitActionLines(action: string): string[] {
+  return action.split("\n").filter(Boolean);
+}
+
 interface SceneBlock {
   type: "description" | "action" | "dialogue";
   text: string;
@@ -3382,7 +3388,13 @@ export default function CreateEpisodePage() {
                                 })}
                               </div>
                               {/* Action */}
-                              {scene.action && <p className="text-white/70 text-sm italic mb-1 whitespace-pre-line">{scene.action}</p>}
+                              {scene.action && (
+                                <div className="text-white/70 text-sm italic mb-1 space-y-0.5">
+                                  {splitActionLines(scene.action).map((line, li) => (
+                                    <p key={li}>{line}</p>
+                                  ))}
+                                </div>
+                              )}
                               {/* Dialogue */}
                               {scene.dialogue && scene.dialogue.split("\n").map((line, li) => (
                                 <p key={li} className="text-[#ADADAD] text-sm">
@@ -4017,7 +4029,11 @@ export default function CreateEpisodePage() {
 
                       {/* Action */}
                       {currentScene.action && (
-                        <p className="text-white/70 text-sm italic mb-3 leading-relaxed whitespace-pre-line">{currentScene.action}</p>
+                        <div className="text-white/70 text-sm italic mb-3 leading-relaxed space-y-0.5">
+                          {splitActionLines(currentScene.action).map((line, li) => (
+                            <p key={li}>{line}</p>
+                          ))}
+                        </div>
                       )}
 
                       {/* Dialogue — inline editable lines */}

@@ -80,10 +80,10 @@ WRITING QUALITY REQUIREMENTS (NON-NEGOTIABLE):
 SCREENPLAY FORMAT (THIS IS CRITICAL — follow exactly):
 
 ACTION WRITING:
-- Write action as 4-8 SHORT FRAGMENT SENTENCES. Each micro-action gets its OWN sentence.
+- Output action as a JSON ARRAY of 4-8 short fragment strings. Each micro-action is its OWN array element.
 - Use aggressive periods. NEVER combine actions with commas or "and":
-  WRONG: "He steps closer and blocks her path, she doesn't flinch."
-  RIGHT: "He steps closer. Blocks her path. She doesn't flinch."
+  WRONG: "action": "He steps closer and blocks her path, she doesn't flinch."
+  RIGHT: "action": ["He steps closer.", "Blocks her path.", "She doesn't flinch."]
 - Include pacing devices between actions: "Beat.", "Silence.", "Electric."
 - Every action must involve a BODY PART and an OBJECT or SURFACE: hands, fingers, jaws, doors, glasses, phones, tables
 - No abstract actions: NOT "tension fills the room" — YES "His jaw locks. His hand closes over hers on the table edge."
