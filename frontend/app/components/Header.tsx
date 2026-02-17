@@ -33,7 +33,7 @@ export default function Header() {
   const displayName = user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email?.split("@")[0] || "User";
 
   return (
-    <header className="sticky top-0 z-30 flex items-center justify-between px-6 py-6 bg-[#010101]">
+    <header className="sticky top-0 z-30 flex items-center justify-between px-6 bg-[#010101]">
       {/* Logo */}
       <Link href="/" className="hover:opacity-80 transition-opacity">
         <Image
