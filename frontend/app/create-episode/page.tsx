@@ -3382,7 +3382,7 @@ export default function CreateEpisodePage() {
                                 })}
                               </div>
                               {/* Action */}
-                              {scene.action && <p className="text-white/70 text-sm italic mb-1">{scene.action}</p>}
+                              {scene.action && <p className="text-white/70 text-sm italic mb-1 whitespace-pre-line">{scene.action}</p>}
                               {/* Dialogue */}
                               {scene.dialogue && scene.dialogue.split("\n").map((line, li) => (
                                 <p key={li} className="text-[#ADADAD] text-sm">
@@ -4017,7 +4017,7 @@ export default function CreateEpisodePage() {
 
                       {/* Action */}
                       {currentScene.action && (
-                        <p className="text-white/70 text-sm italic mb-3 leading-relaxed">{currentScene.action}</p>
+                        <p className="text-white/70 text-sm italic mb-3 leading-relaxed whitespace-pre-line">{currentScene.action}</p>
                       )}
 
                       {/* Dialogue — inline editable lines */}
