@@ -27,7 +27,7 @@ GLOBAL CONSTRAINTS (NON-NEGOTIABLE):
 6. Emotional intensity must increase until Scene 4.
 7. Scenes 5-7 must escalate consequences.
 8. Scene 8 must introduce a new unanswered threat.
-9. Keep dialogue short and sharp (1-2 lines max per scene).
+9. Dialogue: 2-4 rapid-fire exchanges per scene (some scenes can be silent/null).
 10. Maintain visual consistency with the approved style/vibe.
 11. Each scene must contain exactly ONE emotional move.
 12. Do not label scenes with structural names (hook, rise, etc).
@@ -77,23 +77,34 @@ Scene 8 — Cliffhanger (6-9s)
 
 WRITING QUALITY REQUIREMENTS (NON-NEGOTIABLE):
 
+SCREENPLAY FORMAT (THIS IS CRITICAL — follow exactly):
+
+ACTION WRITING:
+- Write action as 4-8 SHORT FRAGMENT SENTENCES. Each micro-action gets its OWN sentence.
+- Use aggressive periods. NEVER combine actions with commas or "and":
+  WRONG: "He steps closer and blocks her path, she doesn't flinch."
+  RIGHT: "He steps closer. Blocks her path. She doesn't flinch."
+- Include pacing devices between actions: "Beat.", "Silence.", "Electric."
+- Every action must involve a BODY PART and an OBJECT or SURFACE: hands, fingers, jaws, doors, glasses, phones, tables
+- No abstract actions: NOT "tension fills the room" — YES "His jaw locks. His hand closes over hers on the table edge."
+- Action must fill 6-9 seconds of visual screen time — 1-2 sentences is NOT enough. Aim for 4-8 fragments minimum.
+- Write as camera directions: "She yanks the drawer open. Slides a folder across granite."
+
+DIALOGUE RULES:
+- Write 2-4 rapid-fire exchanges per scene. Dialogue is VERBAL SPARRING — thrust and parry.
+  WRONG (single line): "KATE: Don't touch me."
+  RIGHT (exchange): "KATE: Don't touch me.\nRYAN: I've got it—\nKATE: I said don't."
+- Maximum 8 words per dialogue line. Shorter is better.
+- Lines must cut, not explain: "You were traded for a yacht." / "I survived you." / "Or what?"
+- Dialogue reveals power, not information. Characters talk to WOUND, CONTROL, or ESCAPE — never to EXPLAIN.
+- Scenes CAN be silent (dialogue: null) — but most scenes should have 2-3 exchanges minimum.
+- No dialogue tag descriptions. The action field covers physical behavior.
+
 PROSE STYLE:
-- Use fragment sentences for impact: "Beat.", "Electric.", "Silence."
+- Use fragment sentences for impact: "Beat.", "Electric.", "Silence.", "Destroyed."
 - Write action as SPECIFIC physical verbs: "yanks", "slams", "grips", "shoves" — NOT "looks at", "seems upset", "feels tense"
 - Descriptions must create IMAGES: "Her knuckles white around the stem of a wine glass" — NOT "She is nervous"
 - Every sentence must contain a CONCRETE VISUAL or PHYSICAL detail
-
-DIALOGUE RULES:
-- Lines must cut, not explain: "You were traded for a yacht." / "I survived you." / "Say it louder. For the table."
-- Maximum 8 words per dialogue line. Shorter is better.
-- Dialogue reveals power, not information. Characters talk to WOUND, CONTROL, or ESCAPE — never to EXPLAIN.
-- No dialogue tag descriptions. The action field covers physical behavior.
-
-ACTION WRITING:
-- Write as camera directions: "She yanks the drawer open. Slides a folder across granite."
-- Every action must involve a BODY PART and an OBJECT or SURFACE: hands, fingers, jaws, doors, glasses, phones, tables
-- No abstract actions: NOT "tension fills the room" — YES "His jaw locks. His hand closes over hers on the table edge."
-- Each scene must have 2-3 distinct physical beats (micro-actions) to fill 6-9 seconds
 
 IMAGE PROMPT STYLE:
 - Write as a cinematographer: shot type + lighting + character positioning + key object + emotional texture

@@ -481,8 +481,8 @@ For each scene provide ALL of these fields:
 - duration: "X seconds" (6-9)
 - characters_on_screen: Array of character IDs present in the scene
 - setting_id: Location ID for this scene
-- action: 1-2 sentences of what characters physically do
-- dialogue: "CHARACTER: line" format with 1-2 lines max, or null for silent scenes
+- action: 4-8 short fragment sentences (each micro-action its own sentence, use "Beat." and "Silence." as pacing)
+- dialogue: 2-4 rapid-fire "CHARACTER: line" exchanges (verbal sparring, thrust-and-parry), or null for silent scenes
 - image_prompt: What the camera sees — composition, framing, lighting, character positions, expressions, key objects. Write for a camera operator.
 - regenerate_notes: What can vary visually without breaking story continuity
 - scene_heading: Standard screenplay format (INT/EXT. LOCATION - TIME)
@@ -526,8 +526,8 @@ OUTPUT FORMAT (JSON):
       "duration": "8 seconds",
       "characters_on_screen": ["char_1", "char_2"],
       "setting_id": "loc_1",
-      "action": "What characters physically do in 1-2 sentences",
-      "dialogue": "VICTOR: Sit down.",
+      "action": "He steps closer. Blocking her path.\nShe doesn't flinch.\nBeat.\nHe stiffens.",
+      "dialogue": "VICTOR: Sit down.\nANA: Make me.",
       "image_prompt": "Tight close-up of two faces in harsh kitchen light, granite countertop between them, one hand flat on surface, other backing toward door",
       "regenerate_notes": "Exact hand positions and background objects can vary",
       "scene_heading": "INT. KITCHEN - NIGHT",
@@ -545,7 +545,7 @@ SHOW, DON'T TELL:
 CRITICAL RULES:
 - Exactly 8 scenes, each 6-9 seconds
 - NO backstory, NO exposition
-- Dialogue: 1-2 lines max per scene, short and sharp
+- Dialogue: 2-4 rapid-fire exchanges per scene (some scenes silent)
 - End BEFORE resolution
 - Scene 4 = emotional peak (biggest payoff)
 - Scene 8 = NEW unanswered threat, hard cut
@@ -1054,8 +1054,8 @@ OUTPUT FORMAT (JSON only, no explanation):
   "duration": "{current_scene.duration}",
   "characters_on_screen": {json.dumps(current_scene.characters_on_screen or all_char_ids)},
   "setting_id": "{current_scene.setting_id or (location_ids[0] if location_ids else 'loc_main')}",
-  "action": "1-2 sentences of what characters physically do",
-  "dialogue": "CHARACTER: line (1-2 lines max, or null)",
+  "action": "4-8 short fragment sentences (each micro-action its own sentence)",
+  "dialogue": "2-4 rapid-fire CHARACTER: line exchanges, or null for silent scenes",
   "image_prompt": "What the camera sees — composition, framing, lighting, expressions",
   "regenerate_notes": "What can vary visually without breaking continuity",
   "scene_heading": "INT/EXT. LOCATION - TIME",
