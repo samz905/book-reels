@@ -124,7 +124,10 @@
       "Bash(grep:*)",
       "Bash(python -m uvicorn:*)",
       "Bash(find:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(taskkill:*)",
+      "Bash(git status:*)",
+      "Bash(file:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -1,4 +1,4 @@
-# Book Reels Design System
+# Oddega Design System
 
 Local design system extracted from Figma. Use this as the source of truth for development.
 

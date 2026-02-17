@@ -1,5 +1,5 @@
 """
-SQLite persistence layer for Book Reels.
+SQLite persistence layer for Oddega.
 
 Stores generation sessions and film job state so they survive
 server restarts and page reloads.

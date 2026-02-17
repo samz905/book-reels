@@ -1,5 +1,5 @@
 /**
- * Seed script for Book Reels database
+ * Seed script for Oddega database
  *
  * Creates 10 creators with stories, episodes, and ebooks.
  *
@@ -108,7 +108,7 @@ async function seedDatabase() {
 
     try {
       // Create auth user
-      const email = `${creator.username}@bookreels.test`;
+      const email = `${creator.username}@oddega.test`;
       const userId = await createAuthUser(email, "testpassword123", {
         username: creator.username,
         name: creator.name,

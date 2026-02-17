@@ -13,8 +13,25 @@ const mulish = Mulish({
 });
 
 export const metadata: Metadata = {
-  title: "Book Reels",
-  description: "Create AI-video series from your books",
+  metadataBase: new URL("https://oddega.com"),
+  title: {
+    default: "Oddega",
+    template: "%s | Oddega",
+  },
+  description: "Create AI-video series from your stories",
+  openGraph: {
+    title: "Oddega",
+    description: "Create AI-video series from your stories",
+    siteName: "Oddega",
+    images: [{ url: "/logo-black.png", width: 1536, height: 1024, alt: "Oddega" }],
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Oddega",
+    description: "Create AI-video series from your stories",
+    images: ["/logo-black.png"],
+  },
 };
 
 export default function RootLayout({

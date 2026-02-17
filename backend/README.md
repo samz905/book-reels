@@ -1,4 +1,4 @@
-# Book Reels AI Backend
+# Oddega AI Backend
 
 Python FastAPI backend for AI video story generation.
 

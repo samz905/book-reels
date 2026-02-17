@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 
@@ -33,20 +34,15 @@ export default function Header() {
 
   return (
     <header className="sticky top-0 z-30 flex items-center justify-between px-6 py-6 bg-[#010101]">
-      {/* Home icon with circle background */}
-      <Link
-        href="/"
-        className="w-[38px] h-[38px] rounded-full bg-card-bg-3 flex items-center justify-center hover:bg-card-bg-4 transition-colors"
-      >
-        <svg
-          width="24"
-          height="24"
-          viewBox="0 0 24 24"
-          fill="currentColor"
-          className="text-white"
-        >
-          <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
-        </svg>
+      {/* Logo */}
+      <Link href="/" className="hover:opacity-80 transition-opacity">
+        <Image
+          src="/logo-white.png"
+          alt="Oddega"
+          width={108}
+          height={36}
+          priority
+        />
       </Link>
 
       {/* Center nav */}

@@ -74,7 +74,7 @@ async function testEndpoint(
 
 async function runTests() {
   console.log("=".repeat(60));
-  console.log("Book Reels API Verification");
+  console.log("Oddega API Verification");
   console.log(`Testing against: ${BASE_URL}`);
   console.log("=".repeat(60));
   console.log("");

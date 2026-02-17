@@ -16,7 +16,7 @@ export default function PublicProfileHeader({
 }: PublicProfileHeaderProps) {
   const handleShare = async () => {
     const shareUrl = window.location.href;
-    const shareTitle = `${profile.name} on Book Reels`;
+    const shareTitle = `${profile.name} on Oddega`;
 
     if (navigator.share) {
       try {

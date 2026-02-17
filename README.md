@@ -1,4 +1,4 @@
-# Book Reels
+# Oddega
 
 A web app where authors can create short AI-video series for their books to increase engagement and sales. The app distributes these videos along with ebooks through creator profiles.
 

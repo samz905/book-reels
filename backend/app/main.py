@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="Book Reels AI Backend",
+    title="Oddega AI Backend",
     description="Backend services for AI video story generation",
     version="0.1.0",
     lifespan=lifespan,
@@ -46,7 +46,7 @@ app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 
 @app.get("/")
 async def root():
-    return {"message": "Book Reels AI Backend", "status": "running"}
+    return {"message": "Oddega AI Backend", "status": "running"}
 
 
 @app.get("/health")

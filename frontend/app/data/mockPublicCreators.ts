@@ -197,7 +197,7 @@ export function getCreatorByUsername(username: string): PublicCreatorProfile | n
     profile: {
       name,
       username,
-      bio: "Creator on Book Reels. Follow for amazing stories, engaging episodes, and exclusive content.",
+      bio: "Creator on Oddega. Follow for amazing stories, engaging episodes, and exclusive content.",
       avatar: `https://picsum.photos/seed/${username}/200/200`,
       storiesCount: 3,
       episodesCount: 45,
