@@ -2424,8 +2424,19 @@ export default function CreateEpisodePage() {
     generationId, story, visualsActive, visualsTab,
     characterImages, locationImages, sceneImages, promptPreview,
     film, clipsApproved, clipsActive, clipStates, totalCost,
-    episodeName, episodeNumber, episodeIsFree, isRestoringState,
+    episodeName, episodeNumber, episodeIsFree,
   ]);
+
+  // After restoration completes, immediately sync computed status to DB (no debounce).
+  // The debounced auto-save above can't catch this because its deps don't change
+  // between the last skipped run (isRestoringRef=true) and the post-restore render.
+  useEffect(() => {
+    if (isRestoringState) return; // still restoring
+    const gid = generationIdRef.current;
+    if (!gid) return; // fresh generation, nothing to sync
+    supaUpdateGeneration(gid, { status: inferStatus() }).catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRestoringState]);
 
   // On mount: only restore if URL has ?g= param. Otherwise start fresh.
   // Works like ChatGPT/Claude: bare URL = blank slate, ?g=xxx = restore that generation.
