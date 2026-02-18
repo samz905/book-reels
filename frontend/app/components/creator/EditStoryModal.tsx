@@ -123,7 +123,7 @@ export default function EditStoryModal({
       <div className="absolute inset-0 bg-black/95" onClick={handleClose} />
 
       {/* Modal */}
-      <div className="relative bg-[#0F0E13] border border-[#1A1E2F] rounded-3xl p-6 w-full max-w-[686px] mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="relative bg-panel border border-panel-border rounded-3xl p-6 w-full max-w-[686px] mx-4 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-white text-2xl font-bold">Edit Story</h2>

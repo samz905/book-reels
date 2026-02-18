@@ -2,7 +2,7 @@ import Link from "next/link";
 
 export default function Footer() {
   return (
-    <footer className="relative z-10 flex items-center justify-between px-6 py-6 mt-12">
+    <footer className="relative z-10 flex flex-col-reverse sm:flex-row items-center justify-between gap-4 px-4 sm:px-6 py-6 mt-12">
       <div className="flex items-center gap-4">
         <a
           href="https://facebook.com"
@@ -74,7 +74,7 @@ export default function Footer() {
         </a>
       </div>
 
-      <nav className="flex items-center gap-6">
+      <nav className="flex items-center gap-4 sm:gap-6">
         <Link
           href="/about"
           className="text-white/70 text-sm hover:text-white transition-colors"

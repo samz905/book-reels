@@ -78,7 +78,7 @@ export default function SubscriptionCard({
   const minPrice = enabled ? 4.99 : 0;
 
   return (
-    <div className="bg-[#0F0E13] rounded-xl p-6">
+    <div className="bg-panel rounded-xl p-6">
       {/* Header with toggle */}
       <div className="flex items-center gap-3 mb-6">
         <h2 className="text-white text-2xl font-bold">Subscription</h2>

@@ -568,6 +568,30 @@ async def handle_scene_images(payload: dict) -> dict:
     return result.model_dump()
 
 
+async def handle_generate_single_scene_image(payload: dict) -> dict:
+    """Handle /moodboard/generate-scene-image (single scene, returns single image)."""
+    batch_payload = {
+        "story": payload.get("story"),
+        "approved_visuals": payload.get("approved_visuals"),
+        "scene_descriptions": [{
+            "scene_number": payload["scene_number"],
+            "visual_description": payload.get("visual_description", ""),
+        }],
+    }
+    req = moodboard_mod.GenerateSceneImagesRequest(**batch_payload)
+    result = await moodboard_mod.generate_scene_images(req)
+    data = result.model_dump()
+    scene_images = data.get("scene_images", [])
+    if scene_images:
+        si = scene_images[0]
+        return {
+            "image": si["image"],
+            "prompt_used": si.get("prompt_used"),
+            "cost_usd": data.get("cost_usd"),
+        }
+    return {"error": "No image generated"}
+
+
 async def handle_refine_scene_image(payload: dict) -> dict:
     """Handle /moodboard/refine-scene-image."""
     req = moodboard_mod.RefineSceneImageRequest(**payload)
@@ -760,6 +784,7 @@ ROUTE_HANDLERS = {
     "/moodboard/generate-key-moment": handle_key_moment,
     "/moodboard/refine-key-moment": handle_refine_key_moment,
     "/moodboard/generate-scene-images": handle_scene_images,
+    "/moodboard/generate-scene-image": handle_generate_single_scene_image,
     "/moodboard/refine-scene-image": handle_refine_scene_image,
 
     # Film

@@ -146,7 +146,7 @@ function DraftCard({
   const styleLabel = styleLabels[draft.style] || draft.style;
 
   return (
-    <div className="relative bg-[#0F0E13] border border-[#1A1E2F] rounded-xl text-left hover:border-[#9C99FF]/40 transition-all group">
+    <div className="relative bg-panel border border-panel-border rounded-xl text-left hover:border-[#9C99FF]/40 transition-all group">
       {/* Delete confirmation overlay */}
       {confirmDelete && (
         <div className="absolute inset-0 z-10 bg-black/80 rounded-xl flex flex-col items-center justify-center gap-2 p-3">
@@ -172,7 +172,7 @@ function DraftCard({
         <div className="flex items-start gap-3">
           {/* Thumbnail or icon */}
           {draft.thumbnail_base64 ? (
-            <div className="w-11 h-11 rounded-lg overflow-hidden flex-shrink-0 bg-[#1A1E2F]">
+            <div className="w-11 h-11 rounded-lg overflow-hidden flex-shrink-0 bg-panel-border">
               <img
                 src={`data:image/jpeg;base64,${draft.thumbnail_base64}`}
                 alt=""
@@ -180,7 +180,7 @@ function DraftCard({
               />
             </div>
           ) : (
-            <div className="w-11 h-11 rounded-lg bg-[#1A1E2F] flex items-center justify-center flex-shrink-0">
+            <div className="w-11 h-11 rounded-lg bg-panel-border flex items-center justify-center flex-shrink-0">
               <svg
                 width="18"
                 height="18"
@@ -259,7 +259,7 @@ function StorySection({
       {/* Section header */}
       <div className="flex items-center gap-3 mb-4">
         {coverUrl ? (
-          <div className="w-8 h-11 rounded overflow-hidden flex-shrink-0 bg-[#1A1E2F]">
+          <div className="w-8 h-11 rounded overflow-hidden flex-shrink-0 bg-panel-border">
             <Image
               src={coverUrl}
               alt={storyName}
@@ -269,7 +269,7 @@ function StorySection({
             />
           </div>
         ) : (
-          <div className="w-8 h-11 rounded bg-[#1A1E2F] flex items-center justify-center flex-shrink-0">
+          <div className="w-8 h-11 rounded bg-panel-border flex items-center justify-center flex-shrink-0">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="#555">
               <path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z" />
             </svg>
@@ -405,7 +405,7 @@ export default function DraftsPage() {
     <div className="min-h-screen bg-black relative overflow-clip">
       <Header />
 
-      <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto">
+      <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
         {/* Top bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
@@ -452,7 +452,7 @@ export default function DraftsPage() {
                 placeholder="Search drafts..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 bg-[#0F0E13] border border-[#1A1E2F] rounded-lg text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-[#9C99FF]/40 transition-colors"
+                className="w-full pl-9 pr-4 py-2 bg-panel border border-panel-border rounded-lg text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-[#9C99FF]/40 transition-colors"
               />
             </div>
 
@@ -468,7 +468,7 @@ export default function DraftsPage() {
                     className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
                       active
                         ? "text-white border border-[#9C99FF]/60"
-                        : "text-white/40 border border-transparent hover:text-white/60 hover:border-[#1A1E2F]"
+                        : "text-white/40 border border-transparent hover:text-white/60 hover:border-panel-border"
                     }`}
                     style={
                       active
@@ -498,26 +498,26 @@ export default function DraftsPage() {
         {isLoading && (
           <div className="space-y-6">
             {Array.from({ length: 2 }).map((_, i) => (
-              <div key={i} className="border-l-2 border-[#1A1E2F] pl-5">
+              <div key={i} className="border-l-2 border-panel-border pl-5">
                 <div className="flex items-center gap-3 mb-4 animate-pulse">
-                  <div className="w-8 h-11 rounded bg-[#1A1E2F]" />
+                  <div className="w-8 h-11 rounded bg-panel-border" />
                   <div className="space-y-1.5">
-                    <div className="h-3.5 w-28 bg-[#1A1E2F] rounded" />
-                    <div className="h-2.5 w-16 bg-[#1A1E2F] rounded" />
+                    <div className="h-3.5 w-28 bg-panel-border rounded" />
+                    <div className="h-2.5 w-16 bg-panel-border rounded" />
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                   {Array.from({ length: 3 }).map((_, j) => (
                     <div
                       key={j}
-                      className="bg-[#0F0E13] border border-[#1A1E2F] rounded-xl p-4 animate-pulse"
+                      className="bg-panel border border-panel-border rounded-xl p-4 animate-pulse"
                     >
                       <div className="flex items-start gap-3">
-                        <div className="w-11 h-11 rounded-lg bg-[#1A1E2F]" />
+                        <div className="w-11 h-11 rounded-lg bg-panel-border" />
                         <div className="flex-1 space-y-2">
-                          <div className="h-3.5 w-24 bg-[#1A1E2F] rounded" />
-                          <div className="h-2 w-16 bg-[#1A1E2F] rounded" />
-                          <div className="h-2 w-20 bg-[#1A1E2F] rounded" />
+                          <div className="h-3.5 w-24 bg-panel-border rounded" />
+                          <div className="h-2 w-16 bg-panel-border rounded" />
+                          <div className="h-2 w-20 bg-panel-border rounded" />
                         </div>
                       </div>
                     </div>
@@ -530,7 +530,7 @@ export default function DraftsPage() {
 
         {/* Not authenticated */}
         {!authLoading && !user && (
-          <div className="bg-[#0F0E13] rounded-xl p-8 text-center">
+          <div className="bg-panel rounded-xl p-8 text-center">
             <h2 className="text-white text-xl font-semibold mb-4">
               Sign in to view your drafts
             </h2>
@@ -549,7 +549,7 @@ export default function DraftsPage() {
 
         {/* Empty state */}
         {!isLoading && user && drafts.length === 0 && (
-          <div className="bg-[#0F0E13] border border-[#1A1E2F] rounded-xl p-12 text-center">
+          <div className="bg-panel border border-panel-border rounded-xl p-12 text-center">
             <svg
               width="48"
               height="48"
@@ -572,7 +572,7 @@ export default function DraftsPage() {
 
         {/* No results for filter/search */}
         {!isLoading && user && drafts.length > 0 && filtered.length === 0 && (
-          <div className="bg-[#0F0E13] border border-[#1A1E2F] rounded-xl p-8 text-center">
+          <div className="bg-panel border border-panel-border rounded-xl p-8 text-center">
             <p className="text-white/40 text-sm">
               No drafts match your{" "}
               {search ? "search" : "filter"}

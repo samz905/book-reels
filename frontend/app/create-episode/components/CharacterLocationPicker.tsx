@@ -186,7 +186,7 @@ export default function CharacterLocationPicker({
                 {selectedCharacters.map((char) => (
                   <div
                     key={char.id}
-                    className="flex items-center gap-2 bg-[#1A1E2F] rounded-lg px-3 py-1.5"
+                    className="flex items-center gap-2 bg-panel-border rounded-lg px-3 py-1.5"
                   >
                     <div className="w-6 h-6 rounded-full overflow-hidden bg-[#262626] flex-shrink-0">
                       {char.imageBase64 ? (

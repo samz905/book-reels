@@ -26,6 +26,12 @@
   --card-bg-4: #363535;
   --logo: #b3b3b3;
 
+  /* UI Surface Colors */
+  --panel: #0f0e13;
+  --panel-border: #1a1e2f;
+  --input-dark: #16151d;
+  --menu-bg: #2a2e3f;
+
   /* Effects */
   --purple-glow: rgba(181, 179, 255, 0.9);
   --card-gradient-end: rgba(40, 45, 76, 0.69);
@@ -75,6 +81,12 @@
   --color-card-bg-3: var(--card-bg-3);
   --color-card-bg-4: var(--card-bg-4);
   --color-logo: var(--logo);
+
+  /* UI Surface Colors */
+  --color-panel: var(--panel);
+  --color-panel-border: var(--panel-border);
+  --color-input-dark: var(--input-dark);
+  --color-menu-bg: var(--menu-bg);
 
   /* Semantic Colors */
   --color-background: var(--background);

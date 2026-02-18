@@ -62,7 +62,7 @@ export default function CartPage() {
     <div className="min-h-screen bg-black">
       <Header />
 
-      <main className="px-6 py-8 max-w-7xl mx-auto">
+      <main className="px-4 md:px-6 py-8 max-w-7xl mx-auto">
         {/* Tabs */}
         <div className="flex items-center gap-5 mb-6">
           <button
@@ -102,7 +102,7 @@ export default function CartPage() {
             )}
 
             {/* Bottom section - Order Summary + Payment Method */}
-            <div className="flex gap-6 mt-6">
+            <div className="flex flex-col lg:flex-row gap-6 mt-6">
               <OrderSummary
                 itemCount={currentCount}
                 itemType={activeTab}

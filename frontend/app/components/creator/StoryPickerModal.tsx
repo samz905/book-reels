@@ -54,7 +54,7 @@ export default function StoryPickerModal({
       <div className="absolute inset-0 bg-black/95" onClick={onClose} />
 
       {/* Modal */}
-      <div className="relative bg-[#0F0E13] border border-[#1A1E2F] rounded-3xl p-6 w-full max-w-[480px] mx-4 max-h-[80vh] flex flex-col">
+      <div className="relative bg-panel border border-panel-border rounded-3xl p-6 w-full max-w-[480px] mx-4 max-h-[80vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-white text-xl font-bold">{title}</h2>
@@ -90,7 +90,7 @@ export default function StoryPickerModal({
               <button
                 key={story.id}
                 onClick={() => onSelect(story.id)}
-                className="w-full flex items-center gap-4 p-3 rounded-xl hover:bg-[#1A1E2F] transition-colors text-left group"
+                className="w-full flex items-center gap-4 p-3 rounded-xl hover:bg-panel-border transition-colors text-left group"
               >
                 {/* Cover thumbnail */}
                 <div className="w-[48px] h-[68px] rounded-lg overflow-hidden border border-[#262626] flex-shrink-0 bg-[#262626]">

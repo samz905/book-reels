@@ -280,11 +280,11 @@ export default function StoryManagementPage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto">
+        <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
           <div className="animate-pulse space-y-6">
             <div className="h-6 w-48 bg-[#1A1E2F] rounded" />
-            <div className="bg-[#0F0E13] rounded-xl p-6 h-[340px]" />
-            <div className="bg-[#0F0E13] rounded-xl p-6 h-[200px]" />
+            <div className="bg-panel rounded-xl p-6 h-[340px]" />
+            <div className="bg-panel rounded-xl p-6 h-[200px]" />
           </div>
         </main>
         <Footer />
@@ -296,8 +296,8 @@ export default function StoryManagementPage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto">
-          <div className="bg-[#0F0E13] rounded-xl p-8 text-center">
+        <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
+          <div className="bg-panel rounded-xl p-8 text-center">
             <h2 className="text-white text-xl font-semibold mb-4">
               Sign in to manage your story
             </h2>
@@ -319,8 +319,8 @@ export default function StoryManagementPage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto">
-          <div className="bg-[#0F0E13] rounded-xl p-8 text-center">
+        <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
+          <div className="bg-panel rounded-xl p-8 text-center">
             <h2 className="text-red-400 text-xl font-semibold mb-4">
               {error || "Story not found"}
             </h2>
@@ -343,7 +343,7 @@ export default function StoryManagementPage() {
     <div className="min-h-screen bg-black relative overflow-clip">
       <Header />
 
-      <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto">
+      <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
         {/* Back link */}
         <button
           onClick={() => router.push("/create")}
@@ -356,7 +356,7 @@ export default function StoryManagementPage() {
         </button>
 
         {/* Story Card */}
-        <div className="bg-[#0F0E13] rounded-xl p-6">
+        <div className="bg-panel rounded-xl p-6">
           {/* Action buttons row */}
           <div className="flex items-center justify-end gap-3 mb-4">
             <button
@@ -409,9 +409,9 @@ export default function StoryManagementPage() {
           </div>
 
           {/* Story info row */}
-          <div className="flex gap-6">
+          <div className="flex flex-col sm:flex-row gap-4 sm:gap-6">
             {/* Cover image */}
-            <div className="w-[205px] h-[290px] rounded-xl overflow-hidden border border-[#262626] flex-shrink-0 bg-[#262626]">
+            <div className="w-full sm:w-[205px] aspect-[205/290] sm:h-[290px] rounded-xl overflow-hidden border border-[#262626] flex-shrink-0 bg-[#262626]">
               {story.cover ? (
                 <Image
                   src={story.cover}

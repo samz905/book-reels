@@ -12,7 +12,7 @@ import {
   type GenJob,
 } from "@/lib/supabase/ai-generations";
 import { useAuth } from "@/app/context/AuthContext";
-import { getMyStories, getStoryCharacters, getStoryLocations, createStoryCharacter, createStoryLocation, createStory, submitJob, getEpisodeStoryboards, upsertEpisodeStoryboards, getEpisodeClips, upsertEpisodeClips, type EpisodeClipFE } from "@/lib/api/creator";
+import { getMyStories, getStoryCharacters, getStoryLocations, createStoryCharacter, createStoryLocation, deleteStoryCharacter, deleteStoryLocation, createStory, submitJob, getEpisodeStoryboards, upsertEpisodeStoryboards, getEpisodeClips, upsertEpisodeClips, type EpisodeClipFE } from "@/lib/api/creator";
 import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 import { useGenJobs } from "@/lib/hooks/useGenJobs";
 import type { StoryCharacterFE, StoryLocationFE, EpisodeStoryboardFE } from "@/app/data/mockCreatorData";
@@ -1443,8 +1443,37 @@ export default function CreateEpisodePage() {
       console.log(`[FETCH-LIB] storyId=${storyId}, chars=${chars.length}, locs=${locs.length}`, chars.map(c => ({
         id: c.id, name: c.name, hasImg: !!(c.imageBase64?.length || c.imageUrl),
       })));
-      setStoryLibraryChars(chars);
-      setStoryLibraryLocs(locs);
+
+      // Auto-deduplicate: keep first occurrence by name, delete extras from DB
+      const dedupeChars = (items: typeof chars) => {
+        const seen = new Map<string, typeof items[0]>();
+        const dupes: typeof items = [];
+        for (const item of items) {
+          const key = item.name.toLowerCase();
+          if (seen.has(key)) { dupes.push(item); } else { seen.set(key, item); }
+        }
+        if (dupes.length > 0) {
+          console.log(`[FETCH-LIB] Removing ${dupes.length} duplicate char(s):`, dupes.map(d => d.name));
+          dupes.forEach(d => deleteStoryCharacter(storyId, d.id).catch(() => {}));
+        }
+        return Array.from(seen.values());
+      };
+      const dedupeLocs = (items: typeof locs) => {
+        const seen = new Map<string, typeof items[0]>();
+        const dupes: typeof items = [];
+        for (const item of items) {
+          const key = (item.name || "").toLowerCase();
+          if (seen.has(key)) { dupes.push(item); } else { seen.set(key, item); }
+        }
+        if (dupes.length > 0) {
+          console.log(`[FETCH-LIB] Removing ${dupes.length} duplicate loc(s):`, dupes.map(d => d.name));
+          dupes.forEach(d => deleteStoryLocation(storyId, d.id).catch(() => {}));
+        }
+        return Array.from(seen.values());
+      };
+
+      setStoryLibraryChars(dedupeChars(chars));
+      setStoryLibraryLocs(dedupeLocs(locs));
     } catch (e) { console.error("[FETCH-LIB] error:", e); }
   };
 
@@ -2043,16 +2072,27 @@ export default function CreateEpisodePage() {
   };
 
   // Save an AI-generated char or loc to the story library (creates a NEW DB entry)
+  const savingToLibRef = useRef<Set<string>>(new Set());
   const handleSaveToLibrary = async (type: "character" | "location", id: string) => {
+    const key = `${type}:${id}`;
+    if (savingToLibRef.current.has(key)) return; // prevent duplicate clicks
+    savingToLibRef.current.add(key);
+
     const sid = associatedStoryIdRef.current;
     if (!sid) {
       console.error(`[SAVE-TO-LIB] ABORTED: no associated story`);
+      savingToLibRef.current.delete(key);
       return;
     }
     try {
       if (type === "character") {
         const char = story?.characters.find(c => c.id === id);
-        if (!char) return;
+        if (!char) { savingToLibRef.current.delete(key); return; }
+        // Check if already saved by name (race condition guard)
+        if (storyLibraryChars.some(c => c.name.toLowerCase() === char.name.toLowerCase())) {
+          savingToLibRef.current.delete(key);
+          return;
+        }
         const img = characterImages[id]?.image;
         const newDbChar = await createStoryCharacter(sid, {
           name: char.name, age: char.age, gender: char.gender,
@@ -2061,10 +2101,18 @@ export default function CreateEpisodePage() {
           image_url: img?.image_url || null,
           image_mime_type: img?.mime_type || "image/png",
         });
-        setStoryLibraryChars(prev => [...prev, newDbChar]);
+        setStoryLibraryChars(prev => {
+          // Dedupe: skip if name already present (another click resolved first)
+          if (prev.some(c => c.name.toLowerCase() === newDbChar.name.toLowerCase())) return prev;
+          return [...prev, newDbChar];
+        });
       } else {
         const loc = story?.locations.find(l => l.id === id);
-        if (!loc) return;
+        if (!loc) { savingToLibRef.current.delete(key); return; }
+        if (storyLibraryLocs.some(l => (l.name || "").toLowerCase() === (loc.name || "").toLowerCase())) {
+          savingToLibRef.current.delete(key);
+          return;
+        }
         const img = locationImages[id]?.image;
         const newDbLoc = await createStoryLocation(sid, {
           name: loc.name, description: loc.description || "",
@@ -2073,10 +2121,15 @@ export default function CreateEpisodePage() {
           image_url: img?.image_url || null,
           image_mime_type: img?.mime_type || "image/png",
         });
-        setStoryLibraryLocs(prev => [...prev, newDbLoc]);
+        setStoryLibraryLocs(prev => {
+          if (prev.some(l => (l.name || "").toLowerCase() === (newDbLoc.name || "").toLowerCase())) return prev;
+          return [...prev, newDbLoc];
+        });
       }
     } catch (e) {
       console.error("[SAVE-TO-LIB] FAILED:", e);
+    } finally {
+      savingToLibRef.current.delete(key);
     }
   };
 
@@ -2136,7 +2189,7 @@ export default function CreateEpisodePage() {
       scenes.map((scene) =>
         submitJob(
           "scene_image",
-          "/moodboard/refine-scene-image",
+          "/moodboard/generate-scene-image",
           {
             story,
             approved_visuals: approvedVisuals,
@@ -2223,7 +2276,7 @@ export default function CreateEpisodePage() {
       clearProcessedJob("scene_image", String(sceneNumber));
       await submitJob(
         "scene_image",
-        "/moodboard/refine-scene-image",
+        "/moodboard/generate-scene-image",
         {
           story,
           approved_visuals: approvedVisuals,
@@ -2814,7 +2867,7 @@ export default function CreateEpisodePage() {
     <div className="min-h-screen bg-[#010101]">
       <Header />
 
-      <main className="max-w-[1400px] mx-auto px-6 py-8">
+      <main className="max-w-[1400px] mx-auto px-4 md:px-6 py-6 md:py-8">
         {/* Episode Name Banner */}
         {episodeName && (
           <div className="flex items-center gap-3 mb-6 pb-5 border-b border-white/5">
@@ -2877,7 +2930,48 @@ export default function CreateEpisodePage() {
           </div>
         )}
 
-        {/* Step Indicator + Save Draft */}
+        {/* Save Draft — above steps on mobile, right-aligned on desktop */}
+        {story && generationId && (
+          <div className="flex justify-end sm:hidden mb-3">
+            <button
+              onClick={handleSaveDraft}
+              disabled={draftSaveStatus === "saving"}
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 ${
+                draftSaveStatus === "saved"
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                  : draftSaveStatus === "saving"
+                  ? "bg-white/5 text-white/40 border border-white/10"
+                  : "bg-white/5 text-white/70 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20"
+              }`}
+            >
+              {draftSaveStatus === "saved" ? (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Saved
+                </>
+              ) : draftSaveStatus === "saving" ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                  </svg>
+                  Save Draft
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Step Indicator */}
         <div className="relative flex items-center justify-center gap-2 mb-8">
           {[
             { num: 1, label: "Create Your Script", active: !visualsActive && !clipsActive },
@@ -2896,7 +2990,7 @@ export default function CreateEpisodePage() {
                   }`}>
                     {isCompleted ? "\u2713" : step.num}
                   </div>
-                  <span className={`text-sm font-medium whitespace-nowrap ${step.active ? "text-white" : isCompleted ? "text-white/70" : "text-white/40"}`}>
+                  <span className={`text-sm font-medium whitespace-nowrap hidden sm:inline ${step.active ? "text-white" : isCompleted ? "text-white/70" : "text-white/40"}`}>
                     {step.label}
                   </span>
                 </div>
@@ -2904,12 +2998,12 @@ export default function CreateEpisodePage() {
             );
           })}
 
-          {/* Save Draft Button — right-aligned */}
+          {/* Save Draft Button — desktop only, right-aligned */}
           {story && generationId && (
             <button
               onClick={handleSaveDraft}
               disabled={draftSaveStatus === "saving"}
-              className={`absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 ${
+              className={`hidden sm:flex absolute right-0 top-1/2 -translate-y-1/2 items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 ${
                 draftSaveStatus === "saved"
                   ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
                   : draftSaveStatus === "saving"
@@ -2945,9 +3039,9 @@ export default function CreateEpisodePage() {
         </div>
 
         {!visualsActive && !clipsActive && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-8">
           {/* Left Column: Input Form */}
-          <div className="bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6">
+          <div className="bg-panel rounded-2xl lg:rounded-3xl outline outline-1 outline-panel-border p-4 md:p-6">
             <>
                 <h2 className="text-xl font-semibold text-white mb-2">
                   Your Episode Idea
@@ -3037,11 +3131,11 @@ export default function CreateEpisodePage() {
           </div>
 
           {/* Right Column */}
-          <div className="bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-6 flex flex-col min-h-0">
+          <div className="bg-panel rounded-2xl lg:rounded-3xl outline outline-1 outline-panel-border p-4 md:p-6 flex flex-col min-h-0">
             {/* Tab switcher */}
             {story && !isGenerating && (
               <>
-                <div className="flex border-b border-[#1A1E2F] mb-5">
+                <div className="flex border-b border-panel-border mb-5">
                   <button
                     onClick={() => setRightTab("script")}
                     className={`flex-1 text-center text-lg font-bold pb-3 transition-colors ${
@@ -3495,7 +3589,7 @@ export default function CreateEpisodePage() {
                       }}
                       className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
                         isActive
-                          ? "bg-[#1A1E2F] text-white"
+                          ? "bg-panel-border text-white"
                           : "text-white/40 hover:text-white/70"
                       }`}
                     >
@@ -3506,7 +3600,7 @@ export default function CreateEpisodePage() {
               })}
             </div>
 
-            <div className="bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] p-8">
+            <div className="bg-panel rounded-3xl outline outline-1 outline-panel-border p-8">
               {/* ─── Characters Tab ─── */}
               {visualsTab === "characters" && (
                 <div>
@@ -3520,7 +3614,7 @@ export default function CreateEpisodePage() {
                         const el = document.getElementById("char-scroll");
                         if (el) el.scrollBy({ left: -280, behavior: "smooth" });
                       }}
-                      className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-[#1A1E2F] border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
+                      className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-panel-border border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
                     </button>
@@ -3530,7 +3624,7 @@ export default function CreateEpisodePage() {
                         const el = document.getElementById("char-scroll");
                         if (el) el.scrollBy({ left: 280, behavior: "smooth" });
                       }}
-                      className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-[#1A1E2F] border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
+                      className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-panel-border border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
                     </button>
@@ -3540,8 +3634,8 @@ export default function CreateEpisodePage() {
                         const imgState = characterImages[char.id];
                         const hasImage = !!imgState?.image;
                         return (
-                          <div key={char.id} className="flex-shrink-0 w-[220px]">
-                            <div className="group relative aspect-[9/16] bg-[#1A1E2F] rounded-2xl overflow-hidden">
+                          <div key={char.id} className="flex-shrink-0 w-[160px] md:w-[220px]">
+                            <div className="group relative aspect-[9/16] bg-panel-border rounded-2xl overflow-hidden">
                               {hasImage && imgState?.image ? (
                                 <>
                                   <img
@@ -3648,7 +3742,7 @@ export default function CreateEpisodePage() {
                         const el = document.getElementById("loc-scroll");
                         if (el) el.scrollBy({ left: -320, behavior: "smooth" });
                       }}
-                      className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-[#1A1E2F] border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
+                      className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-panel-border border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
                     </button>
@@ -3657,7 +3751,7 @@ export default function CreateEpisodePage() {
                         const el = document.getElementById("loc-scroll");
                         if (el) el.scrollBy({ left: 320, behavior: "smooth" });
                       }}
-                      className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-[#1A1E2F] border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
+                      className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-panel-border border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
                     </button>
@@ -3667,8 +3761,8 @@ export default function CreateEpisodePage() {
                         const imgState = locationImages[loc.id];
                         const hasImage = !!imgState?.image;
                         return (
-                          <div key={loc.id} className="flex-shrink-0 w-[220px]">
-                            <div className="group relative aspect-[9/16] bg-[#1A1E2F] rounded-2xl overflow-hidden">
+                          <div key={loc.id} className="flex-shrink-0 w-[160px] md:w-[220px]">
+                            <div className="group relative aspect-[9/16] bg-panel-border rounded-2xl overflow-hidden">
                               {hasImage && imgState?.image ? (
                                 <>
                                   <img
@@ -3813,7 +3907,7 @@ export default function CreateEpisodePage() {
                       {Object.values(sceneImages)
                         .sort((a, b) => a.sceneNumber - b.sceneNumber)
                         .map((scene) => (
-                          <div key={scene.sceneNumber} className="bg-[#1A1E2F] rounded-2xl overflow-hidden">
+                          <div key={scene.sceneNumber} className="bg-panel-border rounded-2xl overflow-hidden">
                             <div className="aspect-[9/16] bg-[#0A0A0F] relative">
                               {scene.isGenerating ? (
                                 <div className="w-full h-full flex flex-col items-center justify-center">
@@ -3995,10 +4089,77 @@ export default function CreateEpisodePage() {
                 &larr; Back to Visuals
               </button>
 
-              <div className="flex gap-0 bg-[#0F0E13] rounded-3xl outline outline-1 outline-[#1A1E2F] overflow-hidden" style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
+              <div className="flex flex-col md:flex-row gap-0 bg-panel rounded-2xl md:rounded-3xl outline outline-1 outline-panel-border overflow-hidden md:h-[calc(100vh-220px)] md:min-h-[500px]">
 
-                {/* === LEFT PANE: Script + Generate (max 50%) === */}
-                <div className="flex-1 min-w-0 p-5 overflow-y-auto border-r border-white/5" style={{ maxWidth: "50%" }}>
+                {/* === MOBILE SCENE STRIP (horizontal, shown only on mobile) === */}
+                <div className="md:hidden flex gap-2 overflow-x-auto scrollbar-hide px-3 py-3 bg-[#0A0A0F] border-b border-white/5">
+                  {scenes.map((scene) => {
+                    const clip = clipStates[scene.scene_number];
+                    const isSelected = selectedClipScene === scene.scene_number;
+                    const sbImg = sceneImages[scene.scene_number]?.image;
+                    return (
+                      <button
+                        key={scene.scene_number}
+                        onClick={() => setSelectedClipScene(scene.scene_number)}
+                        className={`relative flex-shrink-0 w-12 rounded-lg overflow-hidden transition-all ${
+                          isSelected ? "ring-2 ring-[#B8B6FC] ring-offset-1 ring-offset-[#0A0A0F]"
+                          : clip?.status === "generating" ? "ring-1 ring-[#9C99FF] animate-pulse"
+                          : "ring-1 ring-white/10"
+                        }`}
+                      >
+                        <div className="aspect-[9/16] bg-panel-border">
+                          {sbImg ? (
+                            <img src={getImageSrc(sbImg)} alt={`Scene ${scene.scene_number}`} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-white/20 text-xs font-bold">{scene.scene_number}</div>
+                          )}
+                        </div>
+                        {clip?.status === "completed" && (
+                          <div className="absolute top-0.5 right-0.5 w-3 h-3 rounded-full bg-emerald-500" />
+                        )}
+                        {clip?.status === "failed" && (
+                          <div className="absolute top-0.5 right-0.5 w-3 h-3 rounded-full bg-red-500" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* === MOBILE VIDEO PREVIEW (shown only on mobile, above script) === */}
+                <div className="md:hidden flex flex-col items-center bg-black p-4">
+                  <div className="w-full max-w-[280px] aspect-[9/16] relative overflow-hidden rounded-xl">
+                    {currentClip?.status === "completed" && currentClip.videoUrl ? (
+                      <video
+                        key={currentClip.videoUrl}
+                        controls
+                        playsInline
+                        className="absolute inset-0 w-full h-full object-cover"
+                        src={resolveVideoUrl(currentClip.videoUrl)}
+                      />
+                    ) : currentClip?.status === "generating" ? (
+                      <>
+                        {(() => { const sbImg = sceneImages[selectedClipScene]?.image; return sbImg ? (
+                          <img src={getImageSrc(sbImg)} className="absolute inset-0 w-full h-full object-cover blur-sm" />
+                        ) : null; })()}
+                        <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center gap-2">
+                          <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
+                          <p className="text-white/60 text-xs">Generating...</p>
+                        </div>
+                      </>
+                    ) : (
+                      (() => { const sbImg = sceneImages[selectedClipScene]?.image; return sbImg ? (
+                        <img src={getImageSrc(sbImg)} className="absolute inset-0 w-full h-full object-cover" />
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center bg-panel-border">
+                          <p className="text-white/30 text-sm">No storyboard</p>
+                        </div>
+                      ); })()
+                    )}
+                  </div>
+                </div>
+
+                {/* === LEFT PANE: Script + Generate (max 50% on desktop) === */}
+                <div className="flex-1 min-w-0 p-4 md:p-5 md:overflow-y-auto border-b md:border-b-0 md:border-r border-white/5 md:max-w-[50%]">
                   {currentScene && (
                     <>
                       {/* Scene heading */}
@@ -4148,8 +4309,8 @@ export default function CreateEpisodePage() {
                   )}
                 </div>
 
-                {/* === MIDDLE PANE: Scene Navigation (80px) === */}
-                <div className="w-20 flex-shrink-0 py-3 px-1.5 overflow-y-auto scrollbar-hide bg-[#0A0A0F] space-y-2">
+                {/* === MIDDLE PANE: Scene Navigation (80px, desktop only) === */}
+                <div className="hidden md:block w-20 flex-shrink-0 py-3 px-1.5 overflow-y-auto scrollbar-hide bg-[#0A0A0F] space-y-2">
                   {scenes.map((scene) => {
                     const clip = clipStates[scene.scene_number];
                     const isSelected = selectedClipScene === scene.scene_number;
@@ -4171,7 +4332,7 @@ export default function CreateEpisodePage() {
                         }`}
                       >
                         {/* Thumbnail (9:16) */}
-                        <div className="aspect-[9/16] bg-[#1A1E2F]">
+                        <div className="aspect-[9/16] bg-panel-border">
                           {sbImg ? (
                             <img
                               src={getImageSrc(sbImg)}
@@ -4211,8 +4372,8 @@ export default function CreateEpisodePage() {
                   })}
                 </div>
 
-                {/* === RIGHT PANE: Video Preview (centered 9:16 portrait) === */}
-                <div className="flex-1 min-w-0 flex items-stretch justify-center bg-black">
+                {/* === RIGHT PANE: Video Preview (centered 9:16 portrait) — desktop only === */}
+                <div className="hidden md:flex flex-1 min-w-0 items-stretch justify-center bg-black">
                   {/* 9:16 portrait container — full height, width derived from aspect ratio */}
                   <div className="h-full aspect-[9/16] flex flex-col">
                     <div className="flex-1 relative overflow-hidden">
@@ -4278,11 +4439,11 @@ export default function CreateEpisodePage() {
 
               {/* Bottom bar: Preview Film / Save to Drafts / Publish */}
               {allClipsCompleted && (
-                <div className="mt-6 flex items-center justify-center gap-4">
+                <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
                   <button
                     onClick={previewFilm}
                     disabled={isAssembling}
-                    className="px-6 py-3 bg-[#1A1E2F] text-white rounded-xl font-medium hover:bg-[#262626] transition-colors disabled:opacity-50 flex items-center gap-2"
+                    className="px-6 py-3 bg-panel-border text-white rounded-xl font-medium hover:bg-[#262626] transition-colors disabled:opacity-50 flex items-center gap-2"
                   >
                     {isAssembling ? (
                       <>
@@ -4373,7 +4534,7 @@ export default function CreateEpisodePage() {
         {/* Unpublish confirmation dialog */}
         {showUnpublishConfirm && (
           <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" onClick={() => setShowUnpublishConfirm(false)}>
-            <div className="bg-[#1A1E2F] rounded-xl p-6 max-w-sm mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-panel-border rounded-xl p-6 max-w-sm mx-4" onClick={(e) => e.stopPropagation()}>
               <h3 className="text-white text-lg font-semibold mb-2">Unpublish Episode?</h3>
               <p className="text-white/60 text-sm mb-6">
                 This episode will be hidden from viewers. You can re-publish it later.

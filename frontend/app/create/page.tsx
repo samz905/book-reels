@@ -286,15 +286,15 @@ export default function CreatePage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto">
+        <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
           <div className="animate-pulse space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
-              <div className="bg-[#0F0E13] rounded-xl p-6 h-48" />
-              <div className="bg-[#0F0E13] rounded-xl p-6 h-48" />
+              <div className="bg-panel rounded-xl p-6 h-48" />
+              <div className="bg-panel rounded-xl p-6 h-48" />
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-[#0F0E13] rounded-xl p-6 h-40" />
-              <div className="bg-[#0F0E13] rounded-xl p-6 h-40" />
+              <div className="bg-panel rounded-xl p-6 h-40" />
+              <div className="bg-panel rounded-xl p-6 h-40" />
             </div>
           </div>
         </main>
@@ -307,8 +307,8 @@ export default function CreatePage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto">
-          <div className="bg-[#0F0E13] rounded-xl p-8 text-center">
+        <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
+          <div className="bg-panel rounded-xl p-8 text-center">
             <h2 className="text-white text-xl font-semibold mb-4">
               Sign in to access your creator dashboard
             </h2>
@@ -336,8 +336,8 @@ export default function CreatePage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto">
-          <div className="bg-[#0F0E13] rounded-xl p-8 text-center">
+        <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
+          <div className="bg-panel rounded-xl p-8 text-center">
             <h2 className="text-red-400 text-xl font-semibold mb-4">
               Error loading dashboard
             </h2>
@@ -369,7 +369,7 @@ export default function CreatePage() {
     <div className="min-h-screen bg-black relative overflow-clip">
       <Header />
 
-      <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto">
+      <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
         {error && (
           <div className="mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200">
             {error}
@@ -382,7 +382,7 @@ export default function CreatePage() {
             onUpdate={handleProfileUpdate}
           />
 
-          <div className="bg-[#0F0E13] rounded-xl p-6 flex flex-col gap-5">
+          <div className="bg-panel rounded-xl p-6 flex flex-col gap-5">
             <button
               onClick={() => setShowCreateStoryModal(true)}
               className="w-full py-2 rounded-lg font-semibold text-sm text-white transition-opacity hover:opacity-90 border border-[#B8B6FC]"
@@ -443,7 +443,7 @@ export default function CreatePage() {
         )}
 
         {stories.length === 0 && (
-          <div className="bg-[#0F0E13] rounded-xl p-8 text-center">
+          <div className="bg-panel rounded-xl p-8 text-center">
             <h3 className="text-white text-lg font-semibold mb-2">
               No stories yet
             </h3>

@@ -48,7 +48,7 @@ export default function DeleteConfirmModal({
   const modalContent = (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/80" onClick={onClose} />
-      <div className="relative bg-[#0F0E13] border border-[#1A1E2F] rounded-2xl p-6 w-full max-w-[400px] mx-4">
+      <div className="relative bg-panel border border-panel-border rounded-2xl p-6 w-full max-w-[400px] mx-4">
         <h2 className="text-white text-xl font-bold mb-3">{title}</h2>
         <p className="text-[#ADADAD] text-sm mb-6">{message}</p>
 

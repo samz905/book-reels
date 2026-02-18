@@ -23,7 +23,7 @@ export const metadata: Metadata = {
     title: "Oddega",
     description: "Create AI-video series from your stories",
     siteName: "Oddega",
-    images: [{ url: "/logo-black.png", width: 1536, height: 1024, alt: "Oddega" }],
+    images: [{ url: "/logo-black.png", width: 512, height: 512, alt: "Oddega" }],
     type: "website",
   },
   twitter: {

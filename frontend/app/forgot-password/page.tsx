@@ -73,8 +73,8 @@ function ForgotPasswordContent() {
 
       <Header />
 
-      <main className="relative z-10 flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-[400px] bg-card-bg-1 rounded-2xl p-8">
+      <main className="relative z-10 flex items-center justify-center px-4 md:px-6 py-12">
+        <div className="w-full max-w-[400px] bg-card-bg-1 rounded-2xl p-6 md:p-8">
           <h1 className="text-white text-2xl font-semibold text-center mb-8">
             {isReset ? "Reset Password" : "Forgot Password"}
           </h1>

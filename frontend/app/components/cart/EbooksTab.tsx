@@ -45,7 +45,7 @@ export default function EbooksTab({ ebooks, onRemove }: EbooksTabProps) {
   };
 
   return (
-    <div className="bg-[#0F0E13] rounded-xl p-6">
+    <div className="bg-panel rounded-xl p-6">
       {/* Header with arrows */}
       <div className="flex items-start justify-between mb-3">
         <h2 className="text-white text-2xl font-bold">Ebooks</h2>

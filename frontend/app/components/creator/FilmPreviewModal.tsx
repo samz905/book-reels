@@ -52,7 +52,7 @@ export default function FilmPreviewModal({
       <div className="absolute inset-0 bg-black/95" onClick={onClose} />
 
       {/* Content */}
-      <div className="relative flex flex-col items-center max-h-[95vh]">
+      <div className="relative flex flex-col items-center max-h-[95vh] px-4 sm:px-0">
         {/* Close button */}
         <button
           onClick={onClose}
@@ -70,7 +70,7 @@ export default function FilmPreviewModal({
         )}
 
         {/* Video player - portrait */}
-        <div className="w-[360px] aspect-[9/16] bg-black rounded-2xl overflow-hidden">
+        <div className="w-full max-w-[360px] aspect-[9/16] bg-black rounded-2xl overflow-hidden">
           <video
             key={videoUrl}
             src={videoUrl}

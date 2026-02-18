@@ -4,7 +4,7 @@ import Link from "next/link";
 
 export default function EmptyCart() {
   return (
-    <div className="bg-[#0F0E13] rounded-2xl min-h-[500px] flex flex-col items-center justify-center gap-4">
+    <div className="bg-panel rounded-2xl min-h-[500px] flex flex-col items-center justify-center gap-4">
       {/* Bag outline icon */}
       <svg
         width="64"

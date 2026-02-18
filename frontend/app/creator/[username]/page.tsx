@@ -161,10 +161,10 @@ export default function PublicCreatorProfilePage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <div className="sticky top-[86px] z-20 px-6 py-6 max-w-7xl mx-auto">
+        <div className="sticky top-[64px] z-20 px-4 md:px-6 py-6 max-w-7xl mx-auto">
           <ProfileHeaderSkeleton />
         </div>
-        <main className="px-6 pb-8 max-w-7xl mx-auto relative z-10">
+        <main className="px-4 md:px-6 pb-8 max-w-7xl mx-auto relative z-10">
           <div className="space-y-6">
             <PublicStorySkeleton />
             <PublicStorySkeleton />
@@ -180,7 +180,7 @@ export default function PublicCreatorProfilePage() {
     return (
       <div className="min-h-screen bg-gradient-page relative overflow-clip">
         <Header />
-        <main className="px-6 py-20 max-w-7xl mx-auto text-center">
+        <main className="px-4 md:px-6 py-20 max-w-7xl mx-auto text-center">
           <h1 className="text-white text-3xl font-bold mb-4">Error</h1>
           <p className="text-white/70 text-lg mb-4">{error}</p>
           <button
@@ -200,7 +200,7 @@ export default function PublicCreatorProfilePage() {
     return (
       <div className="min-h-screen bg-gradient-page relative overflow-clip">
         <Header />
-        <main className="px-6 py-20 max-w-7xl mx-auto text-center">
+        <main className="px-4 md:px-6 py-20 max-w-7xl mx-auto text-center">
           <h1 className="text-white text-3xl font-bold mb-4">
             Creator Not Found
           </h1>
@@ -219,7 +219,7 @@ export default function PublicCreatorProfilePage() {
       <Header />
 
       {/* Sticky Profile Header */}
-      <div className="sticky top-[86px] z-20 px-6 py-6 max-w-7xl mx-auto">
+      <div className="sticky top-[64px] z-20 px-4 md:px-6 py-6 max-w-7xl mx-auto">
         <PublicProfileHeader
           profile={creator.profile}
           subscriptionPrice={creator.subscription.monthlyPrice}
@@ -228,7 +228,7 @@ export default function PublicCreatorProfilePage() {
       </div>
 
       {/* Stories List */}
-      <main className="px-6 pb-8 max-w-7xl mx-auto relative z-10">
+      <main className="px-4 md:px-6 pb-8 max-w-7xl mx-auto relative z-10">
         <div className="space-y-6">
           {creator.stories.length > 0 ? (
             creator.stories.map((story) => (

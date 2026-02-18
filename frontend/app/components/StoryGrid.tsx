@@ -16,7 +16,7 @@ export default function StoryGrid({ stories, onStoryClick }: StoryGridProps) {
   }
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-6">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-6">
       {stories.map((story) => (
         <StoryCard key={story.id} story={story} onClick={onStoryClick ? () => onStoryClick(story) : undefined} />
       ))}

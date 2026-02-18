@@ -22,6 +22,12 @@ export const colors = {
   cardBg3: '#303030',
   cardBg4: '#363535',
   logo: '#B3B3B3',
+
+  // UI Surface Colors
+  panel: '#0F0E13',
+  panelBorder: '#1A1E2F',
+  inputDark: '#16151D',
+  menuBg: '#2A2E3F',
 } as const;
 
 // Semantic color mappings

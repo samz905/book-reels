@@ -160,18 +160,18 @@ export default function Home() {
     <div className="min-h-screen bg-gradient-page relative overflow-clip">
       {/* Purple glow effects */}
       <div className="absolute w-[227px] h-[420px] left-[25px] top-[-260px] bg-purple-glow blur-[95px]" />
-      <div className="absolute w-[227px] h-[420px] left-[740px] top-[1507px] bg-purple-glow blur-[95px]" />
+      <div className="hidden sm:block absolute w-[227px] h-[420px] left-[740px] top-[1507px] bg-purple-glow blur-[95px]" />
 
 
       <Header />
 
-      <main className="relative z-10 px-6">
+      <main className="relative z-10 px-4 md:px-6">
         {/* Hero Section */}
         <section className="text-center py-12 max-w-[1200px] mx-auto relative">
           {/* Hero glow effect */}
           <div className="absolute w-[227px] h-[170px] left-1/2 -translate-x-1/2 top-[140px] bg-[rgba(156,153,255,0.55)] blur-[95px]" />
 
-          <h1 className="font-medium text-[72px] leading-[72px] tracking-[-3.6px] mb-6">
+          <h1 className="font-medium text-4xl sm:text-5xl lg:text-[72px] leading-tight lg:leading-[72px] tracking-[-1.5px] lg:tracking-[-3.6px] mb-6">
             <span className="text-white">Stories, </span>
             <span
               style={{
@@ -184,7 +184,7 @@ export default function Home() {
               reimagined
             </span>
           </h1>
-          <p className="text-white text-[19.5px] leading-7 max-w-[676px] mx-auto mb-8">
+          <p className="text-white text-base sm:text-lg lg:text-[19.5px] leading-relaxed lg:leading-7 max-w-[676px] mx-auto mb-8">
             Discover immersive stories that unfold in short visual episodes. New
             chapters dropping all the time.
           </p>
@@ -199,7 +199,7 @@ export default function Home() {
         {/* Sticky Tabs Container */}
         <div
           ref={stickyRef}
-          className={`sticky top-[86px] z-20 py-4 -mx-6 px-6 transition-colors duration-200 ${
+          className={`sticky top-[64px] z-20 py-4 -mx-4 px-4 md:-mx-6 md:px-6 transition-colors duration-200 ${
             isSticky ? "bg-[#010101]" : ""
           }`}
         >
@@ -237,10 +237,10 @@ export default function Home() {
       {/* Story detail popup with episodes */}
       {selectedStory && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setSelectedStory(null)}>
-          <div className="bg-[#0F0E13] rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-panel rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             {/* Header with cover + info */}
-            <div className="p-6 flex gap-5">
-              <div className="w-[120px] h-[170px] rounded-xl overflow-hidden flex-shrink-0">
+            <div className="p-4 sm:p-6 flex gap-4 sm:gap-5">
+              <div className="w-[90px] h-[128px] sm:w-[120px] sm:h-[170px] rounded-xl overflow-hidden flex-shrink-0">
                 <Image
                   src={selectedStory.coverImage}
                   alt={selectedStory.title}
@@ -275,7 +275,7 @@ export default function Home() {
             </div>
 
             {/* Episodes */}
-            <div className="px-6 pb-6">
+            <div className="px-4 sm:px-6 pb-4 sm:pb-6">
               {episodesLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <div className="w-6 h-6 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />

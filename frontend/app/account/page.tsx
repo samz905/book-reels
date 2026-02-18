@@ -90,7 +90,7 @@ export default function AccountPage() {
     <div className="min-h-screen bg-black relative overflow-clip">
       <Header />
 
-      <main className="relative z-10 px-6 py-8 max-w-7xl mx-auto space-y-8">
+      <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto space-y-6 md:space-y-8">
         {/* Personal Information */}
         <PersonalInfoCard
           name={userName}
@@ -142,11 +142,11 @@ export default function AccountPage() {
         />
 
         {/* Delete Account & Log Out */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
             <button
               onClick={() => setShowDeleteModal(true)}
-              className="text-[#AE1414] text-xl font-bold hover:opacity-80 transition-opacity"
+              className="text-[#AE1414] text-lg sm:text-xl font-bold hover:opacity-80 transition-opacity"
             >
               Delete Account
             </button>
@@ -157,7 +157,7 @@ export default function AccountPage() {
           </div>
           <button
             onClick={handleLogout}
-            className="text-green-3 text-base font-bold hover:opacity-80 transition-opacity"
+            className="text-green-3 text-base font-bold hover:opacity-80 transition-opacity flex-shrink-0"
           >
             Log Out
           </button>

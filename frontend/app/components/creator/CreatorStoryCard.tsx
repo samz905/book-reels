@@ -135,10 +135,10 @@ export default function CreatorStoryCard({
   };
 
   return (
-    <div className="bg-[#0F0E13] rounded-xl p-6">
+    <div className="bg-panel rounded-xl p-6">
       {/* Action buttons row */}
-      <div className="flex items-center justify-end mb-4">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-end mb-4 overflow-x-auto">
+        <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={() => setShowCreateEpisodeModal(true)}
             className="px-4 py-2 border border-[#1ED760] text-[#1ED760] rounded-lg text-sm font-medium hover:bg-[#1ED760]/10 transition-colors"
@@ -187,9 +187,9 @@ export default function CreatorStoryCard({
         </div>
       </div>
 
-      <div className="flex gap-6">
+      <div className="flex flex-col sm:flex-row gap-4 sm:gap-6">
         {/* Cover image - 205x290 per spec */}
-        <div className="w-[205px] h-[290px] rounded-xl overflow-hidden border border-[#262626] flex-shrink-0">
+        <div className="w-full sm:w-[205px] aspect-[205/290] sm:h-[290px] rounded-xl overflow-hidden border border-[#262626] flex-shrink-0">
           <Image
             src={story.cover}
             alt={story.title}
@@ -334,7 +334,7 @@ export default function CreatorStoryCard({
             ) : (story.ebooks || []).map((ebook, index) => (
               <div key={ebook.id} className="flex items-stretch">
                 {/* Ebook card - 354px wide with 322px content area */}
-                <div className="w-[354px] flex gap-3">
+                <div className="w-[280px] sm:w-[354px] flex gap-3">
                   {/* Cover with price and read button below */}
                   <div className="flex flex-col gap-2 flex-shrink-0 w-[100px]">
                     <div className="w-[100px] h-[160px] rounded bg-card-bg-2 overflow-hidden">
@@ -453,7 +453,7 @@ export default function CreatorStoryCard({
       {/* Publish / Unpublish confirmation dialog */}
       {showStatusConfirm && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" onClick={() => setShowStatusConfirm(false)}>
-          <div className="bg-[#1A1E2F] rounded-xl p-6 max-w-sm mx-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-panel-border rounded-xl p-6 max-w-sm mx-4" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-white text-lg font-semibold mb-2">
               {story.status === "draft" ? "Publish Story?" : "Unpublish Story?"}
             </h3>

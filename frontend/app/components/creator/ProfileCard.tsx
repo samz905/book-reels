@@ -33,7 +33,7 @@ export default function ProfileCard({ profile, onUpdate }: ProfileCardProps) {
 
   return (
     <>
-      <div className="bg-[#0F0E13] rounded-xl p-6">
+      <div className="bg-panel rounded-xl p-6">
         <div className="flex gap-4">
           {/* Avatar */}
           <div className="w-16 h-16 rounded-full bg-card-bg-2 overflow-hidden flex-shrink-0 flex items-center justify-center">

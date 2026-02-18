@@ -28,7 +28,7 @@ export default function EbooksLibraryCard({
   };
 
   return (
-    <div className="bg-[#0F0E13] rounded-2xl p-6">
+    <div className="bg-panel rounded-2xl p-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-white text-2xl font-bold">Ebooks Library</h2>

@@ -27,7 +27,7 @@ export default function PaymentMethodCard({
   };
 
   return (
-    <div className="bg-[#0F0E13] rounded-xl p-6 flex-1">
+    <div className="bg-panel rounded-xl p-6 flex-1">
       <h2 className="text-white text-2xl font-bold mb-6">Payment Method</h2>
 
       {!isEditing ? (
