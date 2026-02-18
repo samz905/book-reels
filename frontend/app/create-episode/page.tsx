@@ -1819,6 +1819,24 @@ export default function CreateEpisodePage() {
           console.error("Failed to check completed gen jobs:", err);
         }
       })();
+      // ---- Compute correct status from raw data and persist immediately ----
+      // inferStatus() reads React state which hasn't rendered yet, so derive
+      // the status from the fetched data directly.
+      const filmStatus = data.film_job
+        ? (data.film_job.status === "interrupted" ? "failed" : data.film_job.status)
+        : (s.film as FilmState | undefined)?.status;
+      const correctStatus =
+        (s.clipsActive && filmStatus === "ready") ? "ready"
+        : s.clipsActive ? "filming"
+        : (filmStatus === "generating" || filmStatus === "assembling") ? "filming"
+        : filmStatus === "ready" ? "ready"
+        : filmStatus === "failed" ? "failed"
+        : ((s.promptPreview as PromptPreviewState | undefined)?.shots?.length ?? 0) > 0 ? "filming"
+        : s.visualsActive ? "visuals"
+        : "drafting";
+      if (correctStatus !== data.status) {
+        await supaUpdateGeneration(genId, { status: correctStatus }).catch(console.error);
+      }
     } catch (err) {
       console.error("Failed to restore generation:", err);
     } finally {
@@ -2426,17 +2444,6 @@ export default function CreateEpisodePage() {
     film, clipsApproved, clipsActive, clipStates, totalCost,
     episodeName, episodeNumber, episodeIsFree,
   ]);
-
-  // After restoration completes, immediately sync computed status to DB (no debounce).
-  // The debounced auto-save above can't catch this because its deps don't change
-  // between the last skipped run (isRestoringRef=true) and the post-restore render.
-  useEffect(() => {
-    if (isRestoringState) return; // still restoring
-    const gid = generationIdRef.current;
-    if (!gid) return; // fresh generation, nothing to sync
-    supaUpdateGeneration(gid, { status: inferStatus() }).catch(console.error);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRestoringState]);
 
   // On mount: only restore if URL has ?g= param. Otherwise start fresh.
   // Works like ChatGPT/Claude: bare URL = blank slate, ?g=xxx = restore that generation.
