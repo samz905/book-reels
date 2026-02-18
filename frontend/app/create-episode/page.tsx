@@ -586,6 +586,7 @@ export default function CreateEpisodePage() {
         break;
       }
       case "assemble":
+        publishAfterAssemblyRef.current = false;
         setIsAssembling(false);
         break;
     }
@@ -1092,7 +1093,7 @@ export default function CreateEpisodePage() {
       // and the flush above. sendBeacon has a ~64KB limit so it can't carry base64 images.
       const payload = JSON.stringify({
         title: episodeNameRef.current || "Untitled",
-        status: film.status === "ready" ? "ready" : film.status === "failed" ? "failed" : undefined,
+        status: inferStatus(),
         film_id: film.filmId,
         cost_total: totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film,
       });
@@ -2423,7 +2424,7 @@ export default function CreateEpisodePage() {
     generationId, story, visualsActive, visualsTab,
     characterImages, locationImages, sceneImages, promptPreview,
     film, clipsApproved, clipsActive, clipStates, totalCost,
-    episodeName, episodeNumber, episodeIsFree,
+    episodeName, episodeNumber, episodeIsFree, isRestoringState,
   ]);
 
   // On mount: only restore if URL has ?g= param. Otherwise start fresh.

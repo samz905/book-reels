@@ -2,6 +2,7 @@
 FFmpeg utilities for video processing.
 """
 import os
+import shutil
 import subprocess
 import asyncio
 import base64
@@ -9,10 +10,9 @@ import uuid
 from typing import Literal, List, Optional
 from ..config import TEMP_DIR
 
-# FFmpeg binary paths (installed via winget)
-FFMPEG_BIN_DIR = r"C:\Users\samZ9\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0.1-full_build\bin"
-FFMPEG = os.path.join(FFMPEG_BIN_DIR, "ffmpeg.exe")
-FFPROBE = os.path.join(FFMPEG_BIN_DIR, "ffprobe.exe")
+# Find ffmpeg/ffprobe on PATH (works on both Windows and Linux/Render)
+FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
+FFPROBE = shutil.which("ffprobe") or "ffprobe"
 
 
 def _run_command(cmd: list) -> tuple[int, bytes, bytes]:
