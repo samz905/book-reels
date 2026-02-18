@@ -2670,7 +2670,8 @@ export default function CreateEpisodePage() {
     setClipStates({});
     setSelectedClipScene(1);
     setAssembledVideoUrl(null);
-    setIsAssembling(false);
+    assembleIntentRef.current = null;
+    setAssembleIntent(null);
     setShowFilmPreview(false);
     // Reset all costs
     setTotalCost({
