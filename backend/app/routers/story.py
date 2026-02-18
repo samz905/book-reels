@@ -826,6 +826,11 @@ def parse_story_response(
                 loc["atmosphere"] = pre_selected_location.atmosphere
                 break
 
+    # Gemini sometimes returns list instead of string for text fields — coerce
+    for char in data.get("characters", []):
+        if isinstance(char.get("appearance"), list):
+            char["appearance"] = " ".join(char["appearance"])
+
     return Story(**data)
 
 
