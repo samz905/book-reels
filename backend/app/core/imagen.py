@@ -5,6 +5,7 @@ Supports reference images for character/scene consistency.
 """
 import asyncio
 import base64
+import gc
 import io
 from typing import Literal, List, Optional
 from PIL import Image
@@ -14,6 +15,19 @@ from ..config import genai_client
 
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 5  # seconds
+
+# Limit concurrent image generations to avoid OOM on 512MB instances.
+# Each call holds multiple PIL images (5-20MB each uncompressed) in memory.
+IMAGE_GEN_MAX_CONCURRENT = 2
+_image_gen_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_image_gen_semaphore() -> asyncio.Semaphore:
+    """Lazy-init semaphore (must be created inside a running event loop)."""
+    global _image_gen_semaphore
+    if _image_gen_semaphore is None:
+        _image_gen_semaphore = asyncio.Semaphore(IMAGE_GEN_MAX_CONCURRENT)
+    return _image_gen_semaphore
 
 
 async def _retry_on_resource_exhausted(fn, *args, **kwargs):
@@ -52,42 +66,44 @@ async def generate_image(
           - image_base64: Base64 encoded image data
           - mime_type: Image MIME type
     """
-    # Build the prompt with aspect ratio guidance
-    full_prompt = f"Generate a high quality image: {prompt}"
-    if aspect_ratio == "9:16":
-        full_prompt += " The image should be in portrait orientation (taller than wide)."
-    elif aspect_ratio == "16:9":
-        full_prompt += " The image should be in landscape orientation (wider than tall)."
+    sem = _get_image_gen_semaphore()
+    async with sem:
+        # Build the prompt with aspect ratio guidance
+        full_prompt = f"Generate a high quality image: {prompt}"
+        if aspect_ratio == "9:16":
+            full_prompt += " The image should be in portrait orientation (taller than wide)."
+        elif aspect_ratio == "16:9":
+            full_prompt += " The image should be in landscape orientation (wider than tall)."
 
-    # Use Gemini with image generation capability (with retry on 429)
-    response = await _retry_on_resource_exhausted(
-        genai_client.models.generate_content,
-        model=model,
-        contents=full_prompt,
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE", "TEXT"],
+        # Use Gemini with image generation capability (with retry on 429)
+        response = await _retry_on_resource_exhausted(
+            genai_client.models.generate_content,
+            model=model,
+            contents=full_prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE", "TEXT"],
+            )
         )
-    )
 
-    # Extract image from response
-    if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
-        raise ValueError("Image generation returned empty response — the prompt may have been blocked by safety filters. Try rephrasing the description.")
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, 'inline_data') and part.inline_data is not None:
-            image_data = part.inline_data
-            if hasattr(image_data, 'data') and image_data.data:
-                image_bytes = image_data.data
-                image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-                return {
-                    "image_base64": image_base64,
-                    "mime_type": getattr(image_data, 'mime_type', 'image/png') or "image/png",
-                }
+        # Extract image from response
+        if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
+            raise ValueError("Image generation returned empty response — the prompt may have been blocked by safety filters. Try rephrasing the description.")
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, 'inline_data') and part.inline_data is not None:
+                image_data = part.inline_data
+                if hasattr(image_data, 'data') and image_data.data:
+                    image_bytes = image_data.data
+                    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+                    return {
+                        "image_base64": image_base64,
+                        "mime_type": getattr(image_data, 'mime_type', 'image/png') or "image/png",
+                    }
 
-    # If no image in response, raise error
-    raise ValueError(
-        "No image was generated. The model may have returned text only. "
-        f"Response parts: {[type(p).__name__ for p in response.candidates[0].content.parts]}"
-    )
+        # If no image in response, raise error
+        raise ValueError(
+            "No image was generated. The model may have returned text only. "
+            f"Response parts: {[type(p).__name__ for p in response.candidates[0].content.parts]}"
+        )
 
 
 def _base64_to_pil(base64_str: str, mime_type: str = "image/png") -> Image.Image:
@@ -109,6 +125,9 @@ async def generate_image_with_references(
     - Up to 5 human images for character consistency
     - Up to 6 object images for scene consistency
 
+    Concurrency-limited by semaphore to prevent OOM on memory-constrained
+    instances (each call holds multiple uncompressed PIL Images).
+
     Args:
         prompt: Text description of the image to generate
         reference_images: List of dicts with image_base64 and mime_type
@@ -121,65 +140,79 @@ async def generate_image_with_references(
           - image_base64: Base64 encoded image data
           - mime_type: Image MIME type
     """
-    # Build contents list: prompt first, then reference images
-    contents = [prompt]
+    sem = _get_image_gen_semaphore()
+    async with sem:
+        # Build contents list: prompt first, then reference images
+        contents = [prompt]
+        pil_images = []  # Track for explicit cleanup
 
-    # Add reference images as PIL Images
-    for ref in reference_images:
         try:
-            pil_image = _base64_to_pil(ref["image_base64"], ref.get("mime_type", "image/png"))
-            contents.append(pil_image)
-        except Exception as e:
-            print(f"Warning: Could not load reference image: {e}")
-            continue
+            # Add reference images as PIL Images
+            for ref in reference_images:
+                try:
+                    pil_image = _base64_to_pil(ref["image_base64"], ref.get("mime_type", "image/png"))
+                    pil_images.append(pil_image)
+                    contents.append(pil_image)
+                except Exception as e:
+                    print(f"Warning: Could not load reference image: {e}")
+                    continue
 
-    print(f"Generating with {len(contents) - 1} reference images...")
+            print(f"Generating with {len(contents) - 1} reference images...")
 
-    # Generate with reference images (with retry on 429)
-    response = await _retry_on_resource_exhausted(
-        genai_client.models.generate_content,
-        model=model,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            response_modalities=["TEXT", "IMAGE"],
-            image_config=types.ImageConfig(
-                aspect_ratio=aspect_ratio,
-                image_size=resolution,
-            ),
-        )
-    )
+            # Generate with reference images (with retry on 429)
+            response = await _retry_on_resource_exhausted(
+                genai_client.models.generate_content,
+                model=model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_modalities=["TEXT", "IMAGE"],
+                    image_config=types.ImageConfig(
+                        aspect_ratio=aspect_ratio,
+                        image_size=resolution,
+                    ),
+                )
+            )
 
-    # Extract image from response
-    if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
-        raise ValueError("Image generation returned empty response — the prompt may have been blocked by safety filters. Try rephrasing the description.")
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, 'inline_data') and part.inline_data is not None:
-            image_data = part.inline_data
-            if hasattr(image_data, 'data') and image_data.data:
-                image_bytes = image_data.data
-                image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-                return {
-                    "image_base64": image_base64,
-                    "mime_type": getattr(image_data, 'mime_type', 'image/png') or "image/png",
-                }
-        # Also check for as_image() method (newer API)
-        if hasattr(part, 'as_image'):
-            try:
-                pil_img = part.as_image()
-                if pil_img:
-                    # Convert PIL back to base64
-                    buffer = io.BytesIO()
-                    pil_img.save(buffer, format="PNG")
-                    image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-                    return {
-                        "image_base64": image_base64,
-                        "mime_type": "image/png",
-                    }
-            except Exception:
-                pass
+            # Extract image from response
+            if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
+                raise ValueError("Image generation returned empty response — the prompt may have been blocked by safety filters. Try rephrasing the description.")
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, 'inline_data') and part.inline_data is not None:
+                    image_data = part.inline_data
+                    if hasattr(image_data, 'data') and image_data.data:
+                        image_bytes = image_data.data
+                        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+                        return {
+                            "image_base64": image_base64,
+                            "mime_type": getattr(image_data, 'mime_type', 'image/png') or "image/png",
+                        }
+                # Also check for as_image() method (newer API)
+                if hasattr(part, 'as_image'):
+                    try:
+                        pil_img = part.as_image()
+                        if pil_img:
+                            # Convert PIL back to base64
+                            buffer = io.BytesIO()
+                            pil_img.save(buffer, format="PNG")
+                            image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                            return {
+                                "image_base64": image_base64,
+                                "mime_type": "image/png",
+                            }
+                    except Exception:
+                        pass
 
-    # If no image in response, raise error
-    raise ValueError(
-        "No image was generated. The model may have returned text only. "
-        f"Response parts: {[type(p).__name__ for p in response.candidates[0].content.parts]}"
-    )
+            # If no image in response, raise error
+            raise ValueError(
+                "No image was generated. The model may have returned text only. "
+                f"Response parts: {[type(p).__name__ for p in response.candidates[0].content.parts]}"
+            )
+        finally:
+            # Explicitly close PIL images and free memory
+            for img in pil_images:
+                try:
+                    img.close()
+                except Exception:
+                    pass
+            del contents, pil_images
+            gc.collect()
