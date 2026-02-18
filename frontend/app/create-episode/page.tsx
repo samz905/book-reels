@@ -1386,7 +1386,7 @@ export default function CreateEpisodePage() {
     if (film.status === "generating" || film.status === "assembling") return "filming";
     if (film.status === "ready") return "ready";
     if (film.status === "failed") return "failed";
-    if (promptPreview.shots.length > 0) return "preflight";
+    if (promptPreview.shots.length > 0) return "filming";
     if (visualsActive) return "visuals";
     return "drafting";
   };
