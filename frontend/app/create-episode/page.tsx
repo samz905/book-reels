@@ -429,9 +429,9 @@ export default function CreateEpisodePage() {
   const [clipStates, setClipStates] = useState<Record<number, ClipState>>({});
   const [selectedClipScene, setSelectedClipScene] = useState(1);
   const [assembledVideoUrl, setAssembledVideoUrl] = useState<string | null>(null);
-  const [isAssembling, setIsAssembling] = useState(false);
+  const [assembleIntent, setAssembleIntent] = useState<"preview" | "publishing" | null>(null);
+  const assembleIntentRef = useRef<"preview" | "publishing" | null>(null);
   const [showFilmPreview, setShowFilmPreview] = useState(false);
-  const publishAfterAssemblyRef = useRef(false);
   const [publishedEpisodeId, setPublishedEpisodeId] = useState<string | null>(null);
   const [showUnpublishConfirm, setShowUnpublishConfirm] = useState(false);
 
@@ -586,8 +586,8 @@ export default function CreateEpisodePage() {
         break;
       }
       case "assemble":
-        publishAfterAssemblyRef.current = false;
-        setIsAssembling(false);
+        assembleIntentRef.current = null;
+        setAssembleIntent(null);
         break;
     }
   };
@@ -921,11 +921,12 @@ export default function CreateEpisodePage() {
       }
       case "assemble": {
         const assembledUrl = result.assembled_video_url as string | undefined;
+        const intent = assembleIntentRef.current;
+        assembleIntentRef.current = null;
+        setAssembleIntent(null);
         if (assembledUrl) {
           setAssembledVideoUrl(assembledUrl);
-          if (publishAfterAssemblyRef.current) {
-            // Direct publish flow: assemble completed, now publish and navigate
-            publishAfterAssemblyRef.current = false;
+          if (intent === "publishing") {
             const storyId = associatedStoryIdRef.current;
             if (storyId) {
               upsertEpisode(storyId, {
@@ -943,7 +944,6 @@ export default function CreateEpisodePage() {
             setShowFilmPreview(true);
           }
         }
-        setIsAssembling(false);
         break;
       }
     }
@@ -1865,9 +1865,9 @@ export default function CreateEpisodePage() {
     setClipStates({});
     setSelectedClipScene(1);
     setAssembledVideoUrl(null);
-    setIsAssembling(false);
+    assembleIntentRef.current = null;
+    setAssembleIntent(null);
     setShowFilmPreview(false);
-    publishAfterAssemblyRef.current = false;
     setPublishedEpisodeId(null);
     setShowUnpublishConfirm(false);
     setSelectedChars([]);
@@ -2788,7 +2788,7 @@ export default function CreateEpisodePage() {
   };
 
   /** Assemble all clips into a single video via backend */
-  const assembleClips = async () => {
+  const assembleClips = async (intent: "preview" | "publishing") => {
     const genId = generationIdRef.current;
     if (!genId) return;
 
@@ -2799,7 +2799,8 @@ export default function CreateEpisodePage() {
 
     if (clipUrls.length === 0) return;
 
-    setIsAssembling(true);
+    assembleIntentRef.current = intent;
+    setAssembleIntent(intent);
     try {
       clearProcessedJob("assemble");
       await submitJob(
@@ -2810,7 +2811,8 @@ export default function CreateEpisodePage() {
       );
       // Result handled by Realtime
     } catch (err) {
-      setIsAssembling(false);
+      assembleIntentRef.current = null;
+      setAssembleIntent(null);
       console.error("Assembly failed:", err);
     }
   };
@@ -2821,7 +2823,7 @@ export default function CreateEpisodePage() {
       setShowFilmPreview(true);
       return;
     }
-    await assembleClips();
+    await assembleClips("preview");
     // Modal will open when assembly completes via Realtime
   };
 
@@ -4443,10 +4445,10 @@ export default function CreateEpisodePage() {
                 <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
                   <button
                     onClick={previewFilm}
-                    disabled={isAssembling}
+                    disabled={assembleIntent !== null}
                     className="px-6 py-3 bg-panel-border text-white rounded-xl font-medium hover:bg-[#262626] transition-colors disabled:opacity-50 flex items-center gap-2"
                   >
-                    {isAssembling ? (
+                    {assembleIntent === "preview" ? (
                       <>
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                         Assembling...
@@ -4488,34 +4490,27 @@ export default function CreateEpisodePage() {
                   ) : (
                     <button
                       onClick={async () => {
-                        // Publish: assemble if needed, then create episode
                         if (!assembledVideoUrl) {
-                          publishAfterAssemblyRef.current = true;
-                          await assembleClips();
+                          await assembleClips("publishing");
                           return;
                         }
                         // Already assembled — publish now
                         if (associatedStoryIdRef.current) {
                           try {
-                            await fetch(`/api/stories/${associatedStoryIdRef.current}/episodes`, {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                name: episodeNameRef.current || "Untitled Episode",
-                                media_url: assembledVideoUrl,
-                                generation_id: generationIdRef.current || null,
-                                status: "published",
-                              }),
+                            await upsertEpisode(associatedStoryIdRef.current, {
+                              name: episodeNameRef.current || "Untitled Episode",
+                              media_url: assembledVideoUrl,
+                              status: "published",
                             });
                             saveNow({}, "published");
                             window.location.href = `/create/${associatedStoryIdRef.current}`;
                           } catch (err) { console.error("Publish failed:", err); }
                         }
                       }}
-                      disabled={isAssembling}
+                      disabled={assembleIntent !== null}
                       className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50"
                     >
-                      {isAssembling ? "Publishing..." : "Publish"}
+                      {assembleIntent === "publishing" ? "Publishing..." : "Publish"}
                     </button>
                   )}
                 </div>
