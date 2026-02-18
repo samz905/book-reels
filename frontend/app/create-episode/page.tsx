@@ -916,6 +916,8 @@ export default function CreateEpisodePage() {
             }]).catch(() => {});
           }
           if (cost) setTotalCost((prev) => ({ ...prev, film: prev.film + cost }));
+          // Invalidate cached assembly so Preview/Publish re-assembles with new clip
+          setAssembledVideoUrl(null);
         }
         break;
       }
