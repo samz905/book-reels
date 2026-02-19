@@ -3032,7 +3032,8 @@ export default function CreateEpisodePage() {
             const isCompleted = step.num === 1 ? visualsActive
               : step.num === 2 ? clipsActive
               : allClipsCompleted;
-            const isClickable = !step.active && (isCompleted || (step.num === 1));
+            const isUnlocked = step.num === 1 || (step.num === 2 && visualsActive) || (step.num === 3 && clipsActive);
+            const isClickable = !step.active && isUnlocked;
             const handleStepClick = () => {
               if (!isClickable) return;
               // Just navigate — never touch unlock flags or status
