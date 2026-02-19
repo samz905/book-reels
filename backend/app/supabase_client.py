@@ -52,10 +52,31 @@ def create_gen_job(
     job_type: str,
     target_id: str = "",
 ) -> dict:
-    """Create or upsert a gen_jobs row. Returns the row dict."""
+    """Create or upsert a gen_jobs row. Returns the row dict.
+
+    If a job with the same (generation_id, job_type, target_id) is already
+    "generating", returns it as-is with ``_already_generating=True`` so the
+    caller can skip spawning a duplicate background task.
+    """
     sb = get_supabase()
     if not sb:
         raise RuntimeError("Supabase not configured")
+
+    # Check for an already-running job to prevent duplicate background tasks
+    existing = (
+        sb.table("gen_jobs")
+        .select("*")
+        .eq("generation_id", generation_id)
+        .eq("job_type", job_type)
+        .eq("target_id", target_id)
+        .eq("status", "generating")
+        .execute()
+    )
+    if existing.data:
+        row = existing.data[0]
+        row["_already_generating"] = True
+        return row
+
     row = sb.table("gen_jobs").upsert(
         {
             "generation_id": generation_id,

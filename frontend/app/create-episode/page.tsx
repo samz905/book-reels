@@ -952,8 +952,13 @@ export default function CreateEpisodePage() {
     }
   };
 
-  // Process completed/failed jobs from Realtime
+  // Process completed/failed jobs from Realtime.
+  // IMPORTANT: Skip processing while restoring state — characterImages/locationImages/
+  // sceneImages are empty during restore. Once isRestoringState flips to false, this
+  // effect re-runs and all "generating" jobs properly set isGenerating:true on the
+  // now-populated state entries.
   useEffect(() => {
+    if (isRestoringState) return;
     for (const job of realtimeJobs) {
       // Skip already-processed or still-generating jobs
       if (processedJobsRef.current.has(job.id)) continue;
@@ -1061,7 +1066,7 @@ export default function CreateEpisodePage() {
       applyCompletedJob(job);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [realtimeJobs]);
+  }, [realtimeJobs, isRestoringState]);
 
   // URL helper — generation ID in URL as ?g=xxx
   const setGenerationUrl = (id: string | null) => {
@@ -4141,6 +4146,16 @@ export default function CreateEpisodePage() {
             readOnlyFields={["name", "age", "gender"]}
             generationId={generationIdRef.current || undefined}
             characterId={editingVisualCharId}
+            generatingError={characterImages[editingVisualCharId]?.error || null}
+            onGenerationStarted={() => {
+              setCharacterImages((prev) => ({
+                ...prev,
+                [editingVisualCharId]: {
+                  ...(prev[editingVisualCharId] || CHAR_IMG_DEFAULTS),
+                  isGenerating: true, error: "",
+                },
+              }));
+            }}
           />
         )}
 
@@ -4173,6 +4188,16 @@ export default function CreateEpisodePage() {
             readOnlyFields={["name"]}
             generationId={generationIdRef.current || undefined}
             locationId={editingVisualLocId}
+            generatingError={locationImages[editingVisualLocId]?.error || null}
+            onGenerationStarted={() => {
+              setLocationImages((prev) => ({
+                ...prev,
+                [editingVisualLocId]: {
+                  ...(prev[editingVisualLocId] || LOC_IMG_DEFAULTS),
+                  isGenerating: true, error: "",
+                },
+              }));
+            }}
           />
         )}
 

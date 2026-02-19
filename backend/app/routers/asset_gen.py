@@ -11,6 +11,20 @@ from ..core import generate_image, generate_image_with_references, COST_IMAGE_GE
 router = APIRouter()
 
 
+def _friendly_image_error(raw: str) -> str:
+    """Convert raw API error strings to user-friendly messages."""
+    upper = raw.upper()
+    if "UNAVAILABLE" in upper or "503" in upper:
+        return "The image model is temporarily overloaded. Please try again in a minute."
+    if "RESOURCE_EXHAUSTED" in upper or "429" in upper:
+        return "Rate limit reached. Please wait a moment and try again."
+    if "SAFETY" in upper or "BLOCK" in upper:
+        return "Image was blocked by safety filters. Try adjusting the description."
+    if "EMPTY RESPONSE" in upper:
+        return "Image generation returned nothing — the prompt may have been blocked. Try rephrasing."
+    return "Image generation failed. Please try again."
+
+
 # ============================================================
 # Visual Style Prefixes (4 styles)
 # ============================================================
@@ -129,13 +143,7 @@ Portrait orientation, 9:16 aspect ratio."""
         )
 
     except Exception as e:
-        error_msg = str(e)
-        if "SAFETY" in error_msg.upper() or "BLOCK" in error_msg.upper():
-            raise HTTPException(
-                status_code=422,
-                detail="Image generation was blocked by safety filters. Try adjusting the character description.",
-            )
-        raise HTTPException(status_code=500, detail=f"Image generation failed: {error_msg}")
+        raise HTTPException(status_code=500, detail=_friendly_image_error(str(e)))
 
 
 @router.post("/generate-location-image", response_model=GeneratedImageResponse)
@@ -188,10 +196,4 @@ Portrait orientation, 9:16 aspect ratio."""
         )
 
     except Exception as e:
-        error_msg = str(e)
-        if "SAFETY" in error_msg.upper() or "BLOCK" in error_msg.upper():
-            raise HTTPException(
-                status_code=422,
-                detail="Image generation was blocked by safety filters. Try adjusting the location description.",
-            )
-        raise HTTPException(status_code=500, detail=f"Image generation failed: {error_msg}")
+        raise HTTPException(status_code=500, detail=_friendly_image_error(str(e)))

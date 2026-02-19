@@ -27,6 +27,10 @@ interface LocationModalProps {
   generationId?: string;
   /** Used as targetId for the gen_job (required when generationId is set) */
   locationId?: string;
+  /** Error from parent's locationImages state (set by applyFailedJob via Realtime) */
+  generatingError?: string | null;
+  /** Called when the modal submits a generation job, so parent can update card state */
+  onGenerationStarted?: () => void;
 }
 
 export default function LocationModal({
@@ -40,6 +44,8 @@ export default function LocationModal({
   readOnlyFields = [],
   generationId,
   locationId,
+  generatingError,
+  onGenerationStarted,
 }: LocationModalProps) {
   const isEditing = !!location;
 
@@ -101,6 +107,13 @@ export default function LocationModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location?.imageBase64, location?.imageUrl]);
+
+  // Clear spinner when the parent reports a job failure
+  useEffect(() => {
+    if (!isGenerating || !generatingError) return;
+    setGenError(generatingError);
+    setIsGenerating(false);
+  }, [generatingError, isGenerating]);
 
   useEffect(() => {
     if (isOpen) {
@@ -166,6 +179,7 @@ export default function LocationModal({
           generationId,
           targetId: locationId,
         });
+        onGenerationStarted?.();
         // isGenerating stays true — Realtime sync effect will clear it when image arrives
       } catch (err) {
         setGenError(err instanceof Error ? err.message : "Failed to start generation");

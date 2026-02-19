@@ -79,8 +79,10 @@ async def submit_job(request: SubmitJobRequest, background_tasks: BackgroundTask
 
     job_id = row["id"]
 
-    # Spawn background task
-    background_tasks.add_task(run_job, job_id, request)
+    # If a task is already running for this job, return the existing ID
+    # without spawning a duplicate background task.
+    if not row.get("_already_generating"):
+        background_tasks.add_task(run_job, job_id, request)
 
     return SubmitJobResponse(job_id=job_id, status="generating")
 
@@ -115,9 +117,12 @@ async def run_job(job_id: str, request: SubmitJobRequest):
         print(f"[job] {request.job_type}/{request.target_id} completed")
 
     except Exception as e:
-        print(f"[job] {request.job_type}/{request.target_id} FAILED: {e}")
+        # Extract clean message: HTTPException.detail is user-friendly,
+        # otherwise fall back to str(e).
+        error_msg = getattr(e, "detail", None) or str(e)
+        print(f"[job] {request.job_type}/{request.target_id} FAILED: {error_msg}")
         print(traceback.format_exc())
-        await async_update_gen_job(job_id, "failed", error=str(e))
+        await async_update_gen_job(job_id, "failed", error=error_msg)
 
 
 # ============================================================
