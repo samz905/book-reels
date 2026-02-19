@@ -731,17 +731,47 @@ def _film_result(job: film_mod.FilmJob) -> dict:
 # ============================================================
 
 async def handle_asset_character_image(payload: dict) -> dict:
-    """Handle /assets/generate-character-image."""
+    """Handle /assets/generate-character-image.
+
+    Wraps result in MoodboardImage-shaped structure so upload_result_images
+    uploads the nested image and applyCompletedJob gets result.image.
+    """
     req = asset_gen_mod.GenerateCharacterImageRequest(**payload)
     result = await asset_gen_mod.generate_character_image(req)
-    return result.model_dump()
+    data = result.model_dump()
+    return {
+        "character_id": payload.get("character_id"),
+        "image": {
+            "type": "character",
+            "image_base64": data["image_base64"],
+            "mime_type": data["mime_type"],
+            "prompt_used": data.get("prompt_used", ""),
+        },
+        "prompt_used": data.get("prompt_used", ""),
+        "cost_usd": data.get("cost_usd", 0),
+    }
 
 
 async def handle_asset_location_image(payload: dict) -> dict:
-    """Handle /assets/generate-location-image."""
+    """Handle /assets/generate-location-image.
+
+    Wraps result in MoodboardImage-shaped structure so upload_result_images
+    uploads the nested image and applyCompletedJob gets result.image.
+    """
     req = asset_gen_mod.GenerateLocationImageRequest(**payload)
     result = await asset_gen_mod.generate_location_image(req)
-    return result.model_dump()
+    data = result.model_dump()
+    return {
+        "location_id": payload.get("location_id"),
+        "image": {
+            "type": "location",
+            "image_base64": data["image_base64"],
+            "mime_type": data["mime_type"],
+            "prompt_used": data.get("prompt_used", ""),
+        },
+        "prompt_used": data.get("prompt_used", ""),
+        "cost_usd": data.get("cost_usd", 0),
+    }
 
 
 async def handle_clip_generate(payload: dict, job_id: str = "") -> dict:

@@ -4102,6 +4102,7 @@ export default function CreateEpisodePage() {
                 role: char.role,
                 visualStyle: story.style,
                 imageBase64: imgState?.image?.image_base64 || null,
+                imageUrl: imgState?.image?.image_url || null,
                 imageMimeType: imgState?.image?.mime_type || "image/png",
               } as StoryCharacterFE;
             })()}
@@ -4110,6 +4111,8 @@ export default function CreateEpisodePage() {
             hideRole={false}
             lockedStyle={story.style}
             readOnlyFields={["name", "age", "gender"]}
+            generationId={generationIdRef.current || undefined}
+            characterId={editingVisualCharId}
           />
         )}
 
@@ -4133,12 +4136,15 @@ export default function CreateEpisodePage() {
                 atmosphere: loc.atmosphere,
                 visualStyle: story.style,
                 imageBase64: imgState?.image?.image_base64 || null,
+                imageUrl: imgState?.image?.image_url || null,
                 imageMimeType: imgState?.image?.mime_type || "image/png",
               } as StoryLocationFE;
             })()}
             isSaving={isSavingVisualLoc}
             lockedStyle={story.style}
             readOnlyFields={["name"]}
+            generationId={generationIdRef.current || undefined}
+            locationId={editingVisualLocId}
           />
         )}
 

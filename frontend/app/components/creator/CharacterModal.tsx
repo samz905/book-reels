@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { StoryCharacterFE } from "@/app/data/mockCreatorData";
 import { VISUAL_STYLES } from "@/app/data/mockCreatorData";
-import { generateCharacterImage } from "@/lib/api/creator";
+import { generateCharacterImage, submitJob } from "@/lib/api/creator";
 
 interface CharacterModalProps {
   isOpen: boolean;
@@ -17,6 +17,7 @@ interface CharacterModalProps {
     role: string;
     visualStyle: string | null;
     imageBase64: string | null;
+    imageUrl?: string | null;
     imageMimeType: string;
   }) => Promise<void>;
   character?: StoryCharacterFE;
@@ -25,6 +26,10 @@ interface CharacterModalProps {
   hideRole?: boolean;
   lockedStyle?: string;
   readOnlyFields?: string[];
+  /** When provided, generation uses non-blocking gen_jobs + Realtime delivery */
+  generationId?: string;
+  /** Used as targetId for the gen_job (required when generationId is set) */
+  characterId?: string;
 }
 
 export default function CharacterModal({
@@ -37,6 +42,8 @@ export default function CharacterModal({
   hideRole = true,
   lockedStyle,
   readOnlyFields = [],
+  generationId,
+  characterId,
 }: CharacterModalProps) {
   const isEditing = !!character;
 
@@ -48,6 +55,7 @@ export default function CharacterModal({
   const [visualStyle, setVisualStyle] = useState<string>("cinematic");
   const [refCharId, setRefCharId] = useState<string>("");
   const [imageBase64, setImageBase64] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageMimeType, setImageMimeType] = useState("image/png");
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
@@ -74,6 +82,7 @@ export default function CharacterModal({
         setVisualStyle(lockedStyle || character.visualStyle || "cinematic");
         setRefCharId("");
         setImageBase64(character.imageBase64);
+        setImageUrl(character.imageUrl || null);
         setImageMimeType(character.imageMimeType);
       } else {
         setName("");
@@ -84,12 +93,31 @@ export default function CharacterModal({
         setVisualStyle(lockedStyle || "cinematic");
         setRefCharId("");
         setImageBase64(null);
+        setImageUrl(null);
         setImageMimeType("image/png");
       }
+      setIsGenerating(false);
       setGenError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, character?.id]);
+
+  // Sync image from parent when Realtime delivers a completed gen_job result.
+  // The parent's characterImages state updates via applyCompletedJob, which flows
+  // through as a new character prop. Since the form reset above only fires on
+  // isOpen/character?.id changes, this effect handles mid-generation image arrival.
+  useEffect(() => {
+    if (!isGenerating) return;
+    const newBase64 = character?.imageBase64;
+    const newUrl = character?.imageUrl;
+    if (newBase64 || newUrl) {
+      if (newBase64) setImageBase64(newBase64);
+      if (newUrl) setImageUrl(newUrl);
+      setImageMimeType(character?.imageMimeType || "image/png");
+      setIsGenerating(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [character?.imageBase64, character?.imageUrl]);
 
   useEffect(() => {
     if (isOpen) {
@@ -134,22 +162,40 @@ export default function CharacterModal({
     setIsGenerating(true);
     setGenError(null);
 
+    const refChar = refCharId
+      ? existingCharacters.find((c) => c.id === refCharId)
+      : null;
+
+    const payload = {
+      character_id: characterId,
+      name: name.trim(),
+      age: age.trim(),
+      gender: gender || undefined,
+      description: description.trim(),
+      visual_style: refChar ? undefined : (lockedStyle || visualStyle),
+      reference_image: refChar?.imageBase64
+        ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
+        : undefined,
+    };
+
+    // Non-blocking: submit as background job, result arrives via Realtime
+    if (generationId && characterId) {
+      try {
+        await submitJob("character_image", "/assets/generate-character-image", payload, {
+          generationId,
+          targetId: characterId,
+        });
+        // isGenerating stays true — Realtime sync effect will clear it when image arrives
+      } catch (err) {
+        setGenError(err instanceof Error ? err.message : "Failed to start generation");
+        setIsGenerating(false);
+      }
+      return;
+    }
+
+    // Blocking fallback (no generationId — e.g. create/[storyId] page)
     try {
-      const refChar = refCharId
-        ? existingCharacters.find((c) => c.id === refCharId)
-        : null;
-
-      const result = await generateCharacterImage({
-        name: name.trim(),
-        age: age.trim(),
-        gender: gender || undefined,
-        description: description.trim(),
-        visual_style: refChar ? undefined : (lockedStyle || visualStyle),
-        reference_image: refChar?.imageBase64
-          ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
-          : undefined,
-      });
-
+      const result = await generateCharacterImage(payload);
       setImageBase64(result.image_base64);
       setImageMimeType(result.mime_type);
     } catch (err) {
@@ -174,12 +220,14 @@ export default function CharacterModal({
       role,
       visualStyle: refCharId ? null : visualStyle,
       imageBase64,
+      imageUrl,
       imageMimeType,
     });
   };
 
   const handleClose = () => {
-    if (isSaving || isGenerating) return;
+    if (isSaving) return;
+    // Allow closing during generation — it continues in background via gen_jobs
     onClose();
   };
 
@@ -211,12 +259,20 @@ export default function CharacterModal({
         {/* Image section */}
         <div className="mb-5">
           <div className="max-w-[280px] mx-auto aspect-[9/16] bg-[#262626] rounded-2xl overflow-hidden flex items-center justify-center mb-3">
-            {imageBase64 ? (
+            {(imageBase64 || imageUrl) ? (
               <img
-                src={`data:${imageMimeType};base64,${imageBase64}`}
+                src={imageBase64 ? `data:${imageMimeType};base64,${imageBase64}` : imageUrl!}
                 alt="Character"
                 className="w-full h-full object-cover"
               />
+            ) : isGenerating ? (
+              <div className="flex flex-col items-center justify-center text-center">
+                <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <p className="text-sm text-[#ADADAD]">Generating...</p>
+              </div>
             ) : (
               <div className="text-center text-[#ADADAD]">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" className="mx-auto mb-2">
@@ -374,17 +430,17 @@ export default function CharacterModal({
         <div className="flex items-center justify-end gap-3">
           <button
             onClick={handleClose}
-            disabled={isSaving || isGenerating}
+            disabled={isSaving}
             className="px-6 py-3 text-[#ADADAD] text-sm font-bold hover:text-white transition-colors disabled:opacity-50"
           >
-            Cancel
+            {isGenerating ? "Close" : "Cancel"}
           </button>
           <button
             onClick={handleSubmit}
-            disabled={isSaving || isGenerating || !imageBase64}
+            disabled={isSaving || isGenerating || (!imageBase64 && !imageUrl)}
             className="px-6 py-3 rounded-lg text-white text-sm font-semibold transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             style={{ background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)" }}
-            title={!imageBase64 ? "Upload or generate an image first" : undefined}
+            title={(!imageBase64 && !imageUrl) ? "Upload or generate an image first" : undefined}
           >
             {isSaving && (
               <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
