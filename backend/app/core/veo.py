@@ -83,15 +83,19 @@ async def generate_video(
             mime_type=first_frame.get("mime_type", "image/png"),
         )
 
-    # Start video generation
+    # Start video generation (run sync SDK call in thread to avoid blocking event loop)
     print(f"Starting video generation with model {model}...")
-    operation = genai_client.models.generate_videos(**request_kwargs)
+    operation = await asyncio.to_thread(
+        genai_client.models.generate_videos, **request_kwargs
+    )
 
-    # Poll until complete (use asyncio.sleep to not block the event loop)
+    # Poll until complete — both sleep and SDK poll run without blocking the event loop
     while not operation.done:
         print(f"Video generation in progress... (polling every {poll_interval}s)")
         await asyncio.sleep(poll_interval)
-        operation = genai_client.operations.get(operation)
+        operation = await asyncio.to_thread(
+            genai_client.operations.get, operation
+        )
 
     # Get the generated video
     if not operation.response or not operation.response.generated_videos:

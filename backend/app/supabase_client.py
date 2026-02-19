@@ -1,7 +1,12 @@
 """
 Shared Supabase client for Storage uploads and gen_jobs CRUD.
 Used by the /jobs router and film generation.
+
+Sync functions are kept for startup-only code (mark_stale_jobs_failed).
+All hot-path functions have async_ variants that run in a thread pool
+to avoid blocking the asyncio event loop.
 """
+import asyncio
 import base64
 from datetime import datetime, timezone
 from typing import Optional
@@ -83,6 +88,40 @@ def update_gen_job(
         update["error_message"] = error
     sb.table("gen_jobs").update(update).eq("id", job_id).execute()
 
+
+# ============================================================
+# Async wrappers — run sync Supabase calls in thread pool
+# so the asyncio event loop is never blocked.
+# ============================================================
+
+async def async_create_gen_job(
+    generation_id: str,
+    job_type: str,
+    target_id: str = "",
+) -> dict:
+    return await asyncio.to_thread(create_gen_job, generation_id, job_type, target_id)
+
+
+async def async_update_gen_job(
+    job_id: str,
+    status: str,
+    result: Optional[dict] = None,
+    error: Optional[str] = None,
+):
+    await asyncio.to_thread(update_gen_job, job_id, status, result, error)
+
+
+async def async_upload_asset(generation_id: str, path: str, data: bytes, mime: str) -> str:
+    return await asyncio.to_thread(upload_asset, generation_id, path, data, mime)
+
+
+async def async_upload_image_base64(generation_id: str, path: str, b64: str, mime: str = "image/png") -> str:
+    return await asyncio.to_thread(upload_image_base64, generation_id, path, b64, mime)
+
+
+# ============================================================
+# Startup-only (sync is fine — runs before event loop serves requests)
+# ============================================================
 
 def mark_stale_jobs_failed(cutoff_minutes: int = 10):
     """Mark jobs stuck in 'generating' as failed (e.g. after server restart)."""

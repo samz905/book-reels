@@ -355,13 +355,13 @@ def build_character_prompt(story: Story, character: Character, feedback: Optiona
 
     prompt = f"""{style_prefix}
 
-Portrait of {character.name}, a {character.age} {character.gender}. {character.appearance}.
+Full body portrait of {character.name}, a {character.age} {character.gender}. {character.appearance}.
 
 Expression: {_get_atmosphere(story)}.
 
-Simple background that suggests {_get_location_hint(story)} without distracting.
+Plain white background. No scenery, no props, no distractions.
 
-Character fills most of the frame, clearly visible from head to mid-torso.
+Full body visible head to toe, centered in frame.
 Show enough detail to establish their complete look."""
 
     if use_reference:

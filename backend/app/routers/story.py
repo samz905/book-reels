@@ -9,7 +9,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..core import generate_text, estimate_story_cost
-from ..prompts import STORY_SYSTEM_PROMPT, STORY_MODEL, STORY_FEW_SHOT_EXAMPLES
+from ..prompts import (
+    STORY_SYSTEM_PROMPT, STORY_MODEL, STORY_FEW_SHOT_EXAMPLES,
+    STORY_SCHEMA, REFINED_SCENE_SCHEMA, SCENE_DESCRIPTIONS_SCHEMA,
+)
 
 router = APIRouter()
 
@@ -673,18 +676,7 @@ def parse_story_response(
     pre_selected_location: Optional[PreSelectedLocation] = None,
 ) -> Story:
     """Parse the AI response into a Story object with both scenes and beats populated."""
-    # Clean up response - remove markdown code blocks if present
-    cleaned = response_text.strip()
-    if cleaned.startswith("```json"):
-        cleaned = cleaned[7:]
-    if cleaned.startswith("```"):
-        cleaned = cleaned[3:]
-    if cleaned.endswith("```"):
-        cleaned = cleaned[:-3]
-    cleaned = cleaned.strip()
-
-    # Parse JSON
-    data = json.loads(cleaned)
+    data = json.loads(response_text)
 
     # Add metadata
     data["id"] = str(uuid.uuid4())
@@ -723,7 +715,7 @@ def parse_story_response(
             # Default setting_id to first location if not specified
             if not scene.get("setting_id") and data.get("locations"):
                 scene["setting_id"] = data["locations"][0]["id"]
-            # Strategy B: Gemini returns action as array → join to \n string
+            # Structured outputs guarantees action is array — join to string
             if isinstance(scene.get("action"), list):
                 scene["action"] = "\n".join(scene["action"])
 
@@ -789,7 +781,7 @@ def parse_story_response(
         ]
 
     # Force-correct pre-selected characters: match by name and restore DB entity IDs.
-    # Gemini may change the IDs it was given, so we match by name (case-insensitive)
+    # The LLM may change the IDs it was given, so we match by name (case-insensitive)
     # and overwrite the generated char with the DB entity's fields.
     if pre_selected_chars:
         pre_by_name = {c.name.lower(): c for c in pre_selected_chars}
@@ -826,11 +818,6 @@ def parse_story_response(
                 loc["atmosphere"] = pre_selected_location.atmosphere
                 break
 
-    # Gemini sometimes returns list instead of string for text fields — coerce
-    for char in data.get("characters", []):
-        if isinstance(char.get("appearance"), list):
-            char["appearance"] = " ".join(char["appearance"])
-
     return Story(**data)
 
 
@@ -861,6 +848,7 @@ async def generate_story(request: GenerateStoryRequest):
             system_prompt=STORY_SYSTEM_PROMPT,
             model=STORY_MODEL,
             few_shot_examples=STORY_FEW_SHOT_EXAMPLES,
+            output_schema=STORY_SCHEMA,
         )
 
         story = parse_story_response(
@@ -906,6 +894,7 @@ async def regenerate_story(request: RegenerateStoryRequest):
             system_prompt=STORY_SYSTEM_PROMPT,
             model=STORY_MODEL,
             few_shot_examples=STORY_FEW_SHOT_EXAMPLES,
+            output_schema=STORY_SCHEMA,
         )
 
         story = parse_story_response(
@@ -942,6 +931,7 @@ async def parse_script(request: ParseScriptRequest):
             system_prompt=STORY_SYSTEM_PROMPT,
             model=STORY_MODEL,
             few_shot_examples=STORY_FEW_SHOT_EXAMPLES,
+            output_schema=STORY_SCHEMA,
         )
 
         story = parse_story_response(response, request.style)
@@ -1080,19 +1070,10 @@ OUTPUT: Valid JSON only. No markdown, no explanation."""
             prompt=prompt,
             system_prompt=system_prompt,
             model=STORY_MODEL,
+            output_schema=REFINED_SCENE_SCHEMA,
         )
 
-        # Clean up response
-        cleaned = response.strip()
-        if cleaned.startswith("```json"):
-            cleaned = cleaned[7:]
-        if cleaned.startswith("```"):
-            cleaned = cleaned[3:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
-
-        scene_data = json.loads(cleaned)
+        scene_data = json.loads(response)
 
         # Ensure scene_number is set
         scene_data["scene_number"] = scene_data.get("scene_number", scene_num)
@@ -1104,7 +1085,7 @@ OUTPUT: Valid JSON only. No markdown, no explanation."""
             scene_data["characters_on_screen"] = all_char_ids
         if not scene_data.get("setting_id") and location_ids:
             scene_data["setting_id"] = location_ids[0]
-        # Strategy B: Gemini returns action as array → join to \n string
+        # Structured outputs guarantees action is array — join to string
         if isinstance(scene_data.get("action"), list):
             scene_data["action"] = "\n".join(scene_data["action"])
 
@@ -1139,6 +1120,7 @@ async def generate_story_internal(request: GenerateStoryRequest):
             system_prompt=STORY_SYSTEM_PROMPT,
             model=STORY_MODEL,
             few_shot_examples=STORY_FEW_SHOT_EXAMPLES,
+            output_schema=STORY_SCHEMA,
         )
 
         story = parse_story_response(response, request.style)
@@ -1257,19 +1239,10 @@ RULES:
             prompt=prompt,
             system_prompt="You are a cinematographer writing shot descriptions. Output valid JSON only.",
             model=STORY_MODEL,
+            output_schema=SCENE_DESCRIPTIONS_SCHEMA,
         )
 
-        # Clean up response
-        cleaned = response.strip()
-        if cleaned.startswith("```json"):
-            cleaned = cleaned[7:]
-        if cleaned.startswith("```"):
-            cleaned = cleaned[3:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
-
-        descriptions_data = json.loads(cleaned)
+        descriptions_data = json.loads(response)
 
         descriptions = [
             SceneVisualDescription(

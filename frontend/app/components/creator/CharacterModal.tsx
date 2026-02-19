@@ -59,7 +59,10 @@ export default function CharacterModal({
     return () => setMounted(false);
   }, []);
 
-  // Reset form when modal opens or character changes
+  // Reset form when modal opens or a *different* character is selected.
+  // Depend on character?.id (not the full object) because the parent creates
+  // a new inline object every render — using the full object would reset the
+  // form on every parent re-render, wiping in-progress image generation.
   useEffect(() => {
     if (isOpen) {
       if (character) {
@@ -85,7 +88,8 @@ export default function CharacterModal({
       }
       setGenError(null);
     }
-  }, [isOpen, character]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, character?.id]);
 
   useEffect(() => {
     if (isOpen) {

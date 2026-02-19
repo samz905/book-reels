@@ -7,6 +7,7 @@ import asyncio
 import base64
 import gc
 import io
+import os
 from typing import Literal, List, Optional
 from PIL import Image
 from google.genai import types
@@ -16,9 +17,9 @@ from ..config import genai_client
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 5  # seconds
 
-# Limit concurrent image generations to avoid OOM on 512MB instances.
-# Each call holds multiple PIL images (5-20MB each uncompressed) in memory.
-IMAGE_GEN_MAX_CONCURRENT = 2
+# Concurrent image generations. Default 8 fits comfortably in 2GB (8×20MB=160MB peak).
+# Override via env var if instance size changes.
+IMAGE_GEN_MAX_CONCURRENT = int(os.getenv("IMAGE_GEN_MAX_CONCURRENT", "8"))
 _image_gen_semaphore: Optional[asyncio.Semaphore] = None
 
 

@@ -1,8 +1,11 @@
 """
 Claude text generation utility using the Anthropic SDK.
+
+Supports few-shot examples and structured outputs (guaranteed JSON).
+SDK auto-retries 429/500+ errors 2x with exponential backoff.
 """
 import anthropic
-from typing import Optional
+from typing import Optional, List
 from ..config import ANTHROPIC_API_KEY
 
 
@@ -21,7 +24,9 @@ async def generate_text_claude(
     prompt: str,
     system_prompt: Optional[str] = None,
     model: str = "claude-haiku-4-5-20251001",
-    max_tokens: int = 8192,
+    few_shot_examples: Optional[List[dict]] = None,
+    output_schema: Optional[dict] = None,
+    max_tokens: int = 16384,
     temperature: float = 0.9,
 ) -> str:
     """
@@ -29,25 +34,48 @@ async def generate_text_claude(
 
     Args:
         prompt: The user prompt
-        system_prompt: Optional system instructions
+        system_prompt: Optional system instructions (native Claude system param)
         model: Claude model ID (default: Haiku 4.5)
-        max_tokens: Maximum output tokens
+        few_shot_examples: Optional list of {"user": str, "model": str} dicts
+                           injected as conversation turns for few-shot prompting
+        output_schema: Optional JSON schema dict for structured outputs.
+                       When provided, guarantees response is valid JSON
+                       matching the schema (constrained decoding).
+        max_tokens: Maximum output tokens (Haiku 4.5 supports up to 64K)
         temperature: Sampling temperature (higher = more creative)
 
     Returns:
-        Generated text string
+        Generated text string (guaranteed valid JSON when output_schema provided)
     """
     client = _get_client()
 
-    kwargs = {
+    # Build messages: optional few-shot examples + user prompt
+    messages = []
+
+    if few_shot_examples:
+        for example in few_shot_examples:
+            messages.append({"role": "user", "content": example["user"]})
+            messages.append({"role": "assistant", "content": example["model"]})
+
+    messages.append({"role": "user", "content": prompt})
+
+    kwargs: dict = {
         "model": model,
         "max_tokens": max_tokens,
         "temperature": temperature,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
     }
 
     if system_prompt:
         kwargs["system"] = system_prompt
+
+    if output_schema:
+        kwargs["output_config"] = {
+            "format": {
+                "type": "json_schema",
+                "schema": output_schema,
+            }
+        }
 
     response = await client.messages.create(**kwargs)
 

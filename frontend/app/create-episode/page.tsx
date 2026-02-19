@@ -1395,6 +1395,7 @@ export default function CreateEpisodePage() {
 
   // Save with snapshotRef (always-current post-render state) for debounced/beforeunload saves
   const saveGeneration = async (statusOverride?: string, explicitId?: string) => {
+    if (isRestoringRef.current) return; // Never save during restore — state is in transition
     const gid = explicitId || generationIdRef.current;
     if (!gid) return;
     const snapshot = snapshotRef.current;
@@ -1415,6 +1416,7 @@ export default function CreateEpisodePage() {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
+    if (isRestoringRef.current) return; // Never save during restore — state is in transition
     const gid = generationIdRef.current;
     if (!gid) return;
     const snapshot = { ...snapshotRef.current, ...overrides };
@@ -1583,25 +1585,24 @@ export default function CreateEpisodePage() {
         return false;
       };
 
-      // ── JSONB-primary image restoration with library name-matching fallback ──
+      // ── JSONB-primary image restoration with ID-matching fallback ──
       const jsonbChars = (s.characterImages || {}) as Record<string, Partial<CharacterImageState>>;
       const jsonbLocs = (s.locationImages || {}) as Record<string, Partial<LocationImageState>>;
       const cleanedChars: Record<string, CharacterImageState> = {};
 
-      // Build name→image maps from library DB entries (for fallback when JSONB image is missing)
-      const libCharByName = new Map<string, StoryCharacterFE>();
-      for (const dbChar of dbChars) libCharByName.set(dbChar.name.toLowerCase(), dbChar);
-      const libLocByName = new Map<string, StoryLocationFE>();
-      for (const dbLoc of dbLocs) libLocByName.set((dbLoc.name || "").toLowerCase(), dbLoc);
+      // Build ID→image maps from library DB entries (name matching removed to prevent cross-contamination)
+      const libCharById = new Map<string, StoryCharacterFE>();
+      for (const dbChar of dbChars) libCharById.set(dbChar.id, dbChar);
+      const libLocById = new Map<string, StoryLocationFE>();
+      for (const dbLoc of dbLocs) libLocById.set(dbLoc.id, dbLoc);
 
       for (const [cid, ci] of Object.entries(jsonbChars)) {
         const rawCi = ci as CharacterImageState;
         if (rawCi.image && hasRealImage(rawCi.image)) {
           cleanedChars[cid] = { ...rawCi, isGenerating: false };
         } else {
-          // Try library name match for image fallback (survives refresh)
-          const storyChar = restoredStory?.characters.find(c => c.id === cid);
-          const libMatch = storyChar ? libCharByName.get(storyChar.name.toLowerCase()) : null;
+          // Only match by ID (not name) to prevent AI chars pulling library images
+          const libMatch = libCharById.get(cid);
           if (libMatch && (libMatch.imageUrl || libMatch.imageBase64)) {
             cleanedChars[cid] = {
               ...rawCi,
@@ -1628,8 +1629,7 @@ export default function CreateEpisodePage() {
         if (rawLi.image && hasRealImage(rawLi.image)) {
           cleanedLocs[lid] = { ...rawLi, isGenerating: false };
         } else {
-          const storyLoc = restoredStory?.locations.find(l => l.id === lid);
-          const libMatch = storyLoc ? libLocByName.get((storyLoc.name || "").toLowerCase()) : null;
+          const libMatch = libLocById.get(lid);
           if (libMatch && (libMatch.imageUrl || libMatch.imageBase64)) {
             cleanedLocs[lid] = {
               ...rawLi,
@@ -1934,11 +1934,12 @@ export default function CreateEpisodePage() {
     // ── Step 2: Build character image states ──
     const findCharImgSource = (char: Character) => {
       const nameLower = char.name.toLowerCase();
+      // ID match against library + selected (IDs are unique, safe)
       const byId = storyLibraryChars.find((c) => c.id === char.id)
         || selectedChars.find((c) => c.id === char.id);
       if (byId && (byId.imageBase64 || byId.imageUrl)) return byId;
-      const byName = storyLibraryChars.find((c) => c.name.toLowerCase() === nameLower)
-        || selectedChars.find((c) => c.name.toLowerCase() === nameLower);
+      // Name fallback: ONLY against selectedChars (user-picked), never full library
+      const byName = selectedChars.find((c) => c.name.toLowerCase() === nameLower);
       if (byName && (byName.imageBase64 || byName.imageUrl)) return byName;
       return null;
     };
@@ -1969,11 +1970,12 @@ export default function CreateEpisodePage() {
     // ── Step 4: Build location image states ──
     const findLocImgSource = (loc: Location) => {
       const nameLower = (loc.name || "").toLowerCase();
+      // ID match against library + selected (IDs are unique, safe)
       const byId = storyLibraryLocs.find((l) => l.id === loc.id)
         || (selectedLocation?.id === loc.id ? selectedLocation : null);
       if (byId && (byId.imageBase64 || byId.imageUrl)) return byId;
-      const byName = storyLibraryLocs.find((l) => (l.name || "").toLowerCase() === nameLower)
-        || (selectedLocation && (selectedLocation.name || "").toLowerCase() === nameLower ? selectedLocation : null);
+      // Name fallback: ONLY against selectedLocation (user-picked), never full library
+      const byName = (selectedLocation && (selectedLocation.name || "").toLowerCase() === nameLower ? selectedLocation : null);
       if (byName && (byName.imageBase64 || byName.imageUrl)) return byName;
       return null;
     };
@@ -2094,24 +2096,28 @@ export default function CreateEpisodePage() {
 
   // Save an AI-generated char or loc to the story library (creates a NEW DB entry)
   const savingToLibRef = useRef<Set<string>>(new Set());
+  const [savingToLibKeys, setSavingToLibKeys] = useState<Set<string>>(new Set());
   const handleSaveToLibrary = async (type: "character" | "location", id: string) => {
     const key = `${type}:${id}`;
     if (savingToLibRef.current.has(key)) return; // prevent duplicate clicks
     savingToLibRef.current.add(key);
+    setSavingToLibKeys(new Set(savingToLibRef.current)); // trigger re-render for button state
 
     const sid = associatedStoryIdRef.current;
     if (!sid) {
       console.error(`[SAVE-TO-LIB] ABORTED: no associated story`);
       savingToLibRef.current.delete(key);
+      setSavingToLibKeys(new Set(savingToLibRef.current));
       return;
     }
     try {
       if (type === "character") {
         const char = story?.characters.find(c => c.id === id);
-        if (!char) { savingToLibRef.current.delete(key); return; }
-        // Check if already saved by name (race condition guard)
+        if (!char) { savingToLibRef.current.delete(key); setSavingToLibKeys(new Set(savingToLibRef.current)); return; }
+        // Check if already saved by name (race condition guard — AI IDs ≠ DB IDs)
         if (storyLibraryChars.some(c => c.name.toLowerCase() === char.name.toLowerCase())) {
           savingToLibRef.current.delete(key);
+          setSavingToLibKeys(new Set(savingToLibRef.current));
           return;
         }
         const img = characterImages[id]?.image;
@@ -2129,9 +2135,10 @@ export default function CreateEpisodePage() {
         });
       } else {
         const loc = story?.locations.find(l => l.id === id);
-        if (!loc) { savingToLibRef.current.delete(key); return; }
+        if (!loc) { savingToLibRef.current.delete(key); setSavingToLibKeys(new Set(savingToLibRef.current)); return; }
         if (storyLibraryLocs.some(l => (l.name || "").toLowerCase() === (loc.name || "").toLowerCase())) {
           savingToLibRef.current.delete(key);
+          setSavingToLibKeys(new Set(savingToLibRef.current));
           return;
         }
         const img = locationImages[id]?.image;
@@ -2151,6 +2158,7 @@ export default function CreateEpisodePage() {
       console.error("[SAVE-TO-LIB] FAILED:", e);
     } finally {
       savingToLibRef.current.delete(key);
+      setSavingToLibKeys(new Set(savingToLibRef.current)); // trigger re-render to show completion
     }
   };
 
@@ -3005,19 +3013,40 @@ export default function CreateEpisodePage() {
             const isCompleted = step.num === 1 ? (visualsActive || clipsActive)
               : step.num === 2 ? clipsActive
               : allClipsCompleted;
+            const isClickable = !step.active && (isCompleted || (step.num === 1));
+            const handleStepClick = () => {
+              if (!isClickable) return;
+              if (step.num === 1) {
+                setVisualsActive(false);
+                setClipsActive(false);
+                saveNow({ visualsActive: false, clipsActive: false }, "drafting");
+              } else if (step.num === 2 && (visualsActive || clipsActive)) {
+                setClipsActive(false);
+                if (!visualsActive) setVisualsActive(true);
+                saveNow({ clipsActive: false, visualsActive: true });
+              } else if (step.num === 3 && clipsActive) {
+                // Already on step 3
+              }
+            };
             return (
               <div key={step.num} className="flex items-center gap-2">
                 {i > 0 && <div className={`w-16 sm:w-24 h-[2px] ${isCompleted || step.active ? "bg-[#9C99FF]" : "bg-white/10"}`} />}
-                <div className="flex items-center gap-2">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${
-                    step.active ? "bg-[#9C99FF] text-black" : isCompleted ? "bg-[#9C99FF] text-black" : "bg-white/10 text-white/50"
+                <button
+                  onClick={handleStepClick}
+                  disabled={step.active}
+                  className={`flex items-center gap-2 ${isClickable ? "cursor-pointer" : step.active ? "cursor-default" : "cursor-not-allowed"}`}
+                >
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 transition-colors ${
+                    step.active ? "bg-[#9C99FF] text-black" : isCompleted ? "bg-[#9C99FF] text-black hover:bg-[#b0adff]" : "bg-white/10 text-white/50"
                   }`}>
                     {isCompleted ? "\u2713" : step.num}
                   </div>
-                  <span className={`text-sm font-medium whitespace-nowrap hidden sm:inline ${step.active ? "text-white" : isCompleted ? "text-white/70" : "text-white/40"}`}>
+                  <span className={`text-sm font-medium whitespace-nowrap hidden sm:inline transition-colors ${
+                    step.active ? "text-white" : isCompleted ? "text-white/70 hover:text-white" : "text-white/40"
+                  }`}>
                     {step.label}
                   </span>
-                </div>
+                </button>
               </div>
             );
           })}
@@ -3234,7 +3263,7 @@ export default function CreateEpisodePage() {
                             ) : (
                               <div className="flex items-start gap-3">
                                 {(() => {
-                                  const src = storyLibraryChars.find(c => c.id === char.id) || selectedChars.find(c => c.id === char.id) || storyLibraryChars.find(c => c.name.toLowerCase() === char.name.toLowerCase()) || selectedChars.find(c => c.name.toLowerCase() === char.name.toLowerCase());
+                                  const src = storyLibraryChars.find(c => c.id === char.id) || storyLibraryChars.find(c => c.name.toLowerCase() === char.name.toLowerCase()) || selectedChars.find(c => c.id === char.id) || selectedChars.find(c => c.name.toLowerCase() === char.name.toLowerCase());
                                   return src?.imageBase64 ? (
                                     <img src={`data:${src.imageMimeType};base64,${src.imageBase64}`} alt={char.name} className="w-10 h-14 rounded-lg object-cover flex-shrink-0" />
                                   ) : null;
@@ -3708,6 +3737,7 @@ export default function CreateEpisodePage() {
                               <p className="text-[#ADADAD] text-xs">Role: {char.role === "protagonist" ? "Main Character" : char.role === "antagonist" ? "Antagonist" : "Supporting"}</p>
                               {hasImage && (() => {
                                 const isSaved = char.origin === "story" || storyLibraryChars.some(c => c.name.toLowerCase() === char.name.toLowerCase());
+                                const isSaving = savingToLibKeys.has(`character:${char.id}`);
                                 return isSaved ? (
                                   <span className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>
@@ -3716,10 +3746,18 @@ export default function CreateEpisodePage() {
                                 ) : (
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleSaveToLibrary("character", char.id); }}
-                                    className="mt-1 text-[10px] text-[#B8B6FC] hover:text-white flex items-center gap-1 transition-colors"
+                                    disabled={isSaving}
+                                    className={`mt-1 text-[10px] flex items-center gap-1 transition-colors ${isSaving ? "text-[#ADADAD] cursor-wait" : "text-[#B8B6FC] hover:text-white"}`}
                                   >
-                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></svg>
-                                    Save to Library
+                                    {isSaving ? (
+                                      <svg className="animate-spin h-[10px] w-[10px]" viewBox="0 0 24 24" fill="none">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                      </svg>
+                                    ) : (
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></svg>
+                                    )}
+                                    {isSaving ? "Saving..." : "Save to Library"}
                                   </button>
                                 );
                               })()}
@@ -3835,6 +3873,7 @@ export default function CreateEpisodePage() {
                               <p className="text-[#ADADAD] text-xs truncate">{loc.atmosphere}</p>
                               {hasImage && (() => {
                                 const isSaved = storyLibraryLocs.some(l => (l.name || "").toLowerCase() === (loc.name || "").toLowerCase());
+                                const isSaving = savingToLibKeys.has(`location:${loc.id}`);
                                 return isSaved ? (
                                   <span className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>
@@ -3843,10 +3882,18 @@ export default function CreateEpisodePage() {
                                 ) : (
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleSaveToLibrary("location", loc.id); }}
-                                    className="mt-1 text-[10px] text-[#B8B6FC] hover:text-white flex items-center gap-1 transition-colors"
+                                    disabled={isSaving}
+                                    className={`mt-1 text-[10px] flex items-center gap-1 transition-colors ${isSaving ? "text-[#ADADAD] cursor-wait" : "text-[#B8B6FC] hover:text-white"}`}
                                   >
-                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></svg>
-                                    Save to Library
+                                    {isSaving ? (
+                                      <svg className="animate-spin h-[10px] w-[10px]" viewBox="0 0 24 24" fill="none">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                      </svg>
+                                    ) : (
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></svg>
+                                    )}
+                                    {isSaving ? "Saving..." : "Save to Library"}
                                   </button>
                                 );
                               })()}

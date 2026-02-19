@@ -92,9 +92,11 @@ async def generate_character_image(request: GenerateCharacterImageRequest):
 
         prompt = f"""{style_prefix}
 
-Portrait of {request.name}, a {request.age}{gender_str}. {request.description}.
+Full body portrait of {request.name}, a {request.age}{gender_str}. {request.description}.
 
-Character clearly visible, head to mid-torso.
+Plain white background. No scenery, no props, no distractions.
+
+Full body visible head to toe, centered in frame.
 Show enough detail to establish their complete look.
 
 Portrait orientation, 9:16 aspect ratio."""

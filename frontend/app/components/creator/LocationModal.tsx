@@ -74,7 +74,8 @@ export default function LocationModal({
       }
       setGenError(null);
     }
-  }, [isOpen, location]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, location?.id]);
 
   useEffect(() => {
     if (isOpen) {

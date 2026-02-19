@@ -2,6 +2,7 @@
 Film generation endpoints for AI video workflow.
 Phase 4: Generate and assemble video shots using per-scene reference generation.
 """
+import json
 import os
 import uuid
 import asyncio
@@ -13,8 +14,6 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-import json
-
 from ..core import (
     generate_video,
     generate_text,
@@ -23,7 +22,7 @@ from ..core import (
     COST_IMAGE_GENERATION,
     COST_VIDEO_VEO_FAST_PER_SECOND,
 )
-from ..prompts import STORY_MODEL
+from ..prompts import STORY_MODEL, DIRECTOR_SCRIPTS_SCHEMA
 
 # Video duration and cost
 VIDEO_DURATION_SECONDS = 8
@@ -33,10 +32,10 @@ COST_PER_VIDEO = VIDEO_DURATION_SECONDS * COST_VIDEO_VEO_FAST_PER_SECOND  # $1.2
 MAX_SHOTS_FOR_TESTING = 3  # Set to None for full film generation
 SCENE_REFS_PER_SHOT = 3    # Nano Banana generates 3 scene-specific refs per shot
 
-# Veo rate limiting: 2 RPM on Paid Tier 1
-# Semaphore limits concurrent Veo calls; delay spaces them within the minute
-VEO_MAX_CONCURRENT = 2
-VEO_DELAY_BETWEEN_CALLS = 32  # seconds — ensures 2 calls fit within 60s window
+# Veo rate limiting — defaults match Paid Tier 1 (2 RPM).
+# Override via env vars when upgrading Google API tier.
+VEO_MAX_CONCURRENT = int(os.getenv("VEO_MAX_CONCURRENT", "2"))
+VEO_DELAY_BETWEEN_CALLS = int(os.getenv("VEO_DELAY_BETWEEN_CALLS", "32"))
 _veo_semaphore: Optional[asyncio.Semaphore] = None
 
 def _get_veo_semaphore() -> asyncio.Semaphore:
@@ -205,7 +204,7 @@ async def persist_film_job(job: FilmJob) -> None:
     if not getattr(job, "gen_job_id", None):
         return
     try:
-        from ..supabase_client import update_gen_job
+        from ..supabase_client import async_update_gen_job
         completed_shots = [
             {
                 "number": shot.number,
@@ -233,7 +232,7 @@ async def persist_film_job(job: FilmJob) -> None:
             status = "completed"
         elif job.status == "failed":
             status = "failed"
-        update_gen_job(job.gen_job_id, status, result=progress, error=job.error_message)
+        await async_update_gen_job(job.gen_job_id, status, result=progress, error=job.error_message)
     except Exception as e:
         print(f"[persist] Warning: gen_job update failed: {e}")
 
@@ -326,18 +325,13 @@ RULES:
 Return ONLY the JSON array, no markdown fences or extra text."""
 
     try:
-        response = await generate_text(prompt=prompt, model=STORY_MODEL)
+        response = await generate_text(
+            prompt=prompt,
+            model=STORY_MODEL,
+            output_schema=DIRECTOR_SCRIPTS_SCHEMA,
+        )
 
-        # Clean response - strip markdown fences if present
-        cleaned = response.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:].strip()
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3].strip()
-
-        scripts_data = json.loads(cleaned)
+        scripts_data = json.loads(response)
 
         # Build DirectorScript objects
         scripts = []
@@ -651,15 +645,16 @@ async def download_video(video_url: str, film_id: str, shot_number: int, generat
     with open(filepath, "wb") as f:
         f.write(video_bytes)
 
-    # Upload to Supabase Storage for persistence
+    # Upload to Supabase Storage for persistence (in thread to avoid blocking event loop)
     storage_url = ""
     sb = get_supabase()
     if sb and generation_id:
         try:
             storage_path = f"{generation_id}/film/shots/shot_{shot_number:02d}.mp4"
-            sb.storage.from_(AI_ASSETS_BUCKET).upload(
+            await asyncio.to_thread(
+                sb.storage.from_(AI_ASSETS_BUCKET).upload,
                 storage_path, video_bytes,
-                file_options={"content-type": "video/mp4", "upsert": "true"}
+                {"content-type": "video/mp4", "upsert": "true"},
             )
             storage_url = sb.storage.from_(AI_ASSETS_BUCKET).get_public_url(storage_path)
             print(f"  Uploaded shot {shot_number} to Supabase Storage")
@@ -870,16 +865,17 @@ async def run_film_generation(
 
         job.final_video_path = assembly_result["output_path"]
 
-        # Upload final video to Supabase Storage
+        # Upload final video to Supabase Storage (in thread to avoid blocking event loop)
         sb = get_supabase()
         if sb and job.generation_id and job.final_video_path:
             try:
                 with open(job.final_video_path, "rb") as f:
                     final_bytes = f.read()
                 storage_path = f"{job.generation_id}/film/final.mp4"
-                sb.storage.from_(AI_ASSETS_BUCKET).upload(
+                await asyncio.to_thread(
+                    sb.storage.from_(AI_ASSETS_BUCKET).upload,
                     storage_path, final_bytes,
-                    file_options={"content-type": "video/mp4", "upsert": "true"}
+                    {"content-type": "video/mp4", "upsert": "true"},
                 )
                 job.final_storage_url = sb.storage.from_(AI_ASSETS_BUCKET).get_public_url(storage_path)
                 print(f"Uploaded final video to Supabase Storage")
@@ -1337,6 +1333,40 @@ class AssembleClipsRequest(BaseModel):
     clip_urls: List[dict]  # [{scene_number: int, video_url: str}]
 
 
+def _fallback_refs_from_visuals(beat: Beat, approved_visuals: ApprovedVisuals) -> List[dict]:
+    """Build fallback reference images from approved character/location visuals.
+
+    Used when scene-specific ref generation fails (e.g. safety filter blocks the prompt).
+    Returns the raw character + location images so Veo still has visual context.
+    """
+    refs: List[dict] = []
+
+    # Character refs for this scene
+    if beat.characters_in_scene and approved_visuals.character_image_map:
+        for char_id in beat.characters_in_scene:
+            if char_id in approved_visuals.character_image_map:
+                ref = approved_visuals.character_image_map[char_id]
+                if ref.image_base64:
+                    refs.append({"image_base64": ref.image_base64, "mime_type": ref.mime_type})
+    # Fallback: all character images
+    if not refs and approved_visuals.character_images:
+        for ref in approved_visuals.character_images[:3]:
+            if ref.image_base64:
+                refs.append({"image_base64": ref.image_base64, "mime_type": ref.mime_type})
+
+    # Location ref
+    loc_img = None
+    if beat.location_id and approved_visuals.location_images:
+        loc_img = approved_visuals.location_images.get(beat.location_id)
+    if not loc_img and approved_visuals.setting_image:
+        loc_img = approved_visuals.setting_image
+    if loc_img and loc_img.image_base64:
+        refs.append({"image_base64": loc_img.image_base64, "mime_type": loc_img.mime_type})
+
+    # Veo accepts max 3 reference images
+    return refs[:3]
+
+
 async def generate_single_clip(req: GenerateClipRequest) -> dict:
     """Generate a single video clip for one scene.
 
@@ -1366,15 +1396,21 @@ async def generate_single_clip(req: GenerateClipRequest) -> dict:
     cost_video = 0.0
 
     # Step 2: Generate 3 scene-specific reference images
+    #         Falls back to approved character/location images if safety filters block
     print(f"[Clip {req.scene_number}] Generating 3 scene refs...")
-    scene_refs = await generate_scene_references(
-        beat=beat,
-        story=req.story,
-        approved_visuals=req.approved_visuals,
-        director_script=director_script,
-    )
-    cost_scene_refs = COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT
-    print(f"[Clip {req.scene_number}] Scene refs done (cost: ${cost_scene_refs:.3f})")
+    try:
+        scene_refs = await generate_scene_references(
+            beat=beat,
+            story=req.story,
+            approved_visuals=req.approved_visuals,
+            director_script=director_script,
+        )
+        cost_scene_refs = COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT
+        print(f"[Clip {req.scene_number}] Scene refs done (cost: ${cost_scene_refs:.3f})")
+    except Exception as e:
+        print(f"[Clip {req.scene_number}] Scene refs failed ({e}), falling back to approved visuals")
+        scene_refs = _fallback_refs_from_visuals(beat, req.approved_visuals)
+        cost_scene_refs = 0.0
 
     # Step 3: Build Veo prompt (with optional feedback adjustment)
     veo_prompt = build_veo_prompt(beat, req.story, director_script)
@@ -1444,7 +1480,7 @@ async def assemble_clips(req: AssembleClipsRequest) -> dict:
     assembly_result = await assemble_videos(video_paths, crossfade_duration=0.0)
     assembled_path = assembly_result["output_path"]
 
-    # Upload to Storage
+    # Upload to Storage (in thread to avoid blocking event loop)
     assembled_url = ""
     sb = get_supabase()
     if sb and assembled_path:
@@ -1452,9 +1488,10 @@ async def assemble_clips(req: AssembleClipsRequest) -> dict:
             with open(assembled_path, "rb") as f:
                 video_bytes = f.read()
             storage_path = f"{req.generation_id}/film/assembled.mp4"
-            sb.storage.from_(AI_ASSETS_BUCKET).upload(
+            await asyncio.to_thread(
+                sb.storage.from_(AI_ASSETS_BUCKET).upload,
                 storage_path, video_bytes,
-                file_options={"content-type": "video/mp4", "upsert": "true"}
+                {"content-type": "video/mp4", "upsert": "true"},
             )
             assembled_url = sb.storage.from_(AI_ASSETS_BUCKET).get_public_url(storage_path)
             print(f"Uploaded assembled video to Storage")

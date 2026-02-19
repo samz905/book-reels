@@ -1,5 +1,8 @@
-import { GoogleGenAI, GenerateVideosOperation } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
+
+// Allow up to 120s for Veo operations (requires Vercel Pro)
+export const maxDuration = 120;
 
 // Lazy initialization to avoid build-time errors
 let ai: GoogleGenAI | null = null;
@@ -12,10 +15,6 @@ function getAI(): GoogleGenAI {
   }
   return ai;
 }
-
-// Store operations in memory (for demo purposes)
-// In production, you'd use a database or Redis
-const operations = new Map<string, GenerateVideosOperation>();
 
 // POST - Start video generation
 // Supports 3 mutually exclusive modes:
@@ -93,13 +92,18 @@ export async function POST(request: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const operation = await getAI().models.generateVideos(requestParams as any);
 
-    const operationId = operation.name || `op_${Date.now()}`;
-    operations.set(operationId, operation);
+    const operationName = operation.name;
+    if (!operationName) {
+      return NextResponse.json(
+        { error: "Video generation started but no operation name returned" },
+        { status: 500 }
+      );
+    }
 
-    console.log("Video generation started, operation:", operationId);
+    console.log("Video generation started, operation:", operationName);
 
     return NextResponse.json({
-      operationName: operationId,
+      operationName,
       status: "processing",
       message: "Video generation started",
     });
@@ -112,7 +116,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET - Check operation status
+// GET - Check operation status (stateless — reconstructs from operation name)
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -127,23 +131,24 @@ export async function GET(request: NextRequest) {
 
     console.log("Checking status for operation:", operationName);
 
-    // Get stored operation
-    const storedOperation = operations.get(operationName);
+    // Poll via REST API directly — the SDK's getVideosOperation requires a
+    // full class instance which we can't reconstruct across serverless calls.
+    const apiKey = process.env.GOOGLE_GENAI_API_KEY;
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/${operationName}?key=${apiKey}`
+    );
 
-    if (!storedOperation) {
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error("Operation poll failed:", res.status, errText);
       return NextResponse.json(
-        { error: "Operation not found. It may have expired." },
-        { status: 404 }
+        { error: "Failed to poll operation", details: errText },
+        { status: res.status }
       );
     }
 
-    // Poll for updated status
-    const operation = await getAI().operations.getVideosOperation({
-      operation: storedOperation,
-    });
-
-    // Update stored operation with latest state
-    operations.set(operationName, operation);
+    const operation = await res.json();
+    console.log("Operation response:", JSON.stringify(operation).slice(0, 500));
 
     if (!operation.done) {
       return NextResponse.json({
@@ -153,27 +158,32 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Video is ready - clean up stored operation
-    operations.delete(operationName);
+    // The raw REST API nests the result differently from the SDK.
+    // Try all known paths to find the generated videos.
+    const resp = operation.response ?? {};
+    const generatedVideos =
+      resp.generateVideoResponse?.generatedSamples ??
+      resp.generatedVideos ??
+      resp.generateVideoResponse?.generatedVideos ??
+      resp.videos;
 
-    const generatedVideos = operation.response?.generatedVideos;
     if (!generatedVideos || generatedVideos.length === 0) {
+      console.error("Full operation.response:", JSON.stringify(resp));
       return NextResponse.json(
-        { error: "No video was generated" },
+        { error: "No video was generated", details: JSON.stringify(resp) },
         { status: 500 }
       );
     }
 
-    const video = generatedVideos[0].video;
-    console.log("Video generated:", video);
+    const video = generatedVideos[0].video ?? generatedVideos[0];
+    const uri = video?.uri ?? video?.url;
+    const mimeType = video?.mimeType ?? video?.encoding ?? "video/mp4";
+    console.log("Video generated:", { uri, mimeType });
 
     return NextResponse.json({
       status: "completed",
       done: true,
-      video: {
-        uri: video?.uri,
-        mimeType: video?.mimeType,
-      },
+      video: { uri, mimeType },
     });
   } catch (error) {
     console.error("Error checking video status:", error);

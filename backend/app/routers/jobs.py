@@ -13,9 +13,9 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from ..supabase_client import (
-    create_gen_job,
-    update_gen_job,
-    upload_image_base64,
+    async_create_gen_job,
+    async_update_gen_job,
+    async_upload_image_base64,
     get_supabase,
 )
 from ..core import (
@@ -25,7 +25,12 @@ from ..core import (
     estimate_story_cost,
     COST_IMAGE_GENERATION,
 )
-from ..prompts import STORY_MODEL
+from ..prompts import (
+    STORY_MODEL,
+    STORY_SCHEMA,
+    REFINED_SCENE_SCHEMA,
+    SCENE_DESCRIPTIONS_SCHEMA,
+)
 
 # Import router modules for their handler logic
 from . import story as story_mod
@@ -64,7 +69,7 @@ async def submit_job(request: SubmitJobRequest, background_tasks: BackgroundTask
     Returns immediately with job_id. Results delivered via Supabase Realtime.
     """
     try:
-        row = create_gen_job(
+        row = await async_create_gen_job(
             generation_id=request.generation_id,
             job_type=request.job_type,
             target_id=request.target_id,
@@ -106,13 +111,13 @@ async def run_job(job_id: str, request: SubmitJobRequest):
             result,
         )
 
-        update_gen_job(job_id, "completed", result=result)
+        await async_update_gen_job(job_id, "completed", result=result)
         print(f"[job] {request.job_type}/{request.target_id} completed")
 
     except Exception as e:
         print(f"[job] {request.job_type}/{request.target_id} FAILED: {e}")
         print(traceback.format_exc())
-        update_gen_job(job_id, "failed", error=str(e))
+        await async_update_gen_job(job_id, "failed", error=str(e))
 
 
 # ============================================================
@@ -137,11 +142,11 @@ async def upload_result_images(
         return result
 
     # Top-level image
-    result = _upload_image_in_dict(result, generation_id, job_type, target_id, "main")
+    result = await _upload_image_in_dict(result, generation_id, job_type, target_id, "main")
 
     # Nested: image field (MoodboardImage-shaped)
     if "image" in result and isinstance(result["image"], dict):
-        result["image"] = _upload_image_in_dict(
+        result["image"] = await _upload_image_in_dict(
             result["image"], generation_id, job_type, target_id, "image"
         )
 
@@ -149,7 +154,7 @@ async def upload_result_images(
     if "images" in result and isinstance(result["images"], list):
         for i, img in enumerate(result["images"]):
             if isinstance(img, dict):
-                result["images"][i] = _upload_image_in_dict(
+                result["images"][i] = await _upload_image_in_dict(
                     img, generation_id, job_type, target_id, f"image_{i}"
                 )
 
@@ -157,14 +162,14 @@ async def upload_result_images(
     if "key_moment" in result and isinstance(result["key_moment"], dict):
         km = result["key_moment"]
         if "image" in km and isinstance(km["image"], dict):
-            km["image"] = _upload_image_in_dict(
+            km["image"] = await _upload_image_in_dict(
                 km["image"], generation_id, job_type, target_id, "key_moment"
             )
 
     if "key_moments" in result and isinstance(result["key_moments"], list):
         for i, km in enumerate(result["key_moments"]):
             if isinstance(km, dict) and "image" in km and isinstance(km["image"], dict):
-                km["image"] = _upload_image_in_dict(
+                km["image"] = await _upload_image_in_dict(
                     km["image"], generation_id, job_type, target_id, f"key_moment_{i}"
                 )
 
@@ -172,14 +177,14 @@ async def upload_result_images(
     if "scene_images" in result and isinstance(result["scene_images"], list):
         for i, si in enumerate(result["scene_images"]):
             if isinstance(si, dict) and "image" in si and isinstance(si["image"], dict):
-                si["image"] = _upload_image_in_dict(
+                si["image"] = await _upload_image_in_dict(
                     si["image"], generation_id, job_type, target_id, f"scene_{i}"
                 )
 
     return result
 
 
-def _upload_image_in_dict(d: dict, gen_id: str, job_type: str, target_id: str, label: str) -> dict:
+async def _upload_image_in_dict(d: dict, gen_id: str, job_type: str, target_id: str, label: str) -> dict:
     """If dict has image_base64, upload it and replace with image_url."""
     if "image_base64" not in d or not d["image_base64"]:
         return d
@@ -188,7 +193,7 @@ def _upload_image_in_dict(d: dict, gen_id: str, job_type: str, target_id: str, l
         ext = "png" if "png" in mime else "jpg" if "jpeg" in mime or "jpg" in mime else "webp"
         safe_target = target_id.replace("/", "_") if target_id else "default"
         path = f"{job_type}/{safe_target}/{label}.{ext}"
-        url = upload_image_base64(gen_id, path, d["image_base64"], mime)
+        url = await async_upload_image_base64(gen_id, path, d["image_base64"], mime)
         d["image_url"] = url
         del d["image_base64"]
     except Exception as e:
@@ -213,6 +218,7 @@ async def handle_story_generate(payload: dict) -> dict:
     response = await generate_text(
         prompt=prompt,
         system_prompt=story_mod.STORY_SYSTEM_PROMPT,
+        output_schema=STORY_SCHEMA,
     )
     story_obj = story_mod.parse_story_response(
         response, req.style,
@@ -238,6 +244,7 @@ async def handle_story_regenerate(payload: dict) -> dict:
     response = await generate_text(
         prompt=prompt,
         system_prompt=story_mod.STORY_SYSTEM_PROMPT,
+        output_schema=STORY_SCHEMA,
     )
     story_obj = story_mod.parse_story_response(
         response, req.style,
@@ -257,6 +264,7 @@ async def handle_story_parse_script(payload: dict) -> dict:
     response = await generate_text(
         prompt=prompt,
         system_prompt=story_mod.STORY_SYSTEM_PROMPT,
+        output_schema=STORY_SCHEMA,
     )
     story_obj = story_mod.parse_story_response(response, req.style)
     cost = estimate_story_cost(len(story_obj.scenes) or len(story_obj.beats))
@@ -378,19 +386,11 @@ OUTPUT: Valid JSON only. No markdown, no explanation."""
     response = await generate_text(
         prompt=prompt,
         system_prompt=system_prompt,
-        model=STORY_MODEL
+        model=STORY_MODEL,
+        output_schema=REFINED_SCENE_SCHEMA,
     )
 
-    cleaned = response.strip()
-    if cleaned.startswith("```json"):
-        cleaned = cleaned[7:]
-    if cleaned.startswith("```"):
-        cleaned = cleaned[3:]
-    if cleaned.endswith("```"):
-        cleaned = cleaned[:-3]
-    cleaned = cleaned.strip()
-
-    scene_data = _json.loads(cleaned)
+    scene_data = _json.loads(response)
     scene_data["scene_number"] = scene_data.get("scene_number", scene_num)
     scene_data["beat_type"] = story_mod.BEAT_NUMBER_TO_TYPE.get(scene_num, "rise")
     scene_data["time_range"] = story_mod.BEAT_TIME_RANGES.get(scene_num, "0:00-0:08")
@@ -399,6 +399,9 @@ OUTPUT: Valid JSON only. No markdown, no explanation."""
         scene_data["characters_on_screen"] = all_char_ids
     if not scene_data.get("setting_id") and location_ids:
         scene_data["setting_id"] = location_ids[0]
+    # Structured outputs guarantees action is array — join to string for Scene model
+    if isinstance(scene_data.get("action"), list):
+        scene_data["action"] = "\n".join(scene_data["action"])
 
     refined_scene = story_mod.Scene(**scene_data)
     beat_dict = story_mod.scene_to_beat(refined_scene)
@@ -482,19 +485,11 @@ RULES:
     response = await generate_text(
         prompt=prompt,
         system_prompt="You are a cinematographer writing shot descriptions. Output valid JSON only.",
-        model=STORY_MODEL
+        model=STORY_MODEL,
+        output_schema=SCENE_DESCRIPTIONS_SCHEMA,
     )
 
-    cleaned = response.strip()
-    if cleaned.startswith("```json"):
-        cleaned = cleaned[7:]
-    if cleaned.startswith("```"):
-        cleaned = cleaned[3:]
-    if cleaned.endswith("```"):
-        cleaned = cleaned[:-3]
-    cleaned = cleaned.strip()
-
-    descriptions_data = _json.loads(cleaned)
+    descriptions_data = _json.loads(response)
     descriptions = [
         {
             "scene_number": d["scene_number"],

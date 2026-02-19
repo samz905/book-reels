@@ -4,8 +4,8 @@ Story generation system prompt and model configuration.
 Change STORY_MODEL here to switch ALL story-related text generation.
 """
 
-# ── Single place to switch the Gemini model for ALL story text generation ──
-STORY_MODEL = "gemini-2.5-pro"
+# ── Single place to switch the Claude model for ALL story text generation ──
+STORY_MODEL = "claude-haiku-4-5-20251001"
 
 
 STORY_SYSTEM_PROMPT = """You are an 8-Scene Vertical Episode Generator designed for maximum viewer retention.
