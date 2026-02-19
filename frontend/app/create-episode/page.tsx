@@ -384,7 +384,8 @@ export default function CreateEpisodePage() {
   const [editLocDraft, setEditLocDraft] = useState<Location | null>(null);
 
   // Build Your Visuals state (Phase 2)
-  const [visualsActive, setVisualsActive] = useState(false);
+  const [visualsActive, setVisualsActive] = useState(false);  // Unlock flag: Stage 2 started
+  const [displayedStage, setDisplayedStage] = useState<1 | 2 | 3>(1);  // Which stage is currently shown
   const [visualsTab, setVisualsTab] = useState<VisualsTab>("characters");
   const [characterImages, setCharacterImages] = useState<Record<string, CharacterImageState>>({});
   const [locationImages, setLocationImages] = useState<Record<string, LocationImageState>>({});
@@ -1332,6 +1333,7 @@ export default function CreateEpisodePage() {
     selectedLocation,
     // isGenerating intentionally omitted — transient state, always false on restore
     visualsActive,
+    displayedStage,
     visualsTab,
     // Images are DB-authoritative for library chars (story_characters/story_locations tables).
     // JSONB also stores image_url (lightweight) so AI-only chars survive restore.
@@ -1576,6 +1578,16 @@ export default function CreateEpisodePage() {
       if (s.visualsTab) setVisualsTab(s.visualsTab as VisualsTab);
       // Backward compat: old snapshots with visualStep → map to visualsActive
       if (s.visualStep && !s.visualsActive) setVisualsActive(true);
+      // Restore displayedStage (derive from flags for older snapshots)
+      if (s.displayedStage) {
+        setDisplayedStage(s.displayedStage as 1 | 2 | 3);
+      } else if (s.clipsActive) {
+        setDisplayedStage(3);
+      } else if (s.visualsActive || s.visualStep) {
+        setDisplayedStage(2);
+      } else {
+        setDisplayedStage(1);
+      }
 
       // Helper: check if an image has real content (URL or base64)
       const hasRealImage = (img: MoodboardImage | null) => {
@@ -1907,6 +1919,7 @@ export default function CreateEpisodePage() {
   const startBuildVisuals = async () => {
     if (!story) return;
     setVisualsActive(true);
+    setDisplayedStage(2);
     setVisualsTab("characters");
     const gid = generationIdRef.current;
 
@@ -2027,7 +2040,7 @@ export default function CreateEpisodePage() {
 
     setCharacterImages(charStates);
     setLocationImages(locStates);
-    saveNow({ characterImages: charStates, locationImages: locStates, story: story, visualsActive: true, visualsTab: "characters" }, "visuals");
+    saveNow({ characterImages: charStates, locationImages: locStates, story: story, visualsActive: true, displayedStage: 2, visualsTab: "characters" }, "visuals");
   };
 
   // Character visuals modal save handler
@@ -2375,6 +2388,7 @@ export default function CreateEpisodePage() {
 
   const resetVisualDirection = () => {
     setVisualsActive(false);
+    setDisplayedStage(1);
     setVisualsTab("characters");
     setCharacterImages({});
     setLocationImages({});
@@ -2449,7 +2463,7 @@ export default function CreateEpisodePage() {
     return () => { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    generationId, story, visualsActive, visualsTab,
+    generationId, story, visualsActive, displayedStage, visualsTab,
     characterImages, locationImages, sceneImages, promptPreview,
     film, clipsApproved, clipsActive, clipStates, totalCost,
     episodeName, episodeNumber, episodeIsFree,
@@ -2458,6 +2472,10 @@ export default function CreateEpisodePage() {
   // On mount: only restore if URL has ?g= param. Otherwise start fresh.
   // Works like ChatGPT/Claude: bare URL = blank slate, ?g=xxx = restore that generation.
   useEffect(() => {
+    // Show loading overlay BEFORE any async work — prevents flash of empty state on restore
+    const urlGenId = new URLSearchParams(window.location.search).get("g");
+    if (urlGenId) setIsRestoringState(true);
+
     const init = async () => {
       const urlParams = new URLSearchParams(window.location.search);
       const urlGenId = urlParams.get("g");
@@ -2734,8 +2752,9 @@ export default function CreateEpisodePage() {
     setClipStates(initial);
     setSelectedClipScene(1);
     setClipsActive(true);
+    setDisplayedStage(3);
     setAssembledVideoUrl(null);
-    saveNow({ clipsActive: true });
+    saveNow({ clipsActive: true, displayedStage: 3 });
 
     // Fetch existing clips from DB (for restore scenarios)
     const genId = generationIdRef.current;
@@ -3006,27 +3025,19 @@ export default function CreateEpisodePage() {
         {/* Step Indicator */}
         <div className="relative flex items-center justify-center gap-2 mb-8">
           {[
-            { num: 1, label: "Create Your Script", active: !visualsActive && !clipsActive },
-            { num: 2, label: "Build Your Visuals", active: visualsActive && !clipsActive },
-            { num: 3, label: "Create Your Video", active: clipsActive },
+            { num: 1, label: "Create Your Script", active: displayedStage === 1 },
+            { num: 2, label: "Build Your Visuals", active: displayedStage === 2 },
+            { num: 3, label: "Create Your Video", active: displayedStage === 3 },
           ].map((step, i) => {
-            const isCompleted = step.num === 1 ? (visualsActive || clipsActive)
+            const isCompleted = step.num === 1 ? visualsActive
               : step.num === 2 ? clipsActive
               : allClipsCompleted;
             const isClickable = !step.active && (isCompleted || (step.num === 1));
             const handleStepClick = () => {
               if (!isClickable) return;
-              if (step.num === 1) {
-                setVisualsActive(false);
-                setClipsActive(false);
-                saveNow({ visualsActive: false, clipsActive: false }, "drafting");
-              } else if (step.num === 2 && (visualsActive || clipsActive)) {
-                setClipsActive(false);
-                if (!visualsActive) setVisualsActive(true);
-                saveNow({ clipsActive: false, visualsActive: true });
-              } else if (step.num === 3 && clipsActive) {
-                // Already on step 3
-              }
+              // Just navigate — never touch unlock flags or status
+              setDisplayedStage(step.num as 1 | 2 | 3);
+              saveNow({ displayedStage: step.num });
             };
             return (
               <div key={step.num} className="flex items-center gap-2">
@@ -3091,7 +3102,7 @@ export default function CreateEpisodePage() {
           )}
         </div>
 
-        {!visualsActive && !clipsActive && (
+        {displayedStage === 1 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-8">
           {/* Left Column: Input Form */}
           <div className="bg-panel rounded-2xl lg:rounded-3xl outline outline-1 outline-panel-border p-4 md:p-6">
@@ -3605,10 +3616,18 @@ export default function CreateEpisodePage() {
                           Regenerate All
                         </button>
                         <button
-                          onClick={startBuildVisuals}
+                          onClick={() => {
+                            if (visualsActive) {
+                              // Visual data already exists — just navigate back
+                              setDisplayedStage(2);
+                              saveNow({ displayedStage: 2 });
+                            } else {
+                              startBuildVisuals();
+                            }
+                          }}
                           className="flex-1 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90"
                         >
-                          Approve & Continue
+                          {visualsActive ? "Back to Visuals" : "Approve & Continue"}
                         </button>
                       </div>
                     </div>
@@ -3621,7 +3640,7 @@ export default function CreateEpisodePage() {
         )}
 
         {/* Section 2: Build Your Visuals */}
-        {visualsActive && !clipsActive && story && (
+        {displayedStage === 2 && story && (
           <>
             {/* Sub-tab breadcrumb navigation */}
             <div className="flex items-center gap-2 mb-6">
@@ -3772,8 +3791,8 @@ export default function CreateEpisodePage() {
                   <div className="mt-10 flex items-center justify-between">
                     <button
                       onClick={() => {
-                        setVisualsActive(false);
-                        saveNow({ visualsActive: false }, "drafting");
+                        setDisplayedStage(1);
+                        saveNow({ displayedStage: 1 });
                       }}
                       className="text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
                     >
@@ -4067,11 +4086,19 @@ export default function CreateEpisodePage() {
                       &larr; Back to Your Locations
                     </button>
                     <button
-                      onClick={enterClipsStage}
+                      onClick={() => {
+                        if (clipsActive) {
+                          // Clip data already exists — just navigate back
+                          setDisplayedStage(3);
+                          saveNow({ displayedStage: 3 });
+                        } else {
+                          enterClipsStage();
+                        }
+                      }}
                       disabled={!Object.values(sceneImages).every(s => s.image)}
                       className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Approve & Continue
+                      {clipsActive ? "Back to Video" : "Approve & Continue"}
                     </button>
                   </div>
                 </div>
@@ -4149,7 +4176,7 @@ export default function CreateEpisodePage() {
         )}
 
         {/* Section 3: Create Your Video (3-Pane Clips UI) */}
-        {clipsActive && story && (() => {
+        {displayedStage === 3 && story && (() => {
           const scenes = getScenes(story);
           const currentScene = scenes.find((s) => s.scene_number === selectedClipScene) || scenes[0];
           const currentClip = clipStates[selectedClipScene];
@@ -4160,7 +4187,7 @@ export default function CreateEpisodePage() {
             <div>
               {/* Back to visuals */}
               <button
-                onClick={() => { setClipsActive(false); saveNow({ clipsActive: false }); }}
+                onClick={() => { setDisplayedStage(2); saveNow({ displayedStage: 2 }); }}
                 className="text-sm text-[#ADADAD] hover:text-white transition-colors mb-4"
               >
                 &larr; Back to Visuals
@@ -4645,7 +4672,7 @@ export default function CreateEpisodePage() {
 
       {/* Loading overlay during state restore */}
       {isRestoringState && (
-        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center">
+        <div className="fixed inset-0 bg-black z-[60] flex items-center justify-center">
           <div className="text-center">
             <svg className="animate-spin h-10 w-10 mx-auto mb-3 text-[#B8B6FC]" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
