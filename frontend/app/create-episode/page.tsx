@@ -3042,19 +3042,19 @@ export default function CreateEpisodePage() {
             };
             return (
               <div key={step.num} className="flex items-center gap-2">
-                {i > 0 && <div className={`w-16 sm:w-24 h-[2px] ${isCompleted || step.active ? "bg-[#9C99FF]" : "bg-white/10"}`} />}
+                {i > 0 && <div className={`w-16 sm:w-24 h-[2px] ${isUnlocked || step.active ? "bg-[#9C99FF]" : "bg-white/10"}`} />}
                 <button
                   onClick={handleStepClick}
                   disabled={step.active}
                   className={`flex items-center gap-2 ${isClickable ? "cursor-pointer" : step.active ? "cursor-default" : "cursor-not-allowed"}`}
                 >
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 transition-colors ${
-                    step.active ? "bg-[#9C99FF] text-black" : isCompleted ? "bg-[#9C99FF] text-black hover:bg-[#b0adff]" : "bg-white/10 text-white/50"
+                    step.active ? "bg-[#9C99FF] text-black" : isUnlocked ? "bg-[#9C99FF]/70 text-black hover:bg-[#9C99FF]" : "bg-white/10 text-white/50"
                   }`}>
                     {isCompleted ? "\u2713" : step.num}
                   </div>
                   <span className={`text-sm font-medium whitespace-nowrap hidden sm:inline transition-colors ${
-                    step.active ? "text-white" : isCompleted ? "text-white/70 hover:text-white" : "text-white/40"
+                    step.active ? "text-white" : isUnlocked ? "text-white/70 hover:text-white" : "text-white/40"
                   }`}>
                     {step.label}
                   </span>
