@@ -1103,6 +1103,30 @@ export default function CreateEpisodePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realtimeJobs, isRestoringState]);
 
+  // Stale job watchdog: auto-fail jobs stuck in "generating" for >5 minutes.
+  // Catches cases where the backend dies without updating gen_jobs (OOM, network drop, etc.).
+  useEffect(() => {
+    const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+    const CHECK_INTERVAL_MS = 30 * 1000; // check every 30s
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      for (const job of realtimeJobs) {
+        if (job.status !== "generating") continue;
+        if (processedJobsRef.current.has(job.id)) continue;
+        const jobAge = now - new Date(job.created_at).getTime();
+        if (jobAge > STALE_THRESHOLD_MS) {
+          console.warn(`[stale-watchdog] Job ${job.job_type}/${job.target_id} stuck for ${Math.round(jobAge / 1000)}s — marking failed`);
+          processedJobsRef.current.add(job.id);
+          applyFailedJob({ ...job, status: "failed", error_message: "Timed out — click Regenerate to retry" });
+        }
+      }
+    }, CHECK_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [realtimeJobs]);
+
   // URL helper — generation ID in URL as ?g=xxx
   const setGenerationUrl = (id: string | null) => {
     const url = new URL(window.location.href);

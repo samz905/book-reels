@@ -91,6 +91,9 @@ async def submit_job(request: SubmitJobRequest, background_tasks: BackgroundTask
 # Background Task Dispatcher
 # ============================================================
 
+JOB_TIMEOUT_SECONDS = 300  # 5 minutes — kills hung API calls
+
+
 async def run_job(job_id: str, request: SubmitJobRequest):
     """Execute the generation and update gen_jobs with result."""
     try:
@@ -100,10 +103,14 @@ async def run_job(job_id: str, request: SubmitJobRequest):
 
         # Film handlers need job_id for incremental progress updates
         is_film = request.backend_path.startswith("/film/")
-        if is_film:
-            result = await handler(request.payload, job_id=job_id)
-        else:
-            result = await handler(request.payload)
+
+        async def _run_handler():
+            if is_film:
+                return await handler(request.payload, job_id=job_id)
+            return await handler(request.payload)
+
+        # Timeout guard: kill hung API calls (Imagen, Seedance, etc.)
+        result = await asyncio.wait_for(_run_handler(), timeout=JOB_TIMEOUT_SECONDS)
 
         # Upload any base64 images in the result to Storage
         result = await upload_result_images(
@@ -115,6 +122,11 @@ async def run_job(job_id: str, request: SubmitJobRequest):
 
         await async_update_gen_job(job_id, "completed", result=result)
         print(f"[job] {request.job_type}/{request.target_id} completed")
+
+    except asyncio.TimeoutError:
+        error_msg = f"Job timed out after {JOB_TIMEOUT_SECONDS}s — please retry"
+        print(f"[job] {request.job_type}/{request.target_id} TIMED OUT")
+        await async_update_gen_job(job_id, "failed", error=error_msg)
 
     except Exception as e:
         # Extract clean message: HTTPException.detail is user-friendly,
