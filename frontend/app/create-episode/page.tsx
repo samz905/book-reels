@@ -4038,6 +4038,13 @@ export default function CreateEpisodePage() {
                     </div>
                   )}
 
+                  {/* Storyboard tip */}
+                  {Object.keys(sceneImages).length > 0 && (
+                    <p className="text-xs text-[#ADADAD]/70 text-center mb-5">
+                      Tip: Keep an eye out for visual glitches like morphing hands, impossible physics, or melting objects. Regenerate any scene that looks off before filming.
+                    </p>
+                  )}
+
                   {/* Scene grid (4x2) */}
                   {Object.keys(sceneImages).length > 0 && (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
@@ -4259,6 +4266,11 @@ export default function CreateEpisodePage() {
               >
                 &larr; Back to Visuals
               </button>
+
+              {/* Video tip */}
+              <p className="text-xs text-[#ADADAD]/70 text-center mb-4">
+                Tip: Generate all clips first, then feel free to come back later. Your films will keep rendering in the background.
+              </p>
 
               <div className="flex flex-col md:flex-row gap-0 bg-panel rounded-2xl md:rounded-3xl outline outline-1 outline-panel-border overflow-hidden md:h-[calc(100vh-220px)] md:min-h-[500px]">
 
