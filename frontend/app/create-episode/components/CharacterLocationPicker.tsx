@@ -145,9 +145,9 @@ export default function CharacterLocationPicker({
                       }`}
                     >
                       <div className="w-[90px] h-[120px] bg-[#262626] relative">
-                        {char.imageBase64 ? (
+                        {(char.imageUrl || char.imageBase64) ? (
                           <img
-                            src={`data:${char.imageMimeType};base64,${char.imageBase64}`}
+                            src={char.imageUrl || `data:${char.imageMimeType};base64,${char.imageBase64}`}
                             alt={char.name}
                             className="w-full h-full object-cover"
                           />
@@ -189,9 +189,9 @@ export default function CharacterLocationPicker({
                     className="flex items-center gap-2 bg-panel-border rounded-lg px-3 py-1.5"
                   >
                     <div className="w-6 h-6 rounded-full overflow-hidden bg-[#262626] flex-shrink-0">
-                      {char.imageBase64 ? (
+                      {(char.imageUrl || char.imageBase64) ? (
                         <img
-                          src={`data:${char.imageMimeType};base64,${char.imageBase64}`}
+                          src={char.imageUrl || `data:${char.imageMimeType};base64,${char.imageBase64}`}
                           alt=""
                           className="w-full h-full object-cover"
                         />
@@ -270,9 +270,9 @@ export default function CharacterLocationPicker({
                       }`}
                     >
                       <div className="w-[90px] h-[60px] bg-[#262626] relative">
-                        {loc.imageBase64 ? (
+                        {(loc.imageUrl || loc.imageBase64) ? (
                           <img
-                            src={`data:${loc.imageMimeType};base64,${loc.imageBase64}`}
+                            src={loc.imageUrl || `data:${loc.imageMimeType};base64,${loc.imageBase64}`}
                             alt={loc.name}
                             className="w-full h-full object-cover"
                           />
