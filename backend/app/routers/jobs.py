@@ -109,8 +109,12 @@ async def run_job(job_id: str, request: SubmitJobRequest):
                 return await handler(request.payload, job_id=job_id)
             return await handler(request.payload)
 
-        # Timeout guard: kill hung API calls (Imagen, Seedance, etc.)
-        result = await asyncio.wait_for(_run_handler(), timeout=JOB_TIMEOUT_SECONDS)
+        # Timeout guard: kill hung image gen calls.
+        # Film jobs are exempt — Seedance has its own 5-min poll timeout.
+        if is_film:
+            result = await _run_handler()
+        else:
+            result = await asyncio.wait_for(_run_handler(), timeout=JOB_TIMEOUT_SECONDS)
 
         # Upload any base64 images in the result to Storage
         result = await upload_result_images(

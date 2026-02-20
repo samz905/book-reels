@@ -1114,6 +1114,9 @@ export default function CreateEpisodePage() {
       for (const job of realtimeJobs) {
         if (job.status !== "generating") continue;
         if (processedJobsRef.current.has(job.id)) continue;
+        // Video jobs have their own 5-min timeout in Seedance — skip watchdog
+        const videoJobTypes = ["film", "film_with_prompts", "shot_regenerate", "clip"];
+        if (videoJobTypes.includes(job.job_type)) continue;
         const jobAge = now - new Date(job.created_at).getTime();
         if (jobAge > STALE_THRESHOLD_MS) {
           console.warn(`[stale-watchdog] Job ${job.job_type}/${job.target_id} stuck for ${Math.round(jobAge / 1000)}s — marking failed`);
