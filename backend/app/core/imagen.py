@@ -16,6 +16,7 @@ from ..config import genai_client
 
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 5  # seconds
+PER_CALL_TIMEOUT = 90  # seconds — kills individual hung API calls
 
 # Concurrent image generations. Default 8 fits comfortably in 2GB (8×20MB=160MB peak).
 # Override via env var if instance size changes.
@@ -32,10 +33,22 @@ def _get_image_gen_semaphore() -> asyncio.Semaphore:
 
 
 async def _retry_on_resource_exhausted(fn, *args, **kwargs):
-    """Retry a sync function with exponential backoff on 429 RESOURCE_EXHAUSTED errors."""
+    """Retry a sync function with exponential backoff on 429 RESOURCE_EXHAUSTED errors.
+
+    Each individual API call is wrapped in a 90s timeout so a hung HTTP
+    connection can't block the semaphore slot (or the whole batch) forever.
+    """
     for attempt in range(MAX_RETRIES + 1):
         try:
-            return await asyncio.to_thread(fn, *args, **kwargs)
+            return await asyncio.wait_for(
+                asyncio.to_thread(fn, *args, **kwargs),
+                timeout=PER_CALL_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            if attempt < MAX_RETRIES:
+                print(f"  API call timed out after {PER_CALL_TIMEOUT}s. Retrying... (attempt {attempt + 1}/{MAX_RETRIES})")
+                continue
+            raise TimeoutError(f"Image generation timed out after {MAX_RETRIES + 1} attempts ({PER_CALL_TIMEOUT}s each)")
         except Exception as e:
             error_str = str(e)
             is_retryable = ("429" in error_str or "RESOURCE_EXHAUSTED" in error_str
