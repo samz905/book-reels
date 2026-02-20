@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { CartSubscription } from "../../data/mockCartData";
+import { CartSubscription } from "../../context/CartContext";
 
 interface SubscriptionsTabProps {
   subscriptions: CartSubscription[];

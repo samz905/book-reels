@@ -6,6 +6,7 @@ interface OrderSummaryProps {
   subtotal: number;
   total: number;
   onCompletePurchase: () => void;
+  isLoading?: boolean;
 }
 
 export default function OrderSummary({
@@ -14,6 +15,7 @@ export default function OrderSummary({
   subtotal,
   total,
   onCompletePurchase,
+  isLoading = false,
 }: OrderSummaryProps) {
   const itemLabel =
     itemType === "subscriptions"
@@ -49,12 +51,16 @@ export default function OrderSummary({
       <div className="flex justify-end">
         <button
           onClick={onCompletePurchase}
-          className="px-6 py-3 rounded-[14px] text-[#F8FAFC] font-bold text-base"
+          disabled={isLoading}
+          className="px-6 py-3 rounded-[14px] text-[#F8FAFC] font-bold text-base disabled:opacity-50 flex items-center gap-2"
           style={{
             background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",
           }}
         >
-          Complete Purchase
+          {isLoading && (
+            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+          )}
+          {isLoading ? "Processing..." : "Complete Purchase"}
         </button>
       </div>
     </div>

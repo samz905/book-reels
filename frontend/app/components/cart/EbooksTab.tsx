@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
-import { CartEbook } from "../../data/mockCartData";
+import { CartEbook } from "../../context/CartContext";
 
 interface EbooksTabProps {
   ebooks: CartEbook[];

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import EmptyCart from "../components/cart/EmptyCart";
@@ -10,10 +10,6 @@ import OrderSummary from "../components/cart/OrderSummary";
 import PaymentMethodCard from "../components/cart/PaymentMethodCard";
 import PurchaseSuccessModal from "../components/cart/PurchaseSuccessModal";
 import { useCart } from "../context/CartContext";
-import {
-  mockCartSubscriptions,
-  mockCartEbooks,
-} from "../data/mockCartData";
 
 type TabType = "subscriptions" | "ebooks";
 
@@ -24,23 +20,21 @@ export default function CartPage() {
   const {
     subscriptions,
     ebooks,
-    addSubscription,
-    addEbook,
+    loading,
+    checkoutLoading,
     removeSubscription,
     removeEbook,
+    checkout,
     clearCart,
     getSubscriptionsTotal,
     getEbooksTotal,
   } = useCart();
 
-  // Load mock data on mount for testing
-  useEffect(() => {
-    mockCartSubscriptions.forEach((sub) => addSubscription(sub));
-    mockCartEbooks.forEach((ebook) => addEbook(ebook));
-  }, [addSubscription, addEbook]);
-
-  const handleCompletePurchase = () => {
-    setShowSuccessModal(true);
+  const handleCompletePurchase = async () => {
+    const success = await checkout();
+    if (success) {
+      setShowSuccessModal(true);
+    }
   };
 
   const handleCloseSuccessModal = () => {
@@ -87,8 +81,12 @@ export default function CartPage() {
           </button>
         </div>
 
-        {/* Tab Content */}
-        {isCurrentTabEmpty ? (
+        {/* Loading state */}
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="w-8 h-8 border-2 border-[#B8B6FC] border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : isCurrentTabEmpty ? (
           <EmptyCart />
         ) : (
           <>
@@ -109,6 +107,7 @@ export default function CartPage() {
                 subtotal={currentTotal}
                 total={currentTotal}
                 onCompletePurchase={handleCompletePurchase}
+                isLoading={checkoutLoading}
               />
               <PaymentMethodCard />
             </div>
