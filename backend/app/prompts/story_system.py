@@ -84,6 +84,7 @@ ACTION WRITING:
 - Use aggressive periods. NEVER combine actions with commas or "and":
   WRONG: "action": "He steps closer and blocks her path, she doesn't flinch."
   RIGHT: "action": ["He steps closer.", "Blocks her path.", "She doesn't flinch."]
+- NEVER put spoken dialogue in the action array. No "CHARACTER: line" in action. ALL spoken words belong ONLY in the dialogue field. Action is SILENT — only what the camera SEES, never what characters SAY.
 - Include pacing devices between actions: "Beat.", "Silence.", "Electric."
 - Every action must involve a BODY PART and an OBJECT or SURFACE: hands, fingers, jaws, doors, glasses, phones, tables
 - No abstract actions: NOT "tension fills the room" — YES "His jaw locks. His hand closes over hers on the table edge."
