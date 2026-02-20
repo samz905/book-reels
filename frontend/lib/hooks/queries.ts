@@ -118,6 +118,7 @@ export function useGenerationsWithStories() {
            thumbnail_base64, cost_total, created_at, updated_at,
            stories:story_id ( id, title, cover_url )`
         )
+        .neq("status", "published")
         .order("updated_at", { ascending: false })
         .limit(100);
 
