@@ -144,7 +144,7 @@ async def async_upload_image_base64(generation_id: str, path: str, b64: str, mim
 # Startup-only (sync is fine — runs before event loop serves requests)
 # ============================================================
 
-def mark_stale_jobs_failed(cutoff_minutes: int = 10):
+def mark_stale_jobs_failed(cutoff_minutes: int = 5):
     """Mark jobs stuck in 'generating' as failed (e.g. after server restart)."""
     sb = get_supabase()
     if not sb:

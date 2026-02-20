@@ -1103,10 +1103,14 @@ export default function CreateEpisodePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realtimeJobs, isRestoringState]);
 
-  // Stale job watchdog: auto-fail jobs stuck in "generating" for >3 minutes.
+  // Stale job watchdog: auto-fail jobs stuck in "generating".
+  // Image jobs: 3 min (backend has 90s per-call + 3 min job timeout).
+  // Video jobs: 5.5 min (30s buffer above Seedance's 5-min poll timeout + startup overhead).
   // Catches cases where the backend dies without updating gen_jobs (OOM, network drop, etc.).
   useEffect(() => {
-    const STALE_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
+    const IMAGE_STALE_MS = 3 * 60 * 1000; // 3 minutes
+    const VIDEO_STALE_MS = 5.5 * 60 * 1000; // 5.5 minutes
+    const VIDEO_JOB_TYPES = new Set(["film", "film_with_prompts", "shot_regenerate", "clip"]);
     const CHECK_INTERVAL_MS = 30 * 1000; // check every 30s
 
     const interval = setInterval(() => {
@@ -1114,11 +1118,9 @@ export default function CreateEpisodePage() {
       for (const job of realtimeJobs) {
         if (job.status !== "generating") continue;
         if (processedJobsRef.current.has(job.id)) continue;
-        // Video jobs have their own 5-min timeout in Seedance — skip watchdog
-        const videoJobTypes = ["film", "film_with_prompts", "shot_regenerate", "clip"];
-        if (videoJobTypes.includes(job.job_type)) continue;
+        const threshold = VIDEO_JOB_TYPES.has(job.job_type) ? VIDEO_STALE_MS : IMAGE_STALE_MS;
         const jobAge = now - new Date(job.created_at).getTime();
-        if (jobAge > STALE_THRESHOLD_MS) {
+        if (jobAge > threshold) {
           console.warn(`[stale-watchdog] Job ${job.job_type}/${job.target_id} stuck for ${Math.round(jobAge / 1000)}s — marking failed`);
           processedJobsRef.current.add(job.id);
           applyFailedJob({ ...job, status: "failed", error_message: "Timed out — click Regenerate to retry" });
@@ -2272,15 +2274,16 @@ export default function CreateEpisodePage() {
     const approvedVisuals = buildApprovedVisuals();
     if (!approvedVisuals) return;
 
-    const scenes = Object.values(sceneImages);
+    // Only generate scenes that don't already have an image and aren't in progress
+    const scenes = Object.values(sceneImages).filter(s => !s.image && !s.isGenerating);
+    if (scenes.length === 0) return;
 
-    // Mark all scenes as generating
+    // Mark only those scenes as generating
     setSceneImages((prev) => {
       const updated = { ...prev };
-      Object.keys(updated).forEach((key) => {
-        const num = parseInt(key);
-        updated[num] = { ...updated[num], isGenerating: true, error: "" };
-      });
+      for (const scene of scenes) {
+        updated[scene.sceneNumber] = { ...updated[scene.sceneNumber], isGenerating: true, error: "" };
+      }
       return updated;
     });
 
@@ -4053,17 +4056,25 @@ export default function CreateEpisodePage() {
                     </div>
                   )}
 
-                  {/* Generate All button */}
-                  {Object.keys(sceneImages).length > 0 && !Object.values(sceneImages).some(s => s.image) && !Object.values(sceneImages).some(s => s.isGenerating) && (
-                    <div className="text-center mb-6">
-                      <button
-                        onClick={generateAllSceneImages}
-                        className="px-8 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-semibold hover:opacity-90 transition-opacity"
-                      >
-                        Generate All Scene Images
-                      </button>
-                    </div>
-                  )}
+                  {/* Generate All / Generate Remaining button */}
+                  {(() => {
+                    const allScenes = Object.values(sceneImages);
+                    const needGen = allScenes.filter(s => !s.image && !s.isGenerating);
+                    if (allScenes.length === 0 || needGen.length === 0) return null;
+                    const label = needGen.length === allScenes.length
+                      ? "Generate All Scene Images"
+                      : `Generate Remaining (${needGen.length})`;
+                    return (
+                      <div className="text-center mb-6">
+                        <button
+                          onClick={generateAllSceneImages}
+                          className="px-8 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-semibold hover:opacity-90 transition-opacity"
+                        >
+                          {label}
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   {/* Storyboard tip */}
                   {Object.keys(sceneImages).length > 0 && (
@@ -4094,19 +4105,19 @@ export default function CreateEpisodePage() {
                                   alt={`Scene ${scene.sceneNumber}`}
                                   className="w-full h-full object-cover"
                                 />
-                              ) : scene.error ? (
+                              ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center p-3 gap-2">
-                                  <span className="text-red-400 text-[10px] text-center">{scene.error}</span>
+                                  {scene.error ? (
+                                    <span className="text-red-400 text-[10px] text-center">{scene.error}</span>
+                                  ) : (
+                                    <span className="text-white/20 text-xs">No image</span>
+                                  )}
                                   <button
                                     onClick={() => regenerateSceneImage(scene.sceneNumber)}
                                     className="px-3 py-1.5 bg-[#B8B6FC]/20 text-[#B8B6FC] text-[10px] font-medium rounded-lg border border-[#B8B6FC]/30 hover:bg-[#B8B6FC]/30 transition-colors"
                                   >
-                                    Regenerate
+                                    {scene.error ? "Regenerate" : "Generate"}
                                   </button>
-                                </div>
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center">
-                                  <span className="text-white/20 text-xs">No image</span>
                                 </div>
                               )}
                             </div>
