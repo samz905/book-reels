@@ -36,7 +36,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   const { data: storyboards, error } = await supabase
     .from("episode_storyboards")
-    .select("*")
+    .select("id, generation_id, scene_number, title, visual_description, status, image_url, image_mime_type, prompt_used, error_message, created_at, updated_at")
     .eq("generation_id", generationId)
     .order("scene_number", { ascending: true });
 
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     ...(row.visual_description !== undefined && { visual_description: row.visual_description }),
     ...(row.status !== undefined && { status: row.status }),
     ...(row.image_url !== undefined && { image_url: row.image_url }),
-    ...(row.image_base64 !== undefined && { image_base64: row.image_base64 }),
+    image_base64: null, // Never store base64 in DB — use image_url (Storage) only
     ...(row.image_mime_type !== undefined && { image_mime_type: row.image_mime_type }),
     ...(row.prompt_used !== undefined && { prompt_used: row.prompt_used }),
     ...(row.error_message !== undefined && { error_message: row.error_message }),
@@ -85,7 +85,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   const { data: storyboards, error } = await supabase
     .from("episode_storyboards")
     .upsert(rows, { onConflict: "generation_id,scene_number" })
-    .select();
+    .select("id, generation_id, scene_number, title, visual_description, status, image_url, image_mime_type, prompt_used, error_message, created_at, updated_at");
 
   if (error) return errorResponse(error.message, 500);
 

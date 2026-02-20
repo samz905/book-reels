@@ -43,12 +43,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       ),
       ebooks (
         *
-      ),
-      story_characters (
-        *
-      ),
-      story_locations (
-        *
       )
     `)
     .eq("id", id)

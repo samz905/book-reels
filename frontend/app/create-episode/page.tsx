@@ -790,6 +790,28 @@ export default function CreateEpisodePage() {
         const sceneImgs = result.scene_images as Array<{ scene_number: number; image: MoodboardImage; prompt_used?: string }>;
         if (sceneImgs) {
           const successNums = new Set(sceneImgs.map(si => si.scene_number));
+          // Frontend upload fallback: if backend Storage upload failed, images have base64 but no URL.
+          // Upload from frontend so the URL persists for restore.
+          const genId = generationIdRef.current;
+          if (genId) {
+            for (const si of sceneImgs) {
+              if (si.image.image_base64 && !si.image.image_url) {
+                uploadGenerationAsset(genId, `scene_images/scene_${si.scene_number}`, si.image.image_base64, si.image.mime_type)
+                  .then((url) => {
+                    if (url) {
+                      si.image.image_url = url;
+                      setSceneImages((prev) => {
+                        const s = prev[si.scene_number];
+                        if (!s?.image) return prev;
+                        return { ...prev, [si.scene_number]: { ...s, image: { ...s.image!, image_url: url } } };
+                      });
+                      upsertEpisodeStoryboards(genId, [{ scene_number: si.scene_number, image_url: url }]).catch(() => {});
+                    }
+                  })
+                  .catch(() => {});
+              }
+            }
+          }
           setSceneImages((prev) => {
             const updated = { ...prev };
             for (const si of sceneImgs) {
@@ -805,12 +827,10 @@ export default function CreateEpisodePage() {
             return updated;
           });
           // Persist completed images to episode_storyboards DB table
-          const genId = generationIdRef.current;
           if (genId) {
             upsertEpisodeStoryboards(genId, sceneImgs.map((si) => ({
               scene_number: si.scene_number, status: "completed",
               image_url: si.image.image_url || null,
-              image_base64: si.image.image_base64 || null,
               image_mime_type: si.image.mime_type,
               prompt_used: si.prompt_used || null,
             }))).catch((e) => console.warn("DB storyboard image save failed:", e));
@@ -831,14 +851,29 @@ export default function CreateEpisodePage() {
         const sceneNum = parseInt(job.target_id);
         const img = result.image as MoodboardImage | undefined;
         if (!isNaN(sceneNum) && img) {
+          // Frontend upload fallback for single scene image
+          const genId = generationIdRef.current;
+          if (genId && img.image_base64 && !img.image_url) {
+            uploadGenerationAsset(genId, `scene_images/scene_${sceneNum}`, img.image_base64, img.mime_type)
+              .then((url) => {
+                if (url) {
+                  img.image_url = url;
+                  setSceneImages((prev) => {
+                    const s = prev[sceneNum];
+                    if (!s?.image) return prev;
+                    return { ...prev, [sceneNum]: { ...s, image: { ...s.image!, image_url: url } } };
+                  });
+                  upsertEpisodeStoryboards(genId, [{ scene_number: sceneNum, image_url: url }]).catch(() => {});
+                }
+              })
+              .catch(() => {});
+          }
           setSceneImages((prev) => ({ ...prev, [sceneNum]: { ...prev[sceneNum], image: img, isGenerating: false, feedback: "" } }));
           // Persist refined image to episode_storyboards DB table
-          const genId = generationIdRef.current;
           if (genId) {
             upsertEpisodeStoryboards(genId, [{
               scene_number: sceneNum, status: "completed",
               image_url: img.image_url || null,
-              image_base64: img.image_base64 || null,
               image_mime_type: img.mime_type,
               prompt_used: (result.prompt_used as string) || null,
             }]).catch((e) => console.warn("DB storyboard refine save failed:", e));
@@ -1364,13 +1399,14 @@ export default function CreateEpisodePage() {
       }])
     ),
     // Scene images are DB-authoritative (episode_storyboards table).
-    // JSONB keeps scene metadata (needed by backward compat restore) but no image data.
+    // JSONB keeps scene metadata + image_url (lightweight backup for restore resilience).
     sceneImages: Object.fromEntries(
       Object.entries(sceneImages).map(([k, v]) => [k, {
         sceneNumber: v.sceneNumber,
         title: v.title,
         visualDescription: v.visualDescription,
         feedback: v.feedback,
+        image: v.image ? { type: v.image.type, image_url: v.image.image_url, mime_type: v.image.mime_type, prompt_used: v.image.prompt_used } : null,
       }])
     ),
     promptPreview: {
@@ -1672,16 +1708,19 @@ export default function CreateEpisodePage() {
 
       for (const dbSb of dbStoryboards) {
         const js = jsonbScenes[dbSb.sceneNumber] || {};
-        const hasImg = dbSb.imageUrl || dbSb.imageBase64;
+        const jsImg = (js as SceneImageState).image;
+        // DB image_url is primary; fall back to JSONB image_url if DB has none
+        const imgUrl = dbSb.imageUrl || (jsImg && jsImg.image_url) || undefined;
+        const hasImg = imgUrl || dbSb.imageBase64;
         cleanedScenes[dbSb.sceneNumber] = {
           sceneNumber: dbSb.sceneNumber,
           title: dbSb.title,
           visualDescription: dbSb.visualDescription,
           image: hasImg ? {
             type: "key_moment" as const,
-            image_url: dbSb.imageUrl || undefined,
+            image_url: imgUrl,
             image_base64: dbSb.imageBase64 || undefined,
-            mime_type: dbSb.imageMimeType || "image/png",
+            mime_type: dbSb.imageMimeType || (jsImg?.mime_type) || "image/png",
             prompt_used: dbSb.promptUsed || "",
           } : null,
           isGenerating: dbSb.status === "generating",
@@ -2142,7 +2181,6 @@ export default function CreateEpisodePage() {
         const newDbChar = await createStoryCharacter(sid, {
           name: char.name, age: char.age, gender: char.gender,
           description: char.appearance || "", role: char.role, visual_style: style,
-          image_base64: img?.image_base64 || null,
           image_url: img?.image_url || null,
           image_mime_type: img?.mime_type || "image/png",
         });
@@ -2163,7 +2201,6 @@ export default function CreateEpisodePage() {
         const newDbLoc = await createStoryLocation(sid, {
           name: loc.name, description: loc.description || "",
           atmosphere: loc.atmosphere || "", visual_style: style,
-          image_base64: img?.image_base64 || null,
           image_url: img?.image_url || null,
           image_mime_type: img?.mime_type || "image/png",
         });
@@ -2418,8 +2455,8 @@ export default function CreateEpisodePage() {
         for (const [charId, state] of Object.entries(updated)) {
           if (!state.image && !state.isGenerating) {
             const libChar = storyLibraryChars.find(c => c.id === charId);
-            if (libChar?.imageBase64) {
-              updated[charId] = { ...state, image: { type: "character", image_base64: libChar.imageBase64, mime_type: libChar.imageMimeType, prompt_used: "" }, approved: true };
+            if (libChar?.imageUrl || libChar?.imageBase64) {
+              updated[charId] = { ...state, image: { type: "character", image_url: libChar.imageUrl || undefined, image_base64: libChar.imageBase64 || undefined, mime_type: libChar.imageMimeType, prompt_used: "" }, approved: true };
               changed = true;
             }
           }
@@ -2434,8 +2471,8 @@ export default function CreateEpisodePage() {
         for (const [locId, state] of Object.entries(updated)) {
           if (!state.image && !state.isGenerating) {
             const libLoc = storyLibraryLocs.find(l => l.id === locId);
-            if (libLoc?.imageBase64) {
-              updated[locId] = { ...state, image: { type: "location", image_base64: libLoc.imageBase64, mime_type: libLoc.imageMimeType, prompt_used: "" }, approved: true };
+            if (libLoc?.imageUrl || libLoc?.imageBase64) {
+              updated[locId] = { ...state, image: { type: "location", image_url: libLoc.imageUrl || undefined, image_base64: libLoc.imageBase64 || undefined, mime_type: libLoc.imageMimeType, prompt_used: "" }, approved: true };
               changed = true;
             }
           }
@@ -2527,11 +2564,17 @@ export default function CreateEpisodePage() {
     const approvedVisuals = buildApprovedVisuals();
     if (!approvedVisuals) return;
 
-    // Use spike scene image (scene 4) as key_moment_image for backward compat with film pipeline
-    const spikeScene = sceneImages[4] || sceneImages[Object.keys(sceneImages)[0] as unknown as number];
-    const keyMomentImage = spikeScene?.image?.image_base64
-      ? { image_base64: spikeScene.image.image_base64, mime_type: spikeScene.image.mime_type }
-      : undefined;
+    // Build storyboard image map: beat_number → {image_url, mime_type}
+    const storyboardImages: Record<number, { image_url: string; mime_type: string }> = {};
+    for (const key in sceneImages) {
+      const si = sceneImages[key as unknown as number];
+      if (si?.image?.image_url) {
+        storyboardImages[si.sceneNumber] = {
+          image_url: si.image.image_url,
+          mime_type: si.image.mime_type,
+        };
+      }
+    }
 
     setFilm({
       filmId: null,
@@ -2553,7 +2596,7 @@ export default function CreateEpisodePage() {
         {
           story,
           approved_visuals: approvedVisuals,
-          key_moment_image: keyMomentImage,
+          storyboard_images: storyboardImages,
           generation_id: generationIdRef.current,
         },
         { generationId: generationIdRef.current! }
@@ -2580,16 +2623,12 @@ export default function CreateEpisodePage() {
 
     try {
       clearProcessedJob("prompt_preview");
-      const spikeScene = sceneImages[4] || sceneImages[Object.keys(sceneImages)[0] as unknown as number];
       await submitJob(
         "prompt_preview",
         "/film/preview-prompts",
         {
           story,
           approved_visuals: approvedVisuals,
-          key_moment_image: spikeScene?.image?.image_base64
-            ? { image_base64: spikeScene.image.image_base64, mime_type: spikeScene.image.mime_type }
-            : { image_base64: "", mime_type: "image/png" },
           beat_numbers: [],
         },
         { generationId: generationIdRef.current! }
@@ -2607,29 +2646,27 @@ export default function CreateEpisodePage() {
     const approvedVisuals = buildApprovedVisuals();
     if (!approvedVisuals) return;
 
-    // Use spike scene image as overall key_moment_image for backward compat
-    const spikeScene = sceneImages[4] || sceneImages[Object.keys(sceneImages)[0] as unknown as number];
-    const keyMomentImage = spikeScene?.image?.image_base64
-      ? { image_base64: spikeScene.image.image_base64, mime_type: spikeScene.image.mime_type }
-      : undefined;
-
-    // Build per-shot scene image references
-    const sceneImageByBeat: Record<number, { image_base64: string; mime_type: string }> = {};
+    // Build storyboard image map for Seedance first frames
+    const storyboardImages: Record<number, { image_url: string; mime_type: string }> = {};
     for (const key in sceneImages) {
       const si = sceneImages[key as unknown as number];
-      if (si?.image?.image_base64) {
-        sceneImageByBeat[si.sceneNumber] = {
-          image_base64: si.image.image_base64,
+      if (si?.image?.image_url) {
+        storyboardImages[si.sceneNumber] = {
+          image_url: si.image.image_url,
           mime_type: si.image.mime_type,
         };
       }
     }
 
-    const editedShots = promptPreview.shots.map((shot) => ({
-      beat_number: shot.beat_number,
-      veo_prompt: promptPreview.editedPrompts[shot.beat_number] || shot.veo_prompt,
-      reference_image: sceneImageByBeat[shot.beat_number] || null,
-    }));
+    // Build per-shot reference images (image_url for Seedance)
+    const editedShots = promptPreview.shots.map((shot) => {
+      const sb = storyboardImages[shot.beat_number];
+      return {
+        beat_number: shot.beat_number,
+        veo_prompt: promptPreview.editedPrompts[shot.beat_number] || shot.veo_prompt,
+        reference_image: sb ? { image_url: sb.image_url, mime_type: sb.mime_type } : null,
+      };
+    });
 
     setFilm({
       filmId: null,
@@ -2651,7 +2688,7 @@ export default function CreateEpisodePage() {
         {
           story,
           approved_visuals: approvedVisuals,
-          key_moment_image: keyMomentImage,
+          storyboard_images: storyboardImages,
           edited_shots: editedShots,
           generation_id: generationIdRef.current,
         },
@@ -2813,6 +2850,9 @@ export default function CreateEpisodePage() {
       upsertEpisodeClips(genId, [{ scene_number: sceneNumber, status: "generating" }]).catch(() => {});
     }
 
+    // Resolve storyboard image URL for Seedance first frame
+    const storyboardUrl = sceneImages[sceneNumber]?.image?.image_url || null;
+
     try {
       clearProcessedJob("clip", String(sceneNumber));
       await submitJob(
@@ -2823,6 +2863,7 @@ export default function CreateEpisodePage() {
           approved_visuals: approvedVisuals,
           scene_number: sceneNumber,
           scene,
+          storyboard_image_url: storyboardUrl,
           feedback: feedbackText || undefined,
           generation_id: genId,
         },
@@ -3281,8 +3322,8 @@ export default function CreateEpisodePage() {
                               <div className="flex items-start gap-3">
                                 {(() => {
                                   const src = storyLibraryChars.find(c => c.id === char.id) || storyLibraryChars.find(c => c.name.toLowerCase() === char.name.toLowerCase()) || selectedChars.find(c => c.id === char.id) || selectedChars.find(c => c.name.toLowerCase() === char.name.toLowerCase());
-                                  return src?.imageBase64 ? (
-                                    <img src={`data:${src.imageMimeType};base64,${src.imageBase64}`} alt={char.name} className="w-10 h-14 rounded-lg object-cover flex-shrink-0" />
+                                  return (src?.imageUrl || src?.imageBase64) ? (
+                                    <img src={src.imageUrl || `data:${src.imageMimeType};base64,${src.imageBase64}`} alt={char.name} className="w-10 h-14 rounded-lg object-cover flex-shrink-0" />
                                   ) : null;
                                 })()}
                                 <div className="flex-1 min-w-0">
@@ -4239,7 +4280,12 @@ export default function CreateEpisodePage() {
                       >
                         <div className="aspect-[9/16] bg-panel-border">
                           {sbImg ? (
-                            <img src={getImageSrc(sbImg)} alt={`Scene ${scene.scene_number}`} className="w-full h-full object-cover" />
+                            <img
+                              src={getImageSrc(sbImg)}
+                              alt={`Scene ${scene.scene_number}`}
+                              className="w-full h-full object-cover"
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                            />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-white/20 text-xs font-bold">{scene.scene_number}</div>
                           )}
@@ -4468,6 +4514,7 @@ export default function CreateEpisodePage() {
                               src={getImageSrc(sbImg)}
                               alt={`Scene ${scene.scene_number}`}
                               className="w-full h-full object-cover"
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                             />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-white/20 text-lg font-bold">

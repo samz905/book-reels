@@ -13,9 +13,9 @@ export default function CharacterCard({ character, onEdit, onDelete }: Character
     <div className="group relative w-[150px] flex-shrink-0">
       {/* Image */}
       <div className="w-[150px] h-[200px] rounded-xl overflow-hidden bg-[#262626] border border-[#262626] relative">
-        {character.imageBase64 ? (
+        {(character.imageUrl || character.imageBase64) ? (
           <img
-            src={`data:${character.imageMimeType};base64,${character.imageBase64}`}
+            src={character.imageUrl || `data:${character.imageMimeType};base64,${character.imageBase64}`}
             alt={character.name}
             className="w-full h-full object-cover"
           />

@@ -614,15 +614,21 @@ async def handle_film_generate(payload: dict, job_id: str = "") -> dict:
     req = film_mod.GenerateFilmRequest(**payload)
     film_id = uuid.uuid4().hex[:12]
 
+    # Build storyboard image map from request
+    sb_images: dict = {}
+    if req.storyboard_images:
+        for bn, ref in req.storyboard_images.items():
+            sb_images[int(bn)] = {"image_url": ref.image_url, "mime_type": ref.mime_type}
+
     job = film_mod.FilmJob(
         film_id=film_id,
         status="generating",
         created_at=datetime.now(),
         story=req.story,
         approved_visuals=req.approved_visuals,
-        key_moment_image=req.key_moment_image,
         total_shots=len(req.story.beats),
         generation_id=req.generation_id,
+        storyboard_images=sb_images,
     )
     # Attach gen_job_id so persist_film_job() pushes incremental updates
     job.gen_job_id = job_id  # type: ignore[attr-defined]
@@ -643,29 +649,33 @@ async def handle_film_with_prompts(payload: dict, job_id: str = "") -> dict:
     prompt_map = {s.beat_number: s.veo_prompt for s in req.edited_shots}
     beats_to_process = [b for b in req.story.beats if b.number in prompt_map]
 
+    # Build storyboard image map (prefer per-shot reference_image, then storyboard_images)
+    sb_images: dict = {}
+    if req.storyboard_images:
+        for bn, ref in req.storyboard_images.items():
+            sb_images[int(bn)] = {"image_url": ref.image_url, "mime_type": ref.mime_type}
+    for shot in req.edited_shots:
+        if shot.reference_image and shot.reference_image.image_url:
+            sb_images[shot.beat_number] = {
+                "image_url": shot.reference_image.image_url,
+                "mime_type": shot.reference_image.mime_type,
+            }
+
     job = film_mod.FilmJob(
         film_id=film_id,
         status="generating",
         created_at=datetime.now(),
         story=req.story,
         approved_visuals=req.approved_visuals,
-        key_moment_image=req.key_moment_image,
         total_shots=len(beats_to_process),
         generation_id=req.generation_id,
+        storyboard_images=sb_images,
     )
     job.gen_job_id = job_id  # type: ignore[attr-defined]
 
     film_mod.film_jobs[film_id] = job
 
-    shot_refs = None
-    ref_map = {s.beat_number: s.reference_image for s in req.edited_shots if s.reference_image}
-    if ref_map:
-        shot_refs = {
-            bn: {"image_base64": ref.image_base64, "mime_type": ref.mime_type}
-            for bn, ref in ref_map.items()
-        }
-
-    await film_mod.run_film_generation(film_id, prompt_map, shot_refs)
+    await film_mod.run_film_generation(film_id, prompt_map)
     return _film_result(job)
 
 

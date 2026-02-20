@@ -41,6 +41,7 @@ import {
   updateStoryLocation,
   deleteStoryLocation,
 } from "@/lib/api/creator";
+import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 
 export default function StoryManagementPage() {
   const params = useParams();
@@ -157,10 +158,16 @@ export default function StoryManagementPage() {
     role: string;
     visualStyle: string | null;
     imageBase64: string | null;
+    imageUrl?: string | null;
     imageMimeType: string;
   }) => {
     setIsCharSaving(true);
     try {
+      // Upload base64 to Storage if present, get URL
+      let imageUrl = data.imageUrl || null;
+      if (data.imageBase64 && !imageUrl) {
+        imageUrl = await uploadGenerationAsset(storyId, `characters/${Date.now()}`, data.imageBase64, data.imageMimeType);
+      }
       const payload = {
         name: data.name,
         age: data.age,
@@ -168,7 +175,7 @@ export default function StoryManagementPage() {
         description: data.description,
         role: data.role,
         visual_style: data.visualStyle,
-        image_base64: data.imageBase64,
+        image_url: imageUrl,
         image_mime_type: data.imageMimeType,
       };
 
@@ -209,16 +216,22 @@ export default function StoryManagementPage() {
     atmosphere: string;
     visualStyle: string | null;
     imageBase64: string | null;
+    imageUrl?: string | null;
     imageMimeType: string;
   }) => {
     setIsLocSaving(true);
     try {
+      // Upload base64 to Storage if present, get URL
+      let imageUrl = data.imageUrl || null;
+      if (data.imageBase64 && !imageUrl) {
+        imageUrl = await uploadGenerationAsset(storyId, `locations/${Date.now()}`, data.imageBase64, data.imageMimeType);
+      }
       const payload = {
         name: data.name,
         description: data.description,
         atmosphere: data.atmosphere,
         visual_style: data.visualStyle,
-        image_base64: data.imageBase64,
+        image_url: imageUrl,
         image_mime_type: data.imageMimeType,
       };
 

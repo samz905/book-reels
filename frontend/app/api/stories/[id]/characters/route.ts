@@ -40,7 +40,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   const { data: characters, error } = await supabase
     .from("story_characters")
-    .select("*")
+    .select("id, story_id, name, age, gender, description, role, visual_style, image_url, image_mime_type, created_at, updated_at")
     .eq("story_id", storyId)
     .order("created_at", { ascending: true });
 
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     description: body.description || "",
     role: body.role || "supporting",
     visual_style: body.visual_style || null,
-    image_base64: body.image_base64 || null,
+    image_base64: null, // Never store base64 in DB — use image_url (Storage) only
     image_url: body.image_url || null,
     image_mime_type: body.image_mime_type || "image/png",
   };
@@ -107,7 +107,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   const { data: character, error } = await supabase
     .from("story_characters")
     .insert(characterData)
-    .select()
+    .select("id, story_id, name, age, gender, description, role, visual_style, image_url, image_mime_type, created_at, updated_at")
     .single();
 
   if (error) {

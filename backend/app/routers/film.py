@@ -20,31 +20,30 @@ from ..core import (
     generate_image_with_references,
     assemble_videos,
     COST_IMAGE_GENERATION,
-    COST_VIDEO_VEO_FAST_PER_SECOND,
+    COST_VIDEO_SEEDANCE_FAST_PER_SECOND,
 )
 from ..prompts import STORY_MODEL, DIRECTOR_SCRIPTS_SCHEMA
 
-# Video duration and cost
+# Video duration and cost (Seedance 1.5 Pro Fast via Atlas Cloud)
 VIDEO_DURATION_SECONDS = 8
-COST_PER_VIDEO = VIDEO_DURATION_SECONDS * COST_VIDEO_VEO_FAST_PER_SECOND  # $1.20 per 8s clip
+COST_PER_VIDEO = VIDEO_DURATION_SECONDS * COST_VIDEO_SEEDANCE_FAST_PER_SECOND  # $0.176 per 8s clip
 
 # Testing mode: limit shots for faster iteration
 MAX_SHOTS_FOR_TESTING = 3  # Set to None for full film generation
-SCENE_REFS_PER_SHOT = 3    # Nano Banana generates 3 scene-specific refs per shot
+SCENE_REFS_PER_SHOT = 3    # Legacy: kept for generate_scene_references / generate_single_clip
 
-# Veo rate limiting — defaults match Paid Tier 1 (2 RPM).
-# Override via env vars when upgrading Google API tier.
-VEO_MAX_CONCURRENT = int(os.getenv("VEO_MAX_CONCURRENT", "2"))
-VEO_DELAY_BETWEEN_CALLS = int(os.getenv("VEO_DELAY_BETWEEN_CALLS", "32"))
-_veo_semaphore: Optional[asyncio.Semaphore] = None
+# Seedance rate limiting — Atlas Cloud PAYG limits unknown, start conservative.
+# Override via env vars based on observed 429 behavior.
+SEEDANCE_MAX_CONCURRENT = int(os.getenv("SEEDANCE_MAX_CONCURRENT", "4"))
+_seedance_semaphore: Optional[asyncio.Semaphore] = None
 
-def _get_veo_semaphore() -> asyncio.Semaphore:
+def _get_seedance_semaphore() -> asyncio.Semaphore:
     """Lazy-init semaphore (must be created inside a running event loop)."""
-    global _veo_semaphore
-    if _veo_semaphore is None:
-        _veo_semaphore = asyncio.Semaphore(VEO_MAX_CONCURRENT)
-    return _veo_semaphore
-from ..config import TEMP_DIR, GOOGLE_GENAI_API_KEY, AI_ASSETS_BUCKET
+    global _seedance_semaphore
+    if _seedance_semaphore is None:
+        _seedance_semaphore = asyncio.Semaphore(SEEDANCE_MAX_CONCURRENT)
+    return _seedance_semaphore
+from ..config import TEMP_DIR, AI_ASSETS_BUCKET
 from ..supabase_client import get_supabase
 from .story import Story, Beat, Scene, SceneBlock
 from .moodboard import ApprovedVisuals, ReferenceImage
@@ -97,7 +96,8 @@ class KeyMomentRef(BaseModel):
 class GenerateFilmRequest(BaseModel):
     story: Story
     approved_visuals: ApprovedVisuals
-    key_moment_image: KeyMomentRef  # Single SPIKE key moment for video reference
+    key_moment_image: Optional[KeyMomentRef] = None  # Legacy, kept for backward compat
+    storyboard_images: Optional[Dict[int, ReferenceImage]] = None  # beat_number → storyboard image
     beat_numbers: Optional[List[int]] = None  # If provided, only preview these beats
     generation_id: Optional[str] = None  # Link to generation session
 
@@ -166,10 +166,13 @@ class FilmJob:
     # Input data
     story: Story
     approved_visuals: ApprovedVisuals
-    key_moment_image: KeyMomentRef  # Single SPIKE key moment for video reference
+    total_shots: int
+
+    # Optional input
+    key_moment_image: Optional[KeyMomentRef] = None  # Legacy, kept for compat
+    storyboard_images: Optional[Dict[int, dict]] = None  # beat_number → {image_url, mime_type}
 
     # Progress tracking
-    total_shots: int
     current_shot: int = 0
     phase: Literal["keyframe", "filming", "assembling"] = "keyframe"
 
@@ -252,6 +255,60 @@ def default_director_script(beat: Beat) -> DirectorScript:
         camera_movement=cine["movement"],
         sound_design="Ambient sounds matching the scene.",
         style_note=cine["energy"],
+    )
+
+
+def format_beat_as_script(beat: Beat) -> str:
+    """Format beat content blocks into raw script text for Seedance.
+
+    Seedance accepts natural script-style prompts directly — no prompt
+    engineering layer needed. Output looks like:
+
+        Sparks fly from two crossed katanas.
+
+        Sweat drips from Zoro's chin. Hits the floorboards.
+
+        KENSHIN: "You hesitate."
+        ZORO: "You taught me better."
+    """
+    parts: list[str] = []
+
+    if beat.blocks:
+        for block in beat.blocks:
+            if block.type in ("description", "action"):
+                parts.append(block.text)
+            elif block.type == "dialogue" and block.character:
+                parts.append(f'{block.character.upper()}: "{block.text}"')
+    else:
+        # Legacy fields fallback
+        if beat.description:
+            parts.append(beat.description)
+        if beat.action:
+            parts.append(beat.action)
+        if beat.dialogue:
+            for d in beat.dialogue:
+                parts.append(f'{d.character.upper()}: "{d.line}"')
+
+    return "\n\n".join(parts)
+
+
+def get_first_frame_url(
+    beat: Beat,
+    storyboard_image: Optional[dict],
+) -> str:
+    """Resolve the first-frame image URL for Seedance.
+
+    Storyboard images are persisted in Supabase Storage with public URLs,
+    so we pass the URL directly to Atlas Cloud — no base64 needed.
+    """
+    if storyboard_image:
+        url = storyboard_image.get("image_url")
+        if url:
+            return url
+
+    raise ValueError(
+        f"No storyboard image URL for beat {beat.number}. "
+        "Generate storyboard images before starting film generation."
     )
 
 
@@ -626,14 +683,13 @@ def build_veo_prompt(beat: Beat, story: Story, director_script: Optional[Directo
 
 
 async def download_video(video_url: str, film_id: str, shot_number: int, generation_id: str | None = None) -> tuple[str, str]:
-    """Download video from Google's authenticated URL, save locally, and upload to Supabase Storage.
+    """Download video from Atlas Cloud URL, save locally, and upload to Supabase Storage.
 
     Returns (local_path, storage_url).
     """
     async with httpx.AsyncClient() as client:
         response = await client.get(
             video_url,
-            headers={"x-goog-api-key": GOOGLE_GENAI_API_KEY},
             follow_redirects=True,
             timeout=120.0,
         )
@@ -667,41 +723,36 @@ async def download_video(video_url: str, film_id: str, shot_number: int, generat
 async def generate_shot_with_retry(
     beat: Beat,
     prompt: str,
-    reference_images: List[dict],  # 3 scene-specific refs (required)
+    image_url: str,
     max_retries: int = 2,
 ) -> dict:
-    """Generate a video shot with retry logic.
+    """Generate a video shot via Seedance with retry logic.
 
-    Uses a semaphore to respect Veo's 2 RPM rate limit.
-    Scene ref generation happens outside this function (no throttle needed).
+    Uses a semaphore to control concurrency (PAYG rate limits unknown).
+    Exponential backoff on 429s.
     """
-    sem = _get_veo_semaphore()
+    sem = _get_seedance_semaphore()
     last_error = None
 
     for attempt in range(max_retries + 1):
         try:
             async with sem:
-                print(f"  [Veo] Acquired slot — attempt {attempt + 1}/{max_retries + 1} for shot {beat.number}")
+                print(f"  [Seedance] Acquired slot — attempt {attempt + 1}/{max_retries + 1} for shot {beat.number}")
                 result = await generate_video(
                     prompt=prompt,
-                    reference_images=reference_images,
-                    duration_seconds=8,
-                    aspect_ratio="9:16",
+                    image_url=image_url,
                 )
-                # Delay after call to space out RPM usage
-                print(f"  [Veo] Shot {beat.number} done, waiting {VEO_DELAY_BETWEEN_CALLS}s for rate limit...")
-                await asyncio.sleep(VEO_DELAY_BETWEEN_CALLS)
             return result
         except Exception as e:
             last_error = e
             print(f"  Shot {beat.number} attempt {attempt + 1} failed: {e}")
             if attempt < max_retries:
-                # On rate limit errors, wait longer before retry
-                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                    print(f"  Rate limited — waiting 60s before retry...")
-                    await asyncio.sleep(60)
+                if "429" in str(e) or "rate" in str(e).lower():
+                    wait = 5 * (2 ** attempt)  # 5s, 10s
+                    print(f"  Rate limited — waiting {wait}s before retry...")
+                    await asyncio.sleep(wait)
                 else:
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(3)
 
     raise Exception(f"Shot {beat.number} failed after {max_retries + 1} attempts: {last_error}")
 
@@ -714,52 +765,38 @@ async def process_single_shot(
     i: int,
     beat: Beat,
     job: "FilmJob",
-    director_script: Optional[DirectorScript] = None,
+    storyboard_image: Optional[dict] = None,
     prompt_override: Optional[str] = None,
-    reference_image: Optional[dict] = None,
 ) -> None:
-    """Process a single shot: generate scene refs → generate video → download.
+    """Process a single shot: storyboard image + script → Seedance → download.
 
-    If reference_image is provided (key moment), skip scene ref generation and use it directly.
+    Uses the existing storyboard image as first frame and raw beat script as prompt.
     Updates job.completed_shots and cost fields in-place.
-    Safe in asyncio (single-threaded, no lock needed).
     """
     desc_preview = (beat.description or "")[:100] if beat.description else "(blocks)"
     print(f"\n--- Shot {i + 1}/{job.total_shots}: Beat {beat.number} ---")
     print(f"Description: {desc_preview}...")
     print(f"Characters: {beat.characters_in_scene}")
     print(f"Location: {beat.location_id}")
-    if director_script:
-        print(f"Director: {director_script.shot_type}, {director_script.camera_movement}")
 
-    if reference_image:
-        # Use provided key moment image as single reference (no scene ref generation)
-        scene_refs = [reference_image]
-        print(f"[Shot {beat.number}] Using key moment image as reference (no scene ref generation)")
-    else:
-        # STEP 1: Generate 3 scene-specific reference images via Nano Banana
-        print(f"[Shot {beat.number}] Generating 3 scene-specific reference images...")
-        scene_refs = await generate_scene_references(
-            beat=beat,
-            story=job.story,
-            approved_visuals=job.approved_visuals,
-            director_script=director_script,
-        )
-        job.cost_scene_refs += COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT
-        print(f"[Shot {beat.number}] Scene refs generated (cost: ${COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT:.2f})")
+    # STEP 1: Resolve first-frame image URL from storyboard
+    image_url = get_first_frame_url(beat, storyboard_image)
+    print(f"[Shot {beat.number}] First frame: {image_url[:80]}...")
 
-    # STEP 2: Generate video shot (use override prompt if provided, else build from scratch)
-    shot_prompt = prompt_override if prompt_override else build_veo_prompt(beat, job.story, director_script)
-    print(f"[Shot {beat.number}] Generating video with {len(scene_refs)} ref(s)...")
+    # STEP 2: Format prompt (raw script or user override)
+    shot_prompt = prompt_override or format_beat_as_script(beat)
+    print(f"[Shot {beat.number}] Generating video via Seedance...")
+
+    # STEP 3: Generate video via Seedance
     video_result = await generate_shot_with_retry(
         beat=beat,
         prompt=shot_prompt,
-        reference_images=scene_refs,
+        image_url=image_url,
     )
     job.cost_videos += COST_PER_VIDEO
     print(f"[Shot {beat.number}] Video generated (cost: ${COST_PER_VIDEO:.2f}, total so far: ${job.cost_total:.2f})")
 
-    # STEP 3: Download video + upload to Supabase Storage
+    # STEP 4: Download video + upload to Supabase Storage
     print(f"[Shot {beat.number}] Downloading video...")
     video_path, storage_url = await download_video(
         video_result["video_url"],
@@ -784,14 +821,12 @@ async def process_single_shot(
 async def run_film_generation(
     film_id: str,
     prompt_overrides: Optional[Dict[int, str]] = None,
-    shot_references: Optional[Dict[int, dict]] = None,
 ):
-    """Background task to generate all shots in parallel.
+    """Background task to generate all shots in parallel via Seedance.
 
     Args:
         film_id: The film job ID
-        prompt_overrides: Optional dict of beat_number -> veo_prompt for user-edited prompts
-        shot_references: Optional dict of beat_number -> {image_base64, mime_type} key moment refs
+        prompt_overrides: Optional dict of beat_number -> prompt for user-edited prompts
     """
     job = film_jobs.get(film_id)
     if not job:
@@ -799,13 +834,12 @@ async def run_film_generation(
 
     try:
         print(f"\n{'='*60}")
-        print(f"Starting film generation (parallel): {job.film_id}")
+        print(f"Starting film generation (Seedance, {SEEDANCE_MAX_CONCURRENT} concurrent): {job.film_id}")
         print(f"Total shots: {job.total_shots}")
         print(f"{'='*60}\n")
 
         # Determine which beats to process
         if prompt_overrides:
-            # When user provided edited prompts, only process those beats
             beats_to_process = [b for b in job.story.beats if b.number in prompt_overrides]
             print(f"EDITED PROMPTS: Processing {len(beats_to_process)} beats with user-edited prompts")
             job.total_shots = len(beats_to_process)
@@ -816,21 +850,17 @@ async def run_film_generation(
         else:
             beats_to_process = job.story.beats
 
-        # Generate director scripts (one Gemini call for all scenes)
-        print("Generating director scripts...")
-        director_scripts = await generate_director_scripts(job.story, beats_to_process)
+        # Storyboard images from request payload (beat_number → {image_url, mime_type})
+        sb_images = job.storyboard_images or {}
 
-        # Build a lookup by scene_number
-        ds_map: Dict[int, DirectorScript] = {ds.scene_number: ds for ds in director_scripts}
-
-        # Launch all shots in parallel
+        # Launch all shots in parallel (throttled by seedance semaphore)
         job.phase = "filming"
         await persist_film_job(job)
         tasks = [
             process_single_shot(
-                i, beat, job, ds_map.get(beat.number),
+                i, beat, job,
+                storyboard_image=sb_images.get(beat.number),
                 prompt_override=prompt_overrides.get(beat.number) if prompt_overrides else None,
-                reference_image=shot_references.get(beat.number) if shot_references else None,
             )
             for i, beat in enumerate(beats_to_process)
         ]
@@ -930,7 +960,8 @@ class EditedShot(BaseModel):
 class GenerateWithPromptsRequest(BaseModel):
     story: Story
     approved_visuals: ApprovedVisuals
-    key_moment_image: KeyMomentRef
+    key_moment_image: Optional[KeyMomentRef] = None  # Legacy compat
+    storyboard_images: Optional[Dict[int, ReferenceImage]] = None  # beat_number → storyboard image
     edited_shots: List[EditedShot]
     generation_id: Optional[str] = None  # Link to generation session
 
@@ -938,38 +969,30 @@ class GenerateWithPromptsRequest(BaseModel):
 @router.post("/preview-prompts", response_model=PreviewPromptsResponse)
 async def preview_prompts(request: GenerateFilmRequest):
     """
-    Generate and return Veo prompts for first N beats WITHOUT generating video.
-    Calls generate_director_scripts (cheap Gemini Flash call) then build_veo_prompt (pure formatting).
-    User can review, edit, and copy these prompts before committing to generation.
+    Preview the script prompts that will be sent to Seedance for each beat.
+    Pure formatting — no AI call needed. User can review and edit before committing.
     """
     story = request.story
 
-    # If beat_numbers provided (from key moments), use those; else first N
+    # If beat_numbers provided, use those; else first N
     if request.beat_numbers:
         beat_set = set(request.beat_numbers)
         beats_to_process = [b for b in story.beats if b.number in beat_set]
-        # Sort by original order
         beats_to_process.sort(key=lambda b: b.number)
     else:
         beats_to_process = story.beats[:MAX_SHOTS_FOR_TESTING] if MAX_SHOTS_FOR_TESTING else story.beats
 
-    # Generate director scripts (one Gemini Flash call, ~$0.001)
-    director_scripts = await generate_director_scripts(story, beats_to_process)
-    ds_map = {ds.scene_number: ds for ds in director_scripts}
-
     shots = []
     for beat in beats_to_process:
-        ds = ds_map.get(beat.number)
-        veo_prompt = build_veo_prompt(beat, story, ds)
+        script_prompt = format_beat_as_script(beat)
         shots.append(ShotPromptPreview(
             beat_number=beat.number,
             scene_heading=beat.scene_heading,
-            veo_prompt=veo_prompt,
+            veo_prompt=script_prompt,
             characters_in_scene=beat.characters_in_scene,
             location_id=beat.location_id,
         ))
 
-    # Cost estimate: video generation only (key moments already serve as refs)
     num_shots = len(shots)
     estimated_cost = num_shots * COST_PER_VIDEO
 
@@ -982,14 +1005,24 @@ async def preview_prompts(request: GenerateFilmRequest):
 @router.post("/generate-with-prompts", response_model=GenerateFilmResponse)
 async def generate_film_with_prompts(request: GenerateWithPromptsRequest, background_tasks: BackgroundTasks):
     """
-    Start film generation using user-edited Veo prompts.
-    Same as /generate but uses provided prompts instead of build_veo_prompt().
+    Start film generation using user-edited prompts + storyboard images via Seedance.
     """
     film_id = uuid.uuid4().hex[:12]
 
-    # Filter beats to only the ones we have prompts for
     prompt_map = {s.beat_number: s.veo_prompt for s in request.edited_shots}
     beats_to_process = [b for b in request.story.beats if b.number in prompt_map]
+
+    # Build storyboard image map (prefer per-shot reference_image, then storyboard_images)
+    sb_images: Dict[int, dict] = {}
+    if request.storyboard_images:
+        for bn, ref in request.storyboard_images.items():
+            sb_images[int(bn)] = {"image_url": ref.image_url, "mime_type": ref.mime_type}
+    for shot in request.edited_shots:
+        if shot.reference_image and shot.reference_image.image_url:
+            sb_images[shot.beat_number] = {
+                "image_url": shot.reference_image.image_url,
+                "mime_type": shot.reference_image.mime_type,
+            }
 
     job = FilmJob(
         film_id=film_id,
@@ -997,25 +1030,15 @@ async def generate_film_with_prompts(request: GenerateWithPromptsRequest, backgr
         created_at=datetime.now(),
         story=request.story,
         approved_visuals=request.approved_visuals,
-        key_moment_image=request.key_moment_image,
         total_shots=len(beats_to_process),
         generation_id=request.generation_id,
+        storyboard_images=sb_images,
     )
 
     film_jobs[film_id] = job
     await persist_film_job(job)
 
-    # Build per-shot reference images from key moments (if provided)
-    shot_refs: Optional[Dict[int, dict]] = None
-    ref_map = {s.beat_number: s.reference_image for s in request.edited_shots if s.reference_image}
-    if ref_map:
-        shot_refs = {
-            bn: {"image_base64": ref.image_base64, "mime_type": ref.mime_type}
-            for bn, ref in ref_map.items()
-        }
-
-    # Start generation in background with prompt overrides + per-shot refs
-    background_tasks.add_task(run_film_generation, film_id, prompt_map, shot_refs)
+    background_tasks.add_task(run_film_generation, film_id, prompt_map)
 
     return GenerateFilmResponse(
         film_id=film_id,
@@ -1031,11 +1054,17 @@ async def generate_film_with_prompts(request: GenerateWithPromptsRequest, backgr
 @router.post("/generate", response_model=GenerateFilmResponse)
 async def generate_film(request: GenerateFilmRequest, background_tasks: BackgroundTasks):
     """
-    Start film generation from approved story and visuals.
+    Start film generation from approved story, visuals, and storyboard images via Seedance.
 
     Returns immediately with a film_id to poll for status.
     """
     film_id = uuid.uuid4().hex[:12]
+
+    # Build storyboard image map from request
+    sb_images: Dict[int, dict] = {}
+    if request.storyboard_images:
+        for bn, ref in request.storyboard_images.items():
+            sb_images[int(bn)] = {"image_url": ref.image_url, "mime_type": ref.mime_type}
 
     job = FilmJob(
         film_id=film_id,
@@ -1043,15 +1072,14 @@ async def generate_film(request: GenerateFilmRequest, background_tasks: Backgrou
         created_at=datetime.now(),
         story=request.story,
         approved_visuals=request.approved_visuals,
-        key_moment_image=request.key_moment_image,
         total_shots=len(request.story.beats),
         generation_id=request.generation_id,
+        storyboard_images=sb_images,
     )
 
     film_jobs[film_id] = job
     await persist_film_job(job)
 
-    # Start generation in background
     background_tasks.add_task(run_film_generation, film_id)
 
     return GenerateFilmResponse(
@@ -1193,7 +1221,7 @@ async def regenerate_shot(
 
 
 async def run_shot_regeneration(job: FilmJob, beat: Beat, feedback: Optional[str]):
-    """Background task to regenerate a single shot using per-scene reference generation."""
+    """Background task to regenerate a single shot via Seedance."""
     try:
         print(f"\n{'='*60}")
         print(f"Regenerating shot {beat.number} for film {job.film_id}")
@@ -1201,31 +1229,21 @@ async def run_shot_regeneration(job: FilmJob, beat: Beat, feedback: Optional[str
             print(f"Feedback: {feedback}")
         print(f"{'='*60}\n")
 
-        # Generate director script for this beat
-        print("Generating director script...")
-        ds_list = await generate_director_scripts(job.story, [beat])
-        ds = ds_list[0] if ds_list else default_director_script(beat)
+        # Get storyboard image for this beat
+        sb_images = job.storyboard_images or {}
+        storyboard_image = sb_images.get(beat.number)
+        image_url = get_first_frame_url(beat, storyboard_image)
 
-        # Generate 3 scene-specific reference images
-        print("Generating 3 scene-specific reference images...")
-        scene_refs = await generate_scene_references(
-            beat=beat,
-            story=job.story,
-            approved_visuals=job.approved_visuals,
-            director_script=ds,
-        )
-        job.cost_scene_refs += COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT
-
-        # Generate video shot with director script + negative prompt
-        shot_prompt = build_veo_prompt(beat, job.story, ds)
+        # Format prompt (raw script + optional feedback)
+        shot_prompt = format_beat_as_script(beat)
         if feedback:
             shot_prompt += f"\n\nADJUSTMENT: {feedback}"
 
-        print(f"Generating video shot with {len(scene_refs)} scene refs...")
+        print(f"Generating video via Seedance...")
         video_result = await generate_shot_with_retry(
             beat=beat,
             prompt=shot_prompt,
-            reference_images=scene_refs,
+            image_url=image_url,
         )
         job.cost_videos += COST_PER_VIDEO
 
@@ -1324,6 +1342,7 @@ class GenerateClipRequest(BaseModel):
     approved_visuals: ApprovedVisuals
     scene_number: int
     scene: Scene
+    storyboard_image_url: Optional[str] = None  # First-frame image URL for Seedance
     feedback: Optional[str] = None
     generation_id: Optional[str] = None
 
@@ -1368,9 +1387,9 @@ def _fallback_refs_from_visuals(beat: Beat, approved_visuals: ApprovedVisuals) -
 
 
 async def generate_single_clip(req: GenerateClipRequest) -> dict:
-    """Generate a single video clip for one scene.
+    """Generate a single video clip for one scene via Seedance.
 
-    Pipeline: director script → 3 scene refs → Veo prompt → Veo call → upload.
+    Pipeline: storyboard image + script → Seedance → upload.
     Returns: {video_url, veo_prompt, cost}
     """
     beat = scene_to_beat(req.scene, req.story)
@@ -1380,54 +1399,27 @@ async def generate_single_clip(req: GenerateClipRequest) -> dict:
     print(f"Generating single clip for scene {req.scene_number}")
     print(f"{'='*60}\n")
 
-    # Resolve reference images
-    await req.approved_visuals.resolve_urls()
+    # Get first-frame image URL
+    if not req.storyboard_image_url:
+        raise ValueError(f"No storyboard_image_url for scene {req.scene_number}")
+    image_url = req.storyboard_image_url
 
-    # Step 1: Director script (single scene)
-    director_script = default_director_script(beat)
-    try:
-        scripts = await generate_director_scripts(req.story, [beat])
-        if scripts:
-            director_script = scripts[0]
-    except Exception as e:
-        print(f"Director script generation failed, using defaults: {e}")
-
-    cost_scene_refs = 0.0
-    cost_video = 0.0
-
-    # Step 2: Generate 3 scene-specific reference images
-    #         Falls back to approved character/location images if safety filters block
-    print(f"[Clip {req.scene_number}] Generating 3 scene refs...")
-    try:
-        scene_refs = await generate_scene_references(
-            beat=beat,
-            story=req.story,
-            approved_visuals=req.approved_visuals,
-            director_script=director_script,
-        )
-        cost_scene_refs = COST_IMAGE_GENERATION * SCENE_REFS_PER_SHOT
-        print(f"[Clip {req.scene_number}] Scene refs done (cost: ${cost_scene_refs:.3f})")
-    except Exception as e:
-        print(f"[Clip {req.scene_number}] Scene refs failed ({e}), falling back to approved visuals")
-        scene_refs = _fallback_refs_from_visuals(beat, req.approved_visuals)
-        cost_scene_refs = 0.0
-
-    # Step 3: Build Veo prompt (with optional feedback adjustment)
-    veo_prompt = build_veo_prompt(beat, req.story, director_script)
+    # Format prompt (raw script + optional feedback)
+    script_prompt = format_beat_as_script(beat)
     if req.feedback:
-        veo_prompt += f"\nADJUSTMENT: {req.feedback}"
+        script_prompt += f"\n\nADJUSTMENT: {req.feedback}"
 
-    # Step 4: Generate video with rate limiting
-    print(f"[Clip {req.scene_number}] Generating video...")
+    # Generate video via Seedance
+    print(f"[Clip {req.scene_number}] Generating video via Seedance...")
     video_result = await generate_shot_with_retry(
         beat=beat,
-        prompt=veo_prompt,
-        reference_images=scene_refs,
+        prompt=script_prompt,
+        image_url=image_url,
     )
     cost_video = COST_PER_VIDEO
     print(f"[Clip {req.scene_number}] Video done (cost: ${cost_video:.2f})")
 
-    # Step 5: Download + upload to Storage
+    # Download + upload to Storage
     clip_id = uuid.uuid4().hex[:12]
     video_path, storage_url = await download_video(
         video_result["video_url"],
@@ -1436,13 +1428,12 @@ async def generate_single_clip(req: GenerateClipRequest) -> dict:
         generation_id=generation_id,
     )
 
-    total_cost = cost_scene_refs + cost_video
-    print(f"[Clip {req.scene_number}] Complete! Total cost: ${total_cost:.2f}")
+    print(f"[Clip {req.scene_number}] Complete! Total cost: ${cost_video:.2f}")
 
     return {
         "video_url": storage_url,
-        "veo_prompt": veo_prompt,
-        "cost": round(total_cost, 4),
+        "veo_prompt": script_prompt,
+        "cost": round(cost_video, 4),
     }
 
 
@@ -1508,6 +1499,12 @@ async def assemble_clips(req: AssembleClipsRequest) -> dict:
         os.remove(assembled_path)
     except OSError:
         pass
+
+    if not assembled_url:
+        raise ValueError(
+            "Assembled video upload failed (file too large for Storage). "
+            "Increase the file size limit in Supabase Dashboard → Storage → Settings."
+        )
 
     print(f"Assembly complete! URL: {assembled_url}")
     return {"assembled_video_url": assembled_url}

@@ -58,7 +58,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
   const allowedFields: (keyof StoryCharacterUpdate)[] = [
     "name", "age", "gender", "description", "role",
-    "visual_style", "image_base64", "image_url", "image_mime_type",
+    "visual_style", "image_url", "image_mime_type",
   ];
   const updateData: StoryCharacterUpdate = {};
   for (const field of allowedFields) {
@@ -75,7 +75,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     .from("story_characters")
     .update(updateData)
     .eq("id", characterId)
-    .select()
+    .select("id, story_id, name, age, gender, description, role, visual_style, image_url, image_mime_type, created_at, updated_at")
     .single();
 
   if (error) return errorResponse(error.message, 500);

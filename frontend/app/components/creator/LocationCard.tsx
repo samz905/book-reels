@@ -13,9 +13,9 @@ export default function LocationCard({ location, onEdit, onDelete }: LocationCar
     <div className="group relative w-[150px] flex-shrink-0">
       {/* Image */}
       <div className="w-[150px] h-[200px] rounded-xl overflow-hidden bg-[#262626] border border-[#262626] relative">
-        {location.imageBase64 ? (
+        {(location.imageUrl || location.imageBase64) ? (
           <img
-            src={`data:${location.imageMimeType};base64,${location.imageBase64}`}
+            src={location.imageUrl || `data:${location.imageMimeType};base64,${location.imageBase64}`}
             alt={location.name}
             className="w-full h-full object-cover"
           />

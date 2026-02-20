@@ -187,7 +187,9 @@ export default function CharacterModal({
       visual_style: refChar ? undefined : (lockedStyle || visualStyle),
       reference_image: refChar?.imageBase64
         ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
-        : undefined,
+        : refChar?.imageUrl
+          ? { image_url: refChar.imageUrl, mime_type: refChar.imageMimeType }
+          : undefined,
     };
 
     // Non-blocking: submit as background job, result arrives via Realtime
@@ -393,7 +395,7 @@ export default function CharacterModal({
             >
               <option value="">None - use Visual Style instead</option>
               {existingCharacters
-                .filter((c) => c.id !== character?.id && c.imageBase64)
+                .filter((c) => c.id !== character?.id && (c.imageBase64 || c.imageUrl))
                 .map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}

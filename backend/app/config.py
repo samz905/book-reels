@@ -8,6 +8,7 @@ load_dotenv()
 # Configuration
 GOOGLE_GENAI_API_KEY = os.getenv("GOOGLE_GENAI_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+ATLASCLOUD_API_KEY = os.getenv("ATLASCLOUD_API_KEY")
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", 8000))
@@ -32,6 +33,8 @@ if not GOOGLE_GENAI_API_KEY:
     raise ValueError("GOOGLE_GENAI_API_KEY environment variable is required")
 if not ANTHROPIC_API_KEY:
     raise ValueError("ANTHROPIC_API_KEY environment variable is required")
+if not ATLASCLOUD_API_KEY:
+    raise ValueError("ATLASCLOUD_API_KEY environment variable is required")
 
 # Initialize Google GenAI client
 # Note: The API key must be from Google AI Studio (aistudio.google.com), NOT Google Cloud Console

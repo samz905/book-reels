@@ -4,8 +4,9 @@ Cost tracking for AI operations.
 Pricing (as of 2025):
 - Gemini 2.0 Flash: $0.15/1M input tokens, $0.60/1M output tokens
 - Gemini Image Generation: ~$0.04 per image (2K resolution)
-- Veo 3.1 Fast: $0.15 per second
-- Veo 3.1 Standard: $0.40 per second
+- Seedance 1.5 Pro Fast (Atlas Cloud): $0.022 per second
+- Veo 3.1 Fast: $0.15 per second (deprecated)
+- Veo 3.1 Standard: $0.40 per second (deprecated)
 """
 from dataclasses import dataclass, field
 from typing import List, Literal
@@ -22,7 +23,10 @@ COST_TEXT_OUTPUT_PER_1M_TOKENS = 0.60
 # Image generation
 COST_IMAGE_GENERATION = 0.04  # Per image at 2K resolution
 
-# Video generation (Veo 3.1)
+# Video generation — Seedance 1.5 Pro Fast (Atlas Cloud)
+COST_VIDEO_SEEDANCE_FAST_PER_SECOND = 0.022
+
+# Video generation (Veo 3.1) — deprecated, kept for reference
 COST_VIDEO_VEO_FAST_PER_SECOND = 0.15
 COST_VIDEO_VEO_STANDARD_PER_SECOND = 0.40
 
@@ -105,35 +109,26 @@ def estimate_image_cost(num_images: int = 1) -> float:
 
 def estimate_video_cost(
     duration_seconds: int = VIDEO_DURATION_SECONDS,
-    mode: Literal["fast", "standard"] = "fast"
 ) -> float:
-    """Estimate cost for video generation."""
-    rate = COST_VIDEO_VEO_FAST_PER_SECOND if mode == "fast" else COST_VIDEO_VEO_STANDARD_PER_SECOND
-    return duration_seconds * rate
+    """Estimate cost for video generation (Seedance 1.5 Pro Fast)."""
+    return duration_seconds * COST_VIDEO_SEEDANCE_FAST_PER_SECOND
 
 
 def estimate_film_cost(
     num_shots: int,
-    num_keyframes: int = 0,
-    video_mode: Literal["fast", "standard"] = "fast"
 ) -> dict:
     """Estimate total cost for film generation.
 
+    Seedance uses existing storyboard images as first frames (no extra image cost).
     Returns breakdown of costs.
     """
-    keyframe_cost = estimate_image_cost(num_keyframes) if num_keyframes > 0 else 0
-    video_cost = num_shots * estimate_video_cost(VIDEO_DURATION_SECONDS, video_mode)
+    video_cost = num_shots * estimate_video_cost(VIDEO_DURATION_SECONDS)
 
     return {
-        "keyframes": {
-            "count": num_keyframes,
-            "cost_usd": round(keyframe_cost, 4),
-        },
         "videos": {
             "count": num_shots,
             "duration_each": VIDEO_DURATION_SECONDS,
-            "mode": video_mode,
             "cost_usd": round(video_cost, 4),
         },
-        "total_usd": round(keyframe_cost + video_cost, 4),
+        "total_usd": round(video_cost, 4),
     }

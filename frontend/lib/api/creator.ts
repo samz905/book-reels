@@ -710,7 +710,7 @@ export async function generateCharacterImage(
     gender?: string;
     description: string;
     visual_style?: string;
-    reference_image?: { image_base64: string; mime_type: string };
+    reference_image?: { image_base64?: string; image_url?: string; mime_type: string };
   },
 ): Promise<{ image_base64: string; mime_type: string; cost_usd: number }> {
   const response = await fetch(`${BACKEND_URL}/assets/generate-character-image`, {
@@ -731,7 +731,7 @@ export async function generateLocationImage(
     description: string;
     atmosphere?: string;
     visual_style?: string;
-    reference_image?: { image_base64: string; mime_type: string };
+    reference_image?: { image_base64?: string; image_url?: string; mime_type: string };
   },
 ): Promise<{ image_base64: string; mime_type: string; cost_usd: number }> {
   const response = await fetch(`${BACKEND_URL}/assets/generate-location-image`, {
