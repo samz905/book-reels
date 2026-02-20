@@ -91,7 +91,7 @@ async def submit_job(request: SubmitJobRequest, background_tasks: BackgroundTask
 # Background Task Dispatcher
 # ============================================================
 
-JOB_TIMEOUT_SECONDS = 300  # 5 minutes — kills hung API calls
+JOB_TIMEOUT_SECONDS = 180  # 3 minutes — kills hung API calls
 
 
 async def run_job(job_id: str, request: SubmitJobRequest):

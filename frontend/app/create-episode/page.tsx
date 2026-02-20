@@ -1103,11 +1103,10 @@ export default function CreateEpisodePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realtimeJobs, isRestoringState]);
 
-  // Stale job watchdog: auto-fail jobs stuck in "generating" for >2 minutes.
+  // Stale job watchdog: auto-fail jobs stuck in "generating" for >3 minutes.
   // Catches cases where the backend dies without updating gen_jobs (OOM, network drop, etc.).
-  // Cosmetic only — if backend finishes later, Realtime update overwrites with real result.
   useEffect(() => {
-    const STALE_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
+    const STALE_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
     const CHECK_INTERVAL_MS = 30 * 1000; // check every 30s
 
     const interval = setInterval(() => {
