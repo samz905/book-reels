@@ -246,9 +246,9 @@ export default function Home() {
         {/* Hero Section */}
         <section className="text-center py-12 max-w-[1200px] mx-auto relative">
           {/* Hero glow effect */}
-          <div className="absolute w-[227px] h-[170px] left-1/2 -translate-x-1/2 top-[140px] bg-[rgba(156,153,255,0.55)] blur-[95px]" />
+          <div className="absolute w-[227px] h-[170px] left-1/2 -translate-x-1/2 top-[140px] bg-[rgba(156,153,255,0.55)] blur-[95px] pointer-events-none" />
 
-          <h1 className="font-medium text-4xl sm:text-5xl lg:text-[72px] leading-tight lg:leading-[72px] tracking-[-1.5px] lg:tracking-[-3.6px] mb-6">
+          <h1 className="relative font-medium text-4xl sm:text-5xl lg:text-[72px] leading-tight lg:leading-[72px] tracking-[-1.5px] lg:tracking-[-3.6px] mb-6">
             <span className="text-white">Stories, </span>
             <span
               style={{
@@ -261,12 +261,12 @@ export default function Home() {
               reimagined
             </span>
           </h1>
-          <p className="text-white text-base sm:text-lg lg:text-[19.5px] leading-relaxed lg:leading-7 max-w-[676px] mx-auto mb-8">
+          <p className="relative text-white text-base sm:text-lg lg:text-[19.5px] leading-relaxed lg:leading-7 max-w-[676px] mx-auto mb-8">
             Find stories that move you. Let yours be seen too.
           </p>
           <Link
             href="/create"
-            className="inline-block text-[#F8FAFC] font-bold text-[17.9px] leading-7 px-8 py-3.5 rounded-[14px] hover:opacity-90 transition-opacity"
+            className="relative inline-block text-[#F8FAFC] font-bold text-[17.9px] leading-7 px-8 py-3.5 rounded-[14px] hover:opacity-90 transition-opacity cursor-pointer"
             style={{ background: 'linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)' }}
           >
             Start Creating
