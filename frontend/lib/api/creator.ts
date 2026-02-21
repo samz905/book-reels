@@ -746,7 +746,70 @@ export async function generateLocationImage(
   return response.json();
 }
 
-// Purchased Ebooks API
+// ============ Subscriptions API (Account Page) ============
+
+import type { Subscription as AccountSubscription } from "@/app/data/mockAccountData";
+
+interface SubscriptionApiResponse {
+  id: string;
+  user_id: string;
+  creator_id: string;
+  price: number;
+  status: "active" | "canceled";
+  next_billing: string | null;
+  created_at: string;
+  canceled_at: string | null;
+  creator: {
+    id: string;
+    username: string;
+    name: string;
+    avatar_url: string | null;
+  };
+}
+
+function mapSubscription(sub: SubscriptionApiResponse): AccountSubscription {
+  return {
+    id: sub.id,
+    creatorName: sub.creator.name,
+    creatorAvatar: sub.creator.avatar_url || "",
+    creatorUsername: sub.creator.username,
+    price: sub.price,
+    status: sub.status,
+    nextBilling: sub.next_billing
+      ? new Date(sub.next_billing).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })
+      : null,
+  };
+}
+
+export async function getSubscriptions(): Promise<AccountSubscription[]> {
+  const response = await fetch("/api/subscriptions", {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    if (response.status === 401) return [];
+    throw new Error("Failed to fetch subscriptions");
+  }
+  const data = (await response.json()) as SubscriptionApiResponse[];
+  return data.map(mapSubscription);
+}
+
+export async function cancelSubscription(subscriptionId: string): Promise<void> {
+  const response = await fetch(`/api/subscriptions/${subscriptionId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Failed to cancel subscription");
+  }
+}
+
+// ============ Purchased Ebooks API ============
+
 export interface PurchasedEbook {
   id: string;
   title: string;

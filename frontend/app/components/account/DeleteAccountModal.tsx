@@ -6,13 +6,11 @@ import { createPortal } from "react-dom";
 interface DeleteAccountModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: () => void;
 }
 
 export default function DeleteAccountModal({
   isOpen,
   onClose,
-  onConfirm,
 }: DeleteAccountModalProps) {
   const [mounted, setMounted] = useState(false);
 
@@ -45,23 +43,22 @@ export default function DeleteAccountModal({
       {/* Modal */}
       <div className="relative bg-[#1C1C1C] rounded-xl p-6 w-full max-w-md mx-4">
         <h2 className="text-white text-xl font-bold mb-3">Delete Account</h2>
+        <p className="text-[#ADADAD] text-base leading-relaxed mb-2">
+          To delete your account and all associated data, please contact our support team.
+        </p>
         <p className="text-[#ADADAD] text-base leading-relaxed mb-6">
-          We&apos;ll permanently remove your account and all associated data.
-          Take a moment to be sure this is what you want.
+          Email us at{" "}
+          <a href="mailto:support@oddega.com" className="text-purple hover:underline">
+            support@oddega.com
+          </a>
         </p>
 
-        <div className="flex items-center justify-end gap-4">
+        <div className="flex items-center justify-end">
           <button
             onClick={onClose}
-            className="text-[#ADADAD] text-base font-medium hover:text-white transition-colors"
+            className="px-6 py-2.5 bg-purple text-white text-base font-semibold rounded-lg hover:opacity-90 transition-opacity"
           >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className="px-6 py-2.5 bg-[#DC2626] text-white text-base font-semibold rounded-lg hover:bg-[#B91C1C] transition-colors"
-          >
-            Delete
+            Close
           </button>
         </div>
       </div>

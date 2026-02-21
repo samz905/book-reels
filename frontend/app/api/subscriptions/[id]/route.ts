@@ -87,11 +87,21 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return forbiddenResponse("You can only cancel your own subscriptions");
   }
 
+  // If already canceled, hard-delete (remove from list)
   if (subscription.status === "canceled") {
-    return errorResponse("Subscription is already canceled");
+    const { error: deleteError } = await supabase
+      .from("subscriptions")
+      .delete()
+      .eq("id", id);
+
+    if (deleteError) {
+      return errorResponse(deleteError.message, 500);
+    }
+
+    return jsonResponse({ deleted: true });
   }
 
-  // Cancel the subscription
+  // Otherwise, soft-cancel (keep record but mark inactive)
   const { data: updated, error } = await supabase
     .from("subscriptions")
     .update({

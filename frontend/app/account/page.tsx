@@ -8,27 +8,32 @@ import Footer from "../components/Footer";
 import PersonalInfoCard from "../components/account/PersonalInfoCard";
 import SubscriptionsCard from "../components/account/SubscriptionsCard";
 import EbooksLibraryCard from "../components/account/EbooksLibraryCard";
-import PaymentPayoutCard from "../components/account/PaymentPayoutCard";
 import DeleteAccountModal from "../components/account/DeleteAccountModal";
+import type { Subscription, PurchasedEbook } from "../data/mockAccountData";
 import {
-  mockSubscriptions,
-  mockPaymentMethod,
-  mockPayoutMethod,
-  PurchasedEbook,
-} from "../data/mockAccountData";
-import { getPurchasedEbooks } from "@/lib/api/creator";
+  getPurchasedEbooks,
+  getSubscriptions,
+  cancelSubscription,
+  updateProfile,
+} from "@/lib/api/creator";
+import { createClient } from "@/lib/supabase/client";
 
 export default function AccountPage() {
   const router = useRouter();
   const { user, loading, accessStatus, signOut } = useAuth();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  // Ebooks state
   const [purchasedEbooks, setPurchasedEbooks] = useState<PurchasedEbook[]>([]);
   const [ebooksLoading, setEbooksLoading] = useState(true);
 
-  // Fetch purchased ebooks when user is authenticated
+  // Subscriptions state
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+  const [subsLoading, setSubsLoading] = useState(true);
+
+  // Fetch purchased ebooks
   const fetchEbooks = useCallback(async () => {
     if (!user) return;
-
     setEbooksLoading(true);
     try {
       const ebooks = await getPurchasedEbooks();
@@ -40,11 +45,26 @@ export default function AccountPage() {
     }
   }, [user]);
 
+  // Fetch subscriptions
+  const fetchSubscriptions = useCallback(async () => {
+    if (!user) return;
+    setSubsLoading(true);
+    try {
+      const subs = await getSubscriptions();
+      setSubscriptions(subs);
+    } catch (err) {
+      console.error("Error fetching subscriptions:", err);
+    } finally {
+      setSubsLoading(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     if (user) {
       fetchEbooks();
+      fetchSubscriptions();
     }
-  }, [user, fetchEbooks]);
+  }, [user, fetchEbooks, fetchSubscriptions]);
 
   // Redirect to login if not authenticated, or waitlist if not approved
   useEffect(() => {
@@ -58,17 +78,11 @@ export default function AccountPage() {
     router.push("/");
   };
 
-  const handleDeleteAccount = async () => {
-    // TODO: Implement account deletion
-    console.log("Delete account");
-    setShowDeleteModal(false);
-  };
-
   // Show loading state while checking auth
   if (loading) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-white">Loading...</div>
+        <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -95,26 +109,48 @@ export default function AccountPage() {
         <PersonalInfoCard
           name={userName}
           email={userEmail}
-          onNameUpdate={(newName) => {
-            // TODO: Update name in Supabase
-            console.log("Update name:", newName);
+          onNameUpdate={async (newName) => {
+            await updateProfile(user.id, { name: newName });
+            // Also sync auth metadata so Header picks up the new name
+            const supabase = createClient();
+            await supabase.auth.updateUser({ data: { full_name: newName } });
           }}
-          onPasswordUpdate={(newPassword) => {
-            // TODO: Update password in Supabase
-            console.log("Update password");
+          onPasswordUpdate={async (newPassword) => {
+            const supabase = createClient();
+            const { error } = await supabase.auth.updateUser({ password: newPassword });
+            if (error) throw error;
           }}
         />
 
         {/* Subscriptions */}
         <SubscriptionsCard
-          subscriptions={mockSubscriptions}
-          onUnsubscribe={(id) => {
-            // TODO: Handle unsubscribe
-            console.log("Unsubscribe:", id);
+          subscriptions={subscriptions}
+          isLoading={subsLoading}
+          onUnsubscribe={async (id) => {
+            try {
+              await cancelSubscription(id);
+              setSubscriptions((prev) =>
+                prev.map((s) =>
+                  s.id === id ? { ...s, status: "canceled" as const, nextBilling: null } : s
+                )
+              );
+            } catch (err) {
+              console.error("Failed to cancel subscription:", err);
+            }
           }}
           onSubscribe={(id) => {
-            // TODO: Handle subscribe
-            console.log("Subscribe:", id);
+            const sub = subscriptions.find((s) => s.id === id);
+            if (sub) {
+              router.push(`/creator/${sub.creatorUsername}`);
+            }
+          }}
+          onRemove={async (id) => {
+            try {
+              await cancelSubscription(id);
+              setSubscriptions((prev) => prev.filter((s) => s.id !== id));
+            } catch (err) {
+              console.error("Failed to remove subscription:", err);
+            }
           }}
         />
 
@@ -124,20 +160,6 @@ export default function AccountPage() {
           isLoading={ebooksLoading}
           onReadNow={(id) => {
             router.push(`/read/${id}`);
-          }}
-        />
-
-        {/* Payment & Payout Methods */}
-        <PaymentPayoutCard
-          paymentMethod={mockPaymentMethod}
-          payoutMethod={mockPayoutMethod}
-          onPaymentUpdate={(data) => {
-            // TODO: Update payment method
-            console.log("Update payment:", data);
-          }}
-          onPayoutUpdate={(data) => {
-            // TODO: Update payout method
-            console.log("Update payout:", data);
           }}
         />
 
@@ -170,7 +192,6 @@ export default function AccountPage() {
       <DeleteAccountModal
         isOpen={showDeleteModal}
         onClose={() => setShowDeleteModal(false)}
-        onConfirm={handleDeleteAccount}
       />
     </div>
   );

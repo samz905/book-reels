@@ -5,8 +5,8 @@ import { useState } from "react";
 interface PersonalInfoCardProps {
   name: string;
   email: string;
-  onNameUpdate?: (newName: string) => void;
-  onPasswordUpdate?: (newPassword: string) => void;
+  onNameUpdate?: (newName: string) => Promise<void>;
+  onPasswordUpdate?: (newPassword: string) => Promise<void>;
 }
 
 export default function PersonalInfoCard({
@@ -21,29 +21,57 @@ export default function PersonalInfoCard({
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  const handleNameSave = () => {
-    onNameUpdate?.(nameValue);
-    setEditingName(false);
+  const [nameSaving, setNameSaving] = useState(false);
+  const [nameStatus, setNameStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordStatus, setPasswordStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  const handleNameSave = async () => {
+    setNameSaving(true);
+    setNameStatus(null);
+    try {
+      await onNameUpdate?.(nameValue);
+      setEditingName(false);
+      setNameStatus({ type: "success", message: "Name updated" });
+      setTimeout(() => setNameStatus(null), 3000);
+    } catch {
+      setNameStatus({ type: "error", message: "Failed to update name" });
+    } finally {
+      setNameSaving(false);
+    }
   };
 
-  const handlePasswordSave = () => {
-    if (newPassword === confirmPassword && newPassword.length >= 8) {
-      onPasswordUpdate?.(newPassword);
+  const handlePasswordSave = async () => {
+    if (newPassword !== confirmPassword) return;
+    if (newPassword.length < 8) return;
+
+    setPasswordSaving(true);
+    setPasswordStatus(null);
+    try {
+      await onPasswordUpdate?.(newPassword);
       setEditingPassword(false);
       setNewPassword("");
       setConfirmPassword("");
+      setPasswordStatus({ type: "success", message: "Password updated" });
+      setTimeout(() => setPasswordStatus(null), 3000);
+    } catch {
+      setPasswordStatus({ type: "error", message: "Failed to update password" });
+    } finally {
+      setPasswordSaving(false);
     }
   };
 
   const handleNameCancel = () => {
     setNameValue(name);
     setEditingName(false);
+    setNameStatus(null);
   };
 
   const handlePasswordCancel = () => {
     setNewPassword("");
     setConfirmPassword("");
     setEditingPassword(false);
+    setPasswordStatus(null);
   };
 
   const EditButton = ({ onClick }: { onClick: () => void }) => (
@@ -83,22 +111,29 @@ export default function PersonalInfoCard({
               />
               <button
                 onClick={handleNameCancel}
-                className="text-[#ADADAD] text-sm font-medium hover:text-white transition-colors"
+                disabled={nameSaving}
+                className="text-[#ADADAD] text-sm font-medium hover:text-white transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleNameSave}
-                className="px-4 py-2 bg-purple text-white text-sm font-semibold rounded-lg hover:opacity-90 transition-opacity"
+                disabled={nameSaving || !nameValue.trim()}
+                className="px-4 py-2 bg-purple text-white text-sm font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
               >
-                Save
+                {nameSaving ? "Saving..." : "Save"}
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-4">
               <span className="text-white text-xl font-semibold">{name}</span>
-              <EditButton onClick={() => setEditingName(true)} />
+              <EditButton onClick={() => { setEditingName(true); setNameStatus(null); }} />
             </div>
+          )}
+          {nameStatus && (
+            <p className={`text-sm mt-2 ${nameStatus.type === "success" ? "text-[#256B5F]" : "text-[#AE1414]"}`}>
+              {nameStatus.message}
+            </p>
           )}
         </div>
 
@@ -155,15 +190,17 @@ export default function PersonalInfoCard({
               <div className="flex items-center gap-3 pt-2">
                 <button
                   onClick={handlePasswordCancel}
-                  className="text-[#ADADAD] text-sm font-medium hover:text-white transition-colors"
+                  disabled={passwordSaving}
+                  className="text-[#ADADAD] text-sm font-medium hover:text-white transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handlePasswordSave}
-                  className="px-4 py-2 bg-purple text-white text-sm font-semibold rounded-lg hover:opacity-90 transition-opacity"
+                  disabled={passwordSaving || newPassword.length < 8 || newPassword !== confirmPassword}
+                  className="px-4 py-2 bg-purple text-white text-sm font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
                 >
-                  Save
+                  {passwordSaving ? "Saving..." : "Save"}
                 </button>
               </div>
             </div>
@@ -172,8 +209,13 @@ export default function PersonalInfoCard({
               <span className="text-white text-xl font-semibold">
                 ***********
               </span>
-              <EditButton onClick={() => setEditingPassword(true)} />
+              <EditButton onClick={() => { setEditingPassword(true); setPasswordStatus(null); }} />
             </div>
+          )}
+          {passwordStatus && (
+            <p className={`text-sm mt-2 ${passwordStatus.type === "success" ? "text-[#256B5F]" : "text-[#AE1414]"}`}>
+              {passwordStatus.message}
+            </p>
           )}
         </div>
       </div>
