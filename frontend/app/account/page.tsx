@@ -20,7 +20,7 @@ import { getPurchasedEbooks } from "@/lib/api/creator";
 
 export default function AccountPage() {
   const router = useRouter();
-  const { user, loading, signOut } = useAuth();
+  const { user, loading, accessStatus, signOut } = useAuth();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [purchasedEbooks, setPurchasedEbooks] = useState<PurchasedEbook[]>([]);
   const [ebooksLoading, setEbooksLoading] = useState(true);
@@ -46,12 +46,12 @@ export default function AccountPage() {
     }
   }, [user, fetchEbooks]);
 
-  // Redirect to login if not authenticated
+  // Redirect to login if not authenticated, or waitlist if not approved
   useEffect(() => {
-    if (!loading && !user) {
-      router.push("/login");
-    }
-  }, [user, loading, router]);
+    if (loading) return;
+    if (!user) { router.push("/login"); return; }
+    if (accessStatus !== "approved") { router.push("/waitlist"); return; }
+  }, [user, loading, accessStatus, router]);
 
   const handleLogout = async () => {
     await signOut();

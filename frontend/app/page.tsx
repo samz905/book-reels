@@ -10,6 +10,9 @@ import { CATEGORIES, type Category, type Story } from "./data/mockStories";
 import type { Episode } from "./data/mockCreatorData";
 import EpisodeList from "./components/creator/EpisodeList";
 import Image from "next/image";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAuth } from "./context/AuthContext";
 
 // API response types
 interface ApiStory {
@@ -58,6 +61,18 @@ function transformStory(apiStory: ApiStory): Story {
 }
 
 export default function Home() {
+  const { user, loading: authLoading, accessStatus } = useAuth();
+  const router = useRouter();
+  const isApproved = user && accessStatus === "approved";
+
+  // Redirect pending users to waitlist
+  useEffect(() => {
+    if (authLoading) return;
+    if (user && accessStatus !== "approved") {
+      router.push("/waitlist");
+    }
+  }, [user, authLoading, accessStatus, router]);
+
   const [activeCategory, setActiveCategory] = useState<Category>("ALL");
   const [isSticky, setIsSticky] = useState(false);
   const stickyRef = useRef<HTMLDivElement>(null);
@@ -72,8 +87,9 @@ export default function Home() {
   const [storyEpisodes, setStoryEpisodes] = useState<Episode[]>([]);
   const [episodesLoading, setEpisodesLoading] = useState(false);
 
-  // Fetch stories from API
+  // Fetch stories from API (only for approved users)
   const fetchStories = useCallback(async () => {
+    if (!isApproved) return;
     setLoading(true);
     setError(null);
 
@@ -98,7 +114,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [activeCategory]);
+  }, [activeCategory, isApproved]);
 
   // Fetch on mount and when filters change
   useEffect(() => {
@@ -156,6 +172,56 @@ export default function Home() {
     }
   }, []);
 
+  // ─── Marketing Landing Page (unauthenticated users) ─────────────────
+  if (!authLoading && !isApproved) {
+    return (
+      <div className="min-h-screen bg-gradient-page relative overflow-clip">
+        {/* Purple glow effects */}
+        <div className="absolute w-[227px] h-[420px] left-[25px] top-[-260px] bg-purple-glow blur-[95px]" />
+        <div className="absolute w-[300px] h-[300px] left-1/2 -translate-x-1/2 top-[280px] bg-[rgba(156,153,255,0.12)] blur-[120px] rounded-full" />
+
+        <Header />
+
+        <main className="relative z-10 px-4 md:px-6">
+          {/* Hero Section */}
+          <section className="text-center py-20 md:py-28 max-w-[800px] mx-auto">
+            <div className="absolute w-[227px] h-[170px] left-1/2 -translate-x-1/2 top-[140px] bg-[rgba(156,153,255,0.55)] blur-[95px]" />
+
+            <h1 className="font-medium text-4xl sm:text-5xl lg:text-[72px] leading-tight lg:leading-[72px] tracking-[-1.5px] lg:tracking-[-3.6px] mb-6">
+              <span className="text-white">Stories, </span>
+              <span
+                style={{
+                  background: 'linear-gradient(135deg, #FFFFFF 0%, #9C99FF 100%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  backgroundClip: 'text',
+                }}
+              >
+                reimagined
+              </span>
+            </h1>
+            <p className="text-white/70 text-base sm:text-lg lg:text-[19.5px] leading-relaxed lg:leading-7 max-w-[676px] mx-auto mb-10">
+              Find stories that move you. Let yours be seen too.
+            </p>
+            <Link
+              href="/login"
+              className="inline-block text-[#F8FAFC] font-bold text-[17.9px] leading-7 px-10 py-4 rounded-[14px] hover:opacity-90 transition-opacity"
+              style={{ background: 'linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)' }}
+            >
+              Request Early Access
+            </Link>
+            <p className="text-white/30 text-sm mt-4">
+              Early access is limited. Join the waitlist today.
+            </p>
+          </section>
+        </main>
+
+        <Footer />
+      </div>
+    );
+  }
+
+  // ─── Full App (approved users) ──────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-page relative overflow-clip">
       {/* Purple glow effects */}
@@ -185,23 +251,22 @@ export default function Home() {
             </span>
           </h1>
           <p className="text-white text-base sm:text-lg lg:text-[19.5px] leading-relaxed lg:leading-7 max-w-[676px] mx-auto mb-8">
-            Discover immersive stories that unfold in short visual episodes. New
-            chapters dropping all the time.
+            Find stories that move you. Let yours be seen too.
           </p>
-          <button
-            className="text-[#F8FAFC] font-bold text-[17.9px] leading-7 px-8 py-3.5 rounded-[14px] hover:opacity-90 transition-opacity"
+          <Link
+            href="/create"
+            className="inline-block text-[#F8FAFC] font-bold text-[17.9px] leading-7 px-8 py-3.5 rounded-[14px] hover:opacity-90 transition-opacity"
             style={{ background: 'linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)' }}
           >
-            Start Watching
-          </button>
+            Start Creating
+          </Link>
         </section>
 
         {/* Sticky Tabs Container */}
         <div
           ref={stickyRef}
-          className={`sticky top-[64px] z-20 py-4 -mx-4 px-4 md:-mx-6 md:px-6 transition-colors duration-200 ${
-            isSticky ? "bg-[#010101]" : ""
-          }`}
+          className={`sticky top-[64px] z-20 py-4 -mx-4 px-4 md:-mx-6 md:px-6 transition-colors duration-200 ${isSticky ? "bg-[#010101]" : ""
+            }`}
         >
           {/* Category Tabs */}
           <section className="max-w-[1440px] mx-auto">

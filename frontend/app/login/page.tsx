@@ -36,7 +36,7 @@ export default function LoginPage() {
           },
         });
         if (error) throw error;
-        setError("Check your email for the confirmation link!");
+        setError("Check your email to confirm your account. You'll be added to our waitlist!");
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email,
@@ -101,7 +101,7 @@ export default function LoginPage() {
                   : undefined
               }
             >
-              Create Account
+              Request Access
             </button>
             <button
               onClick={() => setMode("login")}
@@ -224,7 +224,7 @@ export default function LoginPage() {
               {loading
                 ? "Loading..."
                 : mode === "signup"
-                  ? "Create Account"
+                  ? "Request Early Access"
                   : "Login"}
             </button>
           </form>
@@ -260,6 +260,12 @@ export default function LoginPage() {
             </svg>
             Continue with Google
           </button>
+
+          {mode === "signup" && (
+            <p className="text-white/40 text-xs text-center mt-4">
+              Early access is limited. We&apos;ll notify you when your account is ready.
+            </p>
+          )}
 
           <p className="text-white/40 text-xs text-center mt-6">
             By continuing, you agree to the{" "}

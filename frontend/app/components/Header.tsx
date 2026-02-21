@@ -9,10 +9,12 @@ import { useAuth } from "../context/AuthContext";
 export default function Header() {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, loading, signOut } = useAuth();
+  const { user, loading, accessStatus, signOut } = useAuth();
   const [showDropdown, setShowDropdown] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const isApproved = accessStatus === "approved";
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -54,21 +56,23 @@ export default function Header() {
           />
         </Link>
 
-        {/* Center nav — desktop only */}
-        <nav className="absolute left-1/2 -translate-x-1/2 hidden md:flex items-center gap-8">
-          <Link
-            href="/"
-            className="text-white text-base font-semibold leading-[120%] hover:opacity-80 transition-opacity"
-          >
-            Browse
-          </Link>
-          <Link
-            href="/create"
-            className="text-white text-base font-semibold leading-[120%] hover:opacity-80 transition-opacity"
-          >
-            Create
-          </Link>
-        </nav>
+        {/* Center nav — desktop only, only for approved users */}
+        {isApproved && (
+          <nav className="absolute left-1/2 -translate-x-1/2 hidden md:flex items-center gap-8">
+            <Link
+              href="/"
+              className="text-white text-base font-semibold leading-[120%] hover:opacity-80 transition-opacity"
+            >
+              Browse
+            </Link>
+            <Link
+              href="/create"
+              className="text-white text-base font-semibold leading-[120%] hover:opacity-80 transition-opacity"
+            >
+              Create
+            </Link>
+          </nav>
+        )}
 
         {/* Desktop auth section */}
         <div className="hidden md:block">
@@ -76,50 +80,52 @@ export default function Header() {
             <div className="w-[100px]" />
           ) : user ? (
             <div className="flex items-center gap-4">
-              {/* Cart Icon */}
-              <Link
-                href="/cart"
-                className="hover:opacity-80 transition-opacity"
-              >
-                <svg
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  className="text-white"
+              {/* Cart Icon — only for approved users */}
+              {isApproved && (
+                <Link
+                  href="/cart"
+                  className="hover:opacity-80 transition-opacity"
                 >
-                  <path
-                    d="M7.5 7.67001V6.70001C7.5 4.45001 9.31 2.24001 11.56 2.03001C14.24 1.77001 16.5 3.88001 16.5 6.51001V7.89001"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeMiterlimit="10"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M8.99983 22H14.9998C19.0198 22 19.7398 20.39 19.9498 18.43L20.6998 12.43C20.9698 9.99 20.2698 8 15.9998 8H7.99983C3.72983 8 3.02983 9.99 3.29983 12.43L4.04983 18.43C4.25983 20.39 4.97983 22 8.99983 22Z"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeMiterlimit="10"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M15.4955 12H15.5045"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M8.49451 12H8.50349"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </Link>
+                  <svg
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    className="text-white"
+                  >
+                    <path
+                      d="M7.5 7.67001V6.70001C7.5 4.45001 9.31 2.24001 11.56 2.03001C14.24 1.77001 16.5 3.88001 16.5 6.51001V7.89001"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeMiterlimit="10"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M8.99983 22H14.9998C19.0198 22 19.7398 20.39 19.9498 18.43L20.6998 12.43C20.9698 9.99 20.2698 8 15.9998 8H7.99983C3.72983 8 3.02983 9.99 3.29983 12.43L4.04983 18.43C4.25983 20.39 4.97983 22 8.99983 22Z"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeMiterlimit="10"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M15.4955 12H15.5045"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M8.49451 12H8.50349"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </Link>
+              )}
 
               {/* Profile dropdown */}
               <div className="relative" ref={dropdownRef}>
@@ -164,41 +170,48 @@ export default function Header() {
                     <div className="px-4 py-3 border-b border-menu-bg">
                       <p className="text-white font-medium truncate">{displayName}</p>
                       <p className="text-white/50 text-sm truncate">{user.email}</p>
+                      {!isApproved && (
+                        <span className="inline-block mt-1.5 text-xs text-[#9C99FF] bg-[#9C99FF]/10 px-2 py-0.5 rounded-full">
+                          Access Pending
+                        </span>
+                      )}
                     </div>
 
-                    {/* Menu items */}
-                    <div className="py-1">
-                      <Link
-                        href="/account"
-                        onClick={() => setShowDropdown(false)}
-                        className="flex items-center gap-3 px-4 py-2.5 text-white hover:bg-menu-bg transition-colors"
-                      >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
-                        </svg>
-                        Account
-                      </Link>
-                      <Link
-                        href="/create"
-                        onClick={() => setShowDropdown(false)}
-                        className="flex items-center gap-3 px-4 py-2.5 text-white hover:bg-menu-bg transition-colors"
-                      >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                        </svg>
-                        Creator Dashboard
-                      </Link>
-                      <Link
-                        href="/drafts"
-                        onClick={() => setShowDropdown(false)}
-                        className="flex items-center gap-3 px-4 py-2.5 text-white hover:bg-menu-bg transition-colors"
-                      >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                        My Drafts
-                      </Link>
-                    </div>
+                    {/* Menu items — only for approved users */}
+                    {isApproved && (
+                      <div className="py-1">
+                        <Link
+                          href="/account"
+                          onClick={() => setShowDropdown(false)}
+                          className="flex items-center gap-3 px-4 py-2.5 text-white hover:bg-menu-bg transition-colors"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                          </svg>
+                          Account
+                        </Link>
+                        <Link
+                          href="/create"
+                          onClick={() => setShowDropdown(false)}
+                          className="flex items-center gap-3 px-4 py-2.5 text-white hover:bg-menu-bg transition-colors"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                          </svg>
+                          Creator Dashboard
+                        </Link>
+                        <Link
+                          href="/drafts"
+                          onClick={() => setShowDropdown(false)}
+                          className="flex items-center gap-3 px-4 py-2.5 text-white hover:bg-menu-bg transition-colors"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                          My Drafts
+                        </Link>
+                      </div>
+                    )}
 
                     {/* Sign out */}
                     <div className="border-t border-menu-bg py-1">
@@ -221,7 +234,7 @@ export default function Header() {
               href="/login"
               className="px-8 py-2.5 rounded-card text-white text-base font-semibold leading-[120%] hover:bg-card-bg-3 transition-colors"
             >
-              Login
+              Request Access
             </Link>
           )}
         </div>
@@ -263,44 +276,54 @@ export default function Header() {
                 <p className="text-white font-medium text-sm truncate">{displayName}</p>
                 <p className="text-white/50 text-xs truncate">{user.email}</p>
               </div>
+              {!isApproved && (
+                <span className="ml-auto text-xs text-[#9C99FF] bg-[#9C99FF]/10 px-2 py-0.5 rounded-full flex-shrink-0">
+                  Pending
+                </span>
+              )}
             </div>
           )}
 
-          {/* All nav links — single flat list */}
+          {/* Nav links */}
           <nav className="flex flex-col py-1">
-            <Link href="/" className="px-3 py-2.5 text-white font-semibold rounded-lg hover:bg-white/5 transition-colors flex items-center gap-3">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className="text-white">
-                <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
-              </svg>
-              Browse
-            </Link>
-            <Link href="/create" className="px-3 py-2.5 text-white font-semibold rounded-lg hover:bg-white/5 transition-colors flex items-center gap-3">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className="text-white">
-                <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-              </svg>
-              Create
-            </Link>
-            {!loading && user && (
+            {/* Full nav for approved users */}
+            {isApproved && (
               <>
-                <Link href="/cart" className="px-3 py-2.5 text-white font-semibold rounded-lg hover:bg-white/5 transition-colors flex items-center gap-3">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M7.5 7.67V6.7c0-2.25 1.81-4.46 4.06-4.67C14.24 1.77 16.5 3.88 16.5 6.51V7.89" />
-                    <path d="M9 22h6c4.02 0 4.74-1.61 4.95-3.57l.75-6C20.97 9.99 20.27 8 16 8H8c-4.27 0-4.97 1.99-4.7 4.43l.75 6C4.26 20.39 4.98 22 9 22z" />
-                  </svg>
-                  Cart
-                </Link>
-                <Link href="/account" className="px-3 py-2.5 text-white font-semibold rounded-lg hover:bg-white/5 transition-colors flex items-center gap-3">
+                <Link href="/" className="px-3 py-2.5 text-white font-semibold rounded-lg hover:bg-white/5 transition-colors flex items-center gap-3">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className="text-white">
-                    <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                    <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
                   </svg>
-                  Account
+                  Browse
                 </Link>
-                <Link href="/drafts" className="px-3 py-2.5 text-white font-semibold rounded-lg hover:bg-white/5 transition-colors flex items-center gap-3">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                <Link href="/create" className="px-3 py-2.5 text-white font-semibold rounded-lg hover:bg-white/5 transition-colors flex items-center gap-3">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className="text-white">
+                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                   </svg>
-                  My Drafts
+                  Create
                 </Link>
+                {!loading && user && (
+                  <>
+                    <Link href="/cart" className="px-3 py-2.5 text-white font-semibold rounded-lg hover:bg-white/5 transition-colors flex items-center gap-3">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M7.5 7.67V6.7c0-2.25 1.81-4.46 4.06-4.67C14.24 1.77 16.5 3.88 16.5 6.51V7.89" />
+                        <path d="M9 22h6c4.02 0 4.74-1.61 4.95-3.57l.75-6C20.97 9.99 20.27 8 16 8H8c-4.27 0-4.97 1.99-4.7 4.43l.75 6C4.26 20.39 4.98 22 9 22z" />
+                      </svg>
+                      Cart
+                    </Link>
+                    <Link href="/account" className="px-3 py-2.5 text-white font-semibold rounded-lg hover:bg-white/5 transition-colors flex items-center gap-3">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className="text-white">
+                        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                      </svg>
+                      Account
+                    </Link>
+                    <Link href="/drafts" className="px-3 py-2.5 text-white font-semibold rounded-lg hover:bg-white/5 transition-colors flex items-center gap-3">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                      My Drafts
+                    </Link>
+                  </>
+                )}
               </>
             )}
           </nav>
@@ -328,7 +351,7 @@ export default function Header() {
                     href="/login"
                     className="block px-3 py-2.5 text-white font-semibold rounded-lg text-center bg-button-gradient mt-2"
                   >
-                    Login
+                    Request Access
                   </Link>
                 </>
               )}

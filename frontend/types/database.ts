@@ -4,6 +4,7 @@ export type StoryType = "video";
 export type ContentStatus = "draft" | "published";
 export type SubscriptionStatus = "active" | "canceled";
 export type CartItemType = "subscription" | "ebook";
+export type AccessStatus = "pending" | "approved" | "rejected";
 
 export interface Database {
   public: {
@@ -16,6 +17,7 @@ export interface Database {
           bio: string;
           avatar_url: string | null;
           is_creator: boolean;
+          access_status: AccessStatus;
           created_at: string;
           updated_at: string;
         };
@@ -26,6 +28,7 @@ export interface Database {
           bio?: string;
           avatar_url?: string | null;
           is_creator?: boolean;
+          access_status?: AccessStatus;
           created_at?: string;
           updated_at?: string;
         };
@@ -36,6 +39,7 @@ export interface Database {
           bio?: string;
           avatar_url?: string | null;
           is_creator?: boolean;
+          access_status?: AccessStatus;
           updated_at?: string;
         };
       };

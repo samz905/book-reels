@@ -10,6 +10,20 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
+      // Check if this user is approved or still pending
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("access_status")
+          .eq("id", user.id)
+          .single();
+
+        if (!profile || profile.access_status !== "approved") {
+          return NextResponse.redirect(`${origin}/waitlist`);
+        }
+      }
+
       return NextResponse.redirect(`${origin}${next}`);
     }
   }

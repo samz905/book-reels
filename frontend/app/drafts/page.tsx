@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useQueryClient } from "@tanstack/react-query";
@@ -302,7 +302,14 @@ function StorySection({
 
 export default function DraftsPage() {
   const router = useRouter();
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, accessStatus } = useAuth();
+
+  // Redirect if not authenticated or not approved
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) { router.push("/login"); return; }
+    if (accessStatus !== "approved") { router.push("/waitlist"); return; }
+  }, [user, authLoading, accessStatus, router]);
 
   // Data — React Query (cached)
   const { data: drafts = [], isLoading: draftsLoading } =
@@ -528,24 +535,8 @@ export default function DraftsPage() {
           </div>
         )}
 
-        {/* Not authenticated */}
-        {!authLoading && !user && (
-          <div className="bg-panel rounded-xl p-8 text-center">
-            <h2 className="text-white text-xl font-semibold mb-4">
-              Sign in to view your drafts
-            </h2>
-            <button
-              onClick={() => router.push("/login")}
-              className="px-6 py-3 rounded-lg font-semibold text-white transition-opacity hover:opacity-90"
-              style={{
-                background:
-                  "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",
-              }}
-            >
-              Sign In
-            </button>
-          </div>
-        )}
+        {/* Not authenticated — redirect handles this, but guard render */}
+        {!authLoading && !user && null}
 
         {/* Empty state */}
         {!isLoading && user && drafts.length === 0 && (

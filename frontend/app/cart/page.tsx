@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
@@ -17,7 +17,14 @@ type TabType = "subscriptions" | "ebooks";
 
 export default function CartPage() {
   const router = useRouter();
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, accessStatus } = useAuth();
+
+  // Redirect if not authenticated or not approved
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) { router.push("/login"); return; }
+    if (accessStatus !== "approved") { router.push("/waitlist"); return; }
+  }, [user, authLoading, accessStatus, router]);
   const [activeTab, setActiveTab] = useState<TabType>("subscriptions");
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
@@ -71,46 +78,9 @@ export default function CartPage() {
     );
   }
 
-  // Not signed in
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-black">
-        <Header />
-        <main className="px-4 md:px-6 py-8 max-w-7xl mx-auto">
-          <div className="bg-panel rounded-xl p-8 text-center">
-            <svg
-              width="48"
-              height="48"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="white"
-              strokeWidth="1.5"
-              className="mx-auto mb-4 opacity-40"
-            >
-              <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" />
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <path d="M16 10a4 4 0 01-8 0" />
-            </svg>
-            <h2 className="text-white text-xl font-semibold mb-4">
-              Sign in to view your cart
-            </h2>
-            <p className="text-white/60 mb-6">
-              Subscribe to creators you love and purchase ebooks.
-            </p>
-            <button
-              onClick={() => router.push("/login")}
-              className="px-6 py-3 rounded-lg font-semibold text-white transition-opacity hover:opacity-90"
-              style={{
-                background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",
-              }}
-            >
-              Sign In
-            </button>
-          </div>
-        </main>
-        <Footer />
-      </div>
-    );
+  // Not signed in or not approved — redirect handles this
+  if (!user || accessStatus !== "approved") {
+    return null;
   }
 
   return (

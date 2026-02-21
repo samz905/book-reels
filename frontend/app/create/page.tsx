@@ -44,7 +44,7 @@ import {
 export default function CreatePage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, accessStatus } = useAuth();
 
   // React Query — cached, stale-while-revalidate data loading
   const {
@@ -304,31 +304,13 @@ export default function CreatePage() {
   }
 
   if (!user) {
-    return (
-      <div className="min-h-screen bg-black relative overflow-clip">
-        <Header />
-        <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
-          <div className="bg-panel rounded-xl p-8 text-center">
-            <h2 className="text-white text-xl font-semibold mb-4">
-              Sign in to access your creator dashboard
-            </h2>
-            <p className="text-white/60 mb-6">
-              Create stories, publish episodes, and manage your content.
-            </p>
-            <button
-              onClick={() => router.push("/login")}
-              className="px-6 py-3 rounded-lg font-semibold text-white transition-opacity hover:opacity-90"
-              style={{
-                background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",
-              }}
-            >
-              Sign In
-            </button>
-          </div>
-        </main>
-        <Footer />
-      </div>
-    );
+    router.push("/login");
+    return null;
+  }
+
+  if (accessStatus !== "approved") {
+    router.push("/waitlist");
+    return null;
   }
 
   if ((profileError || storiesError) && !profile) {

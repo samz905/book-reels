@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import {
@@ -328,7 +329,15 @@ const STYLE_DISPLAY_MAP: Record<string, string> = {
 // ============================================================
 
 export default function CreateEpisodePage() {
-  const { user } = useAuth();
+  const { user, loading: authLoading, accessStatus } = useAuth();
+  const accessRouter = useRouter();
+
+  // Redirect if not authenticated or not approved
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) { accessRouter.push("/login"); return; }
+    if (accessStatus !== "approved") { accessRouter.push("/waitlist"); return; }
+  }, [user, authLoading, accessStatus, accessRouter]);
 
   // Story picker + episode modal (mandatory association)
   const [showStoryPicker, setShowStoryPicker] = useState(false);
