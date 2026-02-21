@@ -51,15 +51,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      userIdRef.current = session?.user?.id ?? null;
-      setSession(session);
-      setUser(session?.user ?? null);
+      try {
+        userIdRef.current = session?.user?.id ?? null;
+        setSession(session);
+        setUser(session?.user ?? null);
 
-      if (session?.user?.id) {
-        posthog.identify(session.user.id, { email: session.user.email });
-        await fetchAccessStatus(session.user.id);
+        if (session?.user?.id) {
+          try { posthog.identify(session.user.id, { email: session.user.email }); } catch {}
+          await fetchAccessStatus(session.user.id);
+        }
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     // Listen for auth changes — only update user state when the identity actually changes
@@ -74,7 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(session?.user ?? null);
 
         if (newUserId) {
-          posthog.identify(newUserId, { email: session?.user?.email });
+          try { posthog.identify(newUserId, { email: session?.user?.email }); } catch {}
           await fetchAccessStatus(newUserId);
         } else {
           setAccessStatus(null);
