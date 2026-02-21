@@ -304,9 +304,9 @@ export default function DraftsPage() {
   const router = useRouter();
   const { user, loading: authLoading, accessStatus } = useAuth();
 
-  // Redirect if not authenticated or explicitly pending/rejected
+  // Redirect if not authenticated or not approved
   useEffect(() => {
-    if (authLoading || accessStatus === null) return;
+    if (authLoading) return;
     if (!user) { router.push("/login"); return; }
     if (accessStatus !== "approved") { router.push("/waitlist"); return; }
   }, [user, authLoading, accessStatus, router]);

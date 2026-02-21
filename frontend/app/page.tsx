@@ -63,17 +63,15 @@ function transformStory(apiStory: ApiStory): Story {
 export default function Home() {
   const { user, loading: authLoading, accessStatus } = useAuth();
   const router = useRouter();
-  // null = not yet loaded, treat as loading; only "approved" grants access
-  const accessResolved = accessStatus !== null;
   const isApproved = user && accessStatus === "approved";
 
-  // Redirect explicitly pending/rejected users to waitlist
+  // Redirect pending/rejected users to waitlist
   useEffect(() => {
-    if (authLoading || !accessResolved) return;
-    if (user && !isApproved) {
+    if (authLoading) return;
+    if (user && accessStatus !== "approved") {
       router.push("/waitlist");
     }
-  }, [user, authLoading, accessResolved, isApproved, router]);
+  }, [user, authLoading, accessStatus, router]);
 
   const [activeCategory, setActiveCategory] = useState<Category>("ALL");
   const [isSticky, setIsSticky] = useState(false);
@@ -174,8 +172,8 @@ export default function Home() {
     }
   }, []);
 
-  // ─── Loading state while auth + access status resolve ──────────────
-  if (authLoading || (user && !accessResolved)) {
+  // ─── Loading state while auth resolves ─────────────────────────────
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-gradient-page flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />

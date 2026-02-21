@@ -32,30 +32,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [accessStatus, setAccessStatus] = useState<AccessStatus | null>(null);
   const userIdRef = useRef<string | null>(null);
 
-  // Fetch the user's access_status from their profile
+  // Fetch the user's access_status from their profile (8s timeout via Promise.race)
   const fetchAccessStatus = async (userId: string) => {
     try {
-      const { data, error } = await supabase
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), 8000)
+      );
+      const query = supabase
         .from("profiles")
         .select("access_status")
         .eq("id", userId)
         .single();
-
-      if (data?.access_status) {
-        setAccessStatus(data.access_status as AccessStatus);
-      } else if (error?.code === "PGRST116" || !data) {
-        setAccessStatus("pending");
-      } else {
-        setAccessStatus("pending");
-      }
+      const { data } = await Promise.race([query, timeout]);
+      setAccessStatus((data?.access_status as AccessStatus) || "pending");
     } catch {
       setAccessStatus("pending");
     }
   };
 
   useEffect(() => {
-    // Safety net: never show spinner for more than 5s no matter what
-    const timeout = setTimeout(() => setLoading(false), 5000);
+    // Safety net: after 10s, force-resolve both loading AND accessStatus.
+    // Invariant: loading=false → accessStatus is non-null (if user exists).
+    const timeout = setTimeout(() => {
+      setAccessStatus(prev => prev ?? "pending");
+      setLoading(false);
+    }, 10000);
 
     // Get initial session
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -74,10 +75,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     });
 
-    // Listen for auth changes (sign-in, sign-out, token refresh)
-    // NOTE: Do NOT call setLoading(false) here — the initial load is
-    // controlled by the getSession().finally() above. The listener only
-    // handles *subsequent* auth changes after the app is already loaded.
+    // Listen for subsequent auth changes (sign-in, sign-out, token refresh).
+    // Does NOT control initial loading — that's handled by getSession().finally().
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
@@ -88,6 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(session?.user ?? null);
 
         if (newUserId) {
+          setAccessStatus(null); // signal "resolving" so pages show spinner
           try { posthog.identify(newUserId, { email: session?.user?.email }); } catch {}
           await fetchAccessStatus(newUserId);
         } else {
