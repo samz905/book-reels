@@ -54,6 +54,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
+    // Safety net: never show spinner for more than 5s no matter what
+    const timeout = setTimeout(() => setLoading(false), 5000);
+
     // Get initial session
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       userIdRef.current = session?.user?.id ?? null;
@@ -67,6 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }).catch(() => {
       // Supabase unreachable — still unblock the UI
     }).finally(() => {
+      clearTimeout(timeout);
       setLoading(false);
     });
 
