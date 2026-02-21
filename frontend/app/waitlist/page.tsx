@@ -42,6 +42,15 @@ export default function WaitlistPage() {
     );
   }
 
+  // Still resolving access status — show spinner, don't flash "You're on the list"
+  if (user && accessStatus === null) {
+    return (
+      <div className="min-h-screen bg-gradient-page flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   if (!user || accessStatus === "approved") return null;
 
   return (

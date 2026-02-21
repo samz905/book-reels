@@ -66,9 +66,9 @@ export default function AccountPage() {
     }
   }, [user, fetchEbooks, fetchSubscriptions]);
 
-  // Redirect to login if not authenticated, or waitlist if not approved
+  // Redirect to login if not authenticated, or waitlist if explicitly pending/rejected
   useEffect(() => {
-    if (loading) return;
+    if (loading || accessStatus === null) return;
     if (!user) { router.push("/login"); return; }
     if (accessStatus !== "approved") { router.push("/waitlist"); return; }
   }, [user, loading, accessStatus, router]);
@@ -78,8 +78,8 @@ export default function AccountPage() {
     router.push("/");
   };
 
-  // Show loading state while checking auth
-  if (loading) {
+  // Show loading state while checking auth + access
+  if (loading || (user && accessStatus === null)) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />

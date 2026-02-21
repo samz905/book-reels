@@ -19,9 +19,9 @@ export default function CartPage() {
   const router = useRouter();
   const { user, loading: authLoading, accessStatus } = useAuth();
 
-  // Redirect if not authenticated or not approved
+  // Redirect if not authenticated or explicitly pending/rejected
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading || accessStatus === null) return;
     if (!user) { router.push("/login"); return; }
     if (accessStatus !== "approved") { router.push("/waitlist"); return; }
   }, [user, authLoading, accessStatus, router]);
@@ -63,8 +63,8 @@ export default function CartPage() {
   const currentCount =
     activeTab === "subscriptions" ? subscriptions.length : ebooks.length;
 
-  // Auth loading
-  if (authLoading) {
+  // Auth loading or access status pending resolution
+  if (authLoading || (user && accessStatus === null)) {
     return (
       <div className="min-h-screen bg-black">
         <Header />

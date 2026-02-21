@@ -332,9 +332,9 @@ export default function CreateEpisodePage() {
   const { user, loading: authLoading, accessStatus } = useAuth();
   const accessRouter = useRouter();
 
-  // Redirect if not authenticated or not approved
+  // Redirect if not authenticated or explicitly pending/rejected
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading || accessStatus === null) return;
     if (!user) { accessRouter.push("/login"); return; }
     if (accessStatus !== "approved") { accessRouter.push("/waitlist"); return; }
   }, [user, authLoading, accessStatus, accessRouter]);

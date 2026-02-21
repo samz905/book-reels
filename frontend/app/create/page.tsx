@@ -331,7 +331,7 @@ export default function CreatePage() {
     return null;
   }
 
-  if (accessStatus !== "approved") {
+  if (accessStatus !== null && accessStatus !== "approved") {
     router.push("/waitlist");
     return null;
   }
