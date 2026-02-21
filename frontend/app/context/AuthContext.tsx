@@ -22,28 +22,33 @@ const AuthContext = createContext<AuthContextType>({
   signOut: async () => {},
 });
 
+// Singleton client — created once outside the component
+const supabase = createClient();
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [accessStatus, setAccessStatus] = useState<AccessStatus | null>(null);
-  const supabase = createClient();
   const userIdRef = useRef<string | null>(null);
 
   // Fetch the user's access_status from their profile
   const fetchAccessStatus = async (userId: string) => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("access_status")
-      .eq("id", userId)
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("access_status")
+        .eq("id", userId)
+        .single();
 
-    if (data?.access_status) {
-      setAccessStatus(data.access_status as AccessStatus);
-    } else if (error?.code === "PGRST116" || !data) {
-      // No profile found — edge case (pre-trigger user). Treat as pending.
-      setAccessStatus("pending");
-    } else {
+      if (data?.access_status) {
+        setAccessStatus(data.access_status as AccessStatus);
+      } else if (error?.code === "PGRST116" || !data) {
+        setAccessStatus("pending");
+      } else {
+        setAccessStatus("pending");
+      }
+    } catch {
       setAccessStatus("pending");
     }
   };
@@ -51,22 +56,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      try {
-        userIdRef.current = session?.user?.id ?? null;
-        setSession(session);
-        setUser(session?.user ?? null);
+      userIdRef.current = session?.user?.id ?? null;
+      setSession(session);
+      setUser(session?.user ?? null);
 
-        if (session?.user?.id) {
-          try { posthog.identify(session.user.id, { email: session.user.email }); } catch {}
-          await fetchAccessStatus(session.user.id);
-        }
-      } finally {
-        setLoading(false);
+      if (session?.user?.id) {
+        try { posthog.identify(session.user.id, { email: session.user.email }); } catch {}
+        await fetchAccessStatus(session.user.id);
       }
+    }).catch(() => {
+      // Supabase unreachable — still unblock the UI
+    }).finally(() => {
+      setLoading(false);
     });
 
-    // Listen for auth changes — only update user state when the identity actually changes
-    // (not on TOKEN_REFRESHED which fires on tab focus and creates a new object reference)
+    // Listen for auth changes
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
@@ -87,7 +91,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     return () => subscription.unsubscribe();
-  }, [supabase.auth]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const signOut = async () => {
     await supabase.auth.signOut();
