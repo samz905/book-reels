@@ -32,11 +32,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [accessStatus, setAccessStatus] = useState<AccessStatus | null>(null);
   const userIdRef = useRef<string | null>(null);
 
-  // Fetch the user's access_status from their profile (8s timeout via Promise.race)
+  // Fetch the user's access_status from their profile (4s timeout via Promise.race)
   const fetchAccessStatus = async (userId: string) => {
     try {
       const timeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), 8000)
+        setTimeout(() => reject(new Error("timeout")), 4000)
       );
       const query = supabase
         .from("profiles")
@@ -51,12 +51,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    // Safety net: after 10s, force-resolve both loading AND accessStatus.
+    // Safety net: after 5s, force-resolve both loading AND accessStatus.
     // Invariant: loading=false → accessStatus is non-null (if user exists).
     const timeout = setTimeout(() => {
       setAccessStatus(prev => prev ?? "pending");
       setLoading(false);
-    }, 10000);
+    }, 5000);
 
     // Get initial session
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -76,10 +76,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     // Listen for subsequent auth changes (sign-in, sign-out, token refresh).
-    // Does NOT control initial loading — that's handled by getSession().finally().
+    // Skip INITIAL_SESSION — it's handled by getSession().then() above and
+    // would otherwise hold the internal Supabase lock (blocking getSession)
+    // while redundantly fetching accessStatus, doubling the load time.
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "INITIAL_SESSION") return;
       const newUserId = session?.user?.id ?? null;
       setSession(session);
       if (newUserId !== userIdRef.current) {
