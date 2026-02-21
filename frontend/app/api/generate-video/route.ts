@@ -1,5 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
+import { getPostHogClient } from "@/lib/posthog-server";
+import { getAuthUser } from "@/lib/api/helpers";
 
 // Allow up to 120s for Veo operations (requires Vercel Pro)
 export const maxDuration = 120;
@@ -101,6 +103,22 @@ export async function POST(request: NextRequest) {
     }
 
     console.log("Video generation started, operation:", operationName);
+
+    // Track video generation server-side
+    const authUser = await getAuthUser(request).catch(() => null);
+    const posthog = getPostHogClient();
+    const generationMode = video ? "extend" : image ? "image_to_video" : referenceImages?.length > 0 ? "reference_images" : "text_only";
+    posthog.capture({
+      distinctId: authUser?.id ?? "anonymous",
+      event: "video_generation_started",
+      properties: {
+        mode: generationMode,
+        has_reference_images: !!(referenceImages?.length > 0),
+        reference_image_count: referenceImages?.length ?? 0,
+        has_last_frame: !!lastFrame,
+        operation_name: operationName,
+      },
+    });
 
     return NextResponse.json({
       operationName,

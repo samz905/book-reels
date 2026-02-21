@@ -6,6 +6,7 @@ import {
   unauthorizedResponse,
   getAuthUser,
 } from "@/lib/api/helpers";
+import { getPostHogClient } from "@/lib/posthog-server";
 
 // POST /api/cart/checkout - Process checkout
 export async function POST(request: NextRequest) {
@@ -118,6 +119,20 @@ export async function POST(request: NextRequest) {
   if (totalProcessed === 0 && totalErrors > 0) {
     return errorResponse(`Checkout failed: ${results.errors.join(", ")}`, 400);
   }
+
+  // Track checkout completion server-side
+  const posthog = getPostHogClient();
+  posthog.capture({
+    distinctId: user.id,
+    event: "checkout_completed",
+    properties: {
+      subscriptions_count: results.subscriptions.length,
+      ebooks_count: results.purchases.length,
+      total_items: totalProcessed,
+      has_errors: totalErrors > 0,
+      error_count: totalErrors,
+    },
+  });
 
   return jsonResponse({
     success: true,

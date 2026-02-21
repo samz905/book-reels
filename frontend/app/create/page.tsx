@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
+import posthog from "posthog-js";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import ProfileCard from "../components/creator/ProfileCard";
@@ -172,9 +173,16 @@ export default function CreatePage() {
         genres: storyData.genre,
         status: storyData.status,
       });
+      posthog.capture("story_created", {
+        title: storyData.title,
+        type: storyData.type,
+        genres: storyData.genre,
+        status: storyData.status,
+      });
       setShowCreateStoryModal(false);
       queryClient.invalidateQueries({ queryKey: queryKeys.stories(user!.id) });
     } catch (err) {
+      posthog.captureException(err instanceof Error ? err : new Error(String(err)));
       console.error("Error creating story:", err);
       const errorMessage = err instanceof Error ? err.message : "Failed to create story";
       setError(errorMessage);
@@ -195,9 +203,16 @@ export default function CreatePage() {
         is_free: episodeData.isFree,
         status: "draft",
       });
+      posthog.capture("episode_created", {
+        story_id: storyId,
+        episode_number: episodeData.number,
+        episode_name: episodeData.name,
+        is_free: episodeData.isFree,
+      });
       queryClient.invalidateQueries({ queryKey: queryKeys.stories(user!.id) });
       return newEpisode;
     } catch (err) {
+      posthog.captureException(err instanceof Error ? err : new Error(String(err)));
       console.error("Error creating episode:", err);
       throw err;
     }
@@ -222,9 +237,17 @@ export default function CreatePage() {
         isbn: ebookData.isbn || null,
         price: ebookData.price,
       });
+      posthog.capture("ebook_added", {
+        story_id: storyId,
+        title: ebookData.title,
+        price: ebookData.price,
+        has_cover: !!ebookData.coverUrl,
+        has_isbn: !!ebookData.isbn,
+      });
       queryClient.invalidateQueries({ queryKey: queryKeys.stories(user!.id) });
       return newEbook;
     } catch (err) {
+      posthog.captureException(err instanceof Error ? err : new Error(String(err)));
       console.error("Error creating ebook:", err);
       throw err;
     }

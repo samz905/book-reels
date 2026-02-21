@@ -172,8 +172,17 @@ export default function Home() {
     }
   }, []);
 
+  // ─── Loading state while auth resolves ─────────────────────────────
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-page flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   // ─── Marketing Landing Page (unauthenticated users) ─────────────────
-  if (!authLoading && !isApproved) {
+  if (!isApproved) {
     return (
       <div className="min-h-screen bg-gradient-page relative overflow-clip">
         {/* Purple glow effects */}
@@ -185,9 +194,9 @@ export default function Home() {
         <main className="relative z-10 px-4 md:px-6">
           {/* Hero Section */}
           <section className="text-center py-20 md:py-28 max-w-[800px] mx-auto">
-            <div className="absolute w-[227px] h-[170px] left-1/2 -translate-x-1/2 top-[140px] bg-[rgba(156,153,255,0.55)] blur-[95px]" />
+            <div className="absolute w-[227px] h-[170px] left-1/2 -translate-x-1/2 top-[140px] bg-[rgba(156,153,255,0.55)] blur-[95px] pointer-events-none" />
 
-            <h1 className="font-medium text-4xl sm:text-5xl lg:text-[72px] leading-tight lg:leading-[72px] tracking-[-1.5px] lg:tracking-[-3.6px] mb-6">
+            <h1 className="relative font-medium text-4xl sm:text-5xl lg:text-[72px] leading-tight lg:leading-[72px] tracking-[-1.5px] lg:tracking-[-3.6px] mb-6">
               <span className="text-white">Stories, </span>
               <span
                 style={{
@@ -200,12 +209,12 @@ export default function Home() {
                 reimagined
               </span>
             </h1>
-            <p className="text-white/70 text-base sm:text-lg lg:text-[19.5px] leading-relaxed lg:leading-7 max-w-[676px] mx-auto mb-10">
+            <p className="relative text-white/70 text-base sm:text-lg lg:text-[19.5px] leading-relaxed lg:leading-7 max-w-[676px] mx-auto mb-10">
               Find stories that move you. Let yours be seen too.
             </p>
             <Link
               href="/login"
-              className="inline-block text-[#F8FAFC] font-bold text-[17.9px] leading-7 px-10 py-4 rounded-[14px] hover:opacity-90 transition-opacity"
+              className="relative inline-block text-[#F8FAFC] font-bold text-[17.9px] leading-7 px-10 py-4 rounded-[14px] hover:opacity-90 transition-opacity"
               style={{ background: 'linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)' }}
             >
               Request Early Access

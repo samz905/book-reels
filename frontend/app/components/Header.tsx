@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
+import posthog from "posthog-js";
 
 export default function Header() {
   const router = useRouter();
@@ -35,6 +36,8 @@ export default function Header() {
   const handleSignOut = async () => {
     setShowDropdown(false);
     setMobileMenuOpen(false);
+    posthog.capture("user_signed_out");
+    posthog.reset();
     await signOut();
     router.push("/");
   };

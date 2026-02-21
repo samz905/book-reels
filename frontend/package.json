@@ -16,6 +16,8 @@
     "@supabase/supabase-js": "^2.91.1",
     "@tanstack/react-query": "^5.90.21",
     "next": "16.1.4",
+    "posthog-js": "^1.352.0",
+    "posthog-node": "^5.24.17",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-reader": "^2.0.15"

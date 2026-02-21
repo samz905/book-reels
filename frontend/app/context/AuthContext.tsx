@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, useRef } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import type { AccessStatus } from "@/types/database";
+import posthog from "posthog-js";
 
 interface AuthContextType {
   user: User | null;
@@ -55,6 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(session?.user ?? null);
 
       if (session?.user?.id) {
+        posthog.identify(session.user.id, { email: session.user.email });
         await fetchAccessStatus(session.user.id);
       }
       setLoading(false);
@@ -72,6 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(session?.user ?? null);
 
         if (newUserId) {
+          posthog.identify(newUserId, { email: session?.user?.email });
           await fetchAccessStatus(newUserId);
         } else {
           setAccessStatus(null);

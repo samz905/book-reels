@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
+import posthog from "posthog-js";
 
 // ---- Types (used by cart components) ----
 
@@ -115,22 +116,40 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, [fetchCart]);
 
   const removeSubscription = useCallback(async (id: string) => {
+    const removed = subscriptions.find((s) => s.id === id);
     setSubscriptions((prev) => prev.filter((s) => s.id !== id));
+    if (removed) {
+      posthog.capture("cart_item_removed", {
+        item_type: "subscription",
+        item_id: id,
+        price: removed.price,
+        creator_name: removed.creatorName,
+      });
+    }
     try {
       await fetch(`/api/cart/${id}`, { method: "DELETE" });
     } catch {
       fetchCart();
     }
-  }, [fetchCart]);
+  }, [fetchCart, subscriptions]);
 
   const removeEbook = useCallback(async (id: string) => {
+    const removed = ebooks.find((e) => e.id === id);
     setEbooks((prev) => prev.filter((e) => e.id !== id));
+    if (removed) {
+      posthog.capture("cart_item_removed", {
+        item_type: "ebook",
+        item_id: id,
+        price: removed.price,
+        title: removed.title,
+      });
+    }
     try {
       await fetch(`/api/cart/${id}`, { method: "DELETE" });
     } catch {
       fetchCart();
     }
-  }, [fetchCart]);
+  }, [fetchCart, ebooks]);
 
   const addSubscription = useCallback(async (creatorId: string, price: number) => {
     try {
@@ -139,7 +158,14 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ item_type: "subscription", creator_id: creatorId, price }),
       });
-      if (res.ok) await fetchCart();
+      if (res.ok) {
+        posthog.capture("cart_item_added", {
+          item_type: "subscription",
+          creator_id: creatorId,
+          price,
+        });
+        await fetchCart();
+      }
     } catch {
       // Caller can handle
     }
@@ -152,7 +178,14 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ item_type: "ebook", ebook_id: ebookId, price }),
       });
-      if (res.ok) await fetchCart();
+      if (res.ok) {
+        posthog.capture("cart_item_added", {
+          item_type: "ebook",
+          ebook_id: ebookId,
+          price,
+        });
+        await fetchCart();
+      }
     } catch {
       // Caller can handle
     }

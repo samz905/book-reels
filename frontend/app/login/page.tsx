@@ -6,6 +6,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
+import posthog from "posthog-js";
 
 export default function LoginPage() {
   const [name, setName] = useState("");
@@ -36,17 +37,31 @@ export default function LoginPage() {
           },
         });
         if (error) throw error;
+        posthog.capture("user_signed_up", {
+          email,
+          name,
+          method: "email",
+        });
         setError("Check your email to confirm your account. You'll be added to our waitlist!");
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { data: signInData, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
         if (error) throw error;
+        const userId = signInData.user?.id;
+        if (userId) {
+          posthog.identify(userId, { email });
+        }
+        posthog.capture("user_logged_in", {
+          email,
+          method: "email",
+        });
         router.push("/");
         router.refresh();
       }
     } catch (err) {
+      posthog.captureException(err instanceof Error ? err : new Error(String(err)));
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setLoading(false);
@@ -58,6 +73,9 @@ export default function LoginPage() {
     setError(null);
 
     try {
+      posthog.capture("user_google_sign_in_started", {
+        method: "google",
+      });
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
@@ -66,6 +84,7 @@ export default function LoginPage() {
       });
       if (error) throw error;
     } catch (err) {
+      posthog.captureException(err instanceof Error ? err : new Error(String(err)));
       setError(err instanceof Error ? err.message : "An error occurred");
       setLoading(false);
     }
