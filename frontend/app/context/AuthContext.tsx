@@ -74,7 +74,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     });
 
-    // Listen for auth changes
+    // Listen for auth changes (sign-in, sign-out, token refresh)
+    // NOTE: Do NOT call setLoading(false) here — the initial load is
+    // controlled by the getSession().finally() above. The listener only
+    // handles *subsequent* auth changes after the app is already loaded.
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
@@ -91,7 +94,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setAccessStatus(null);
         }
       }
-      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
