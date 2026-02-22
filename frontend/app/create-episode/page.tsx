@@ -1113,12 +1113,12 @@ export default function CreateEpisodePage() {
   }, [realtimeJobs, isRestoringState]);
 
   // Stale job watchdog: auto-fail jobs stuck in "generating".
-  // Image jobs: 3 min (backend has 90s per-call + 3 min job timeout).
-  // Video jobs: 5.5 min (30s buffer above Seedance's 5-min poll timeout + startup overhead).
+  // Image jobs: 5 min (backend max: 90s × 3 retries = 270s = 4.5min, plus 30s buffer).
+  // Video jobs: 6 min (Seedance 5min poll timeout + startup overhead).
   // Catches cases where the backend dies without updating gen_jobs (OOM, network drop, etc.).
   useEffect(() => {
-    const IMAGE_STALE_MS = 3 * 60 * 1000; // 3 minutes
-    const VIDEO_STALE_MS = 5.5 * 60 * 1000; // 5.5 minutes
+    const IMAGE_STALE_MS = 5 * 60 * 1000; // 5 minutes
+    const VIDEO_STALE_MS = 6 * 60 * 1000; // 6 minutes
     const VIDEO_JOB_TYPES = new Set(["film", "film_with_prompts", "shot_regenerate", "clip"]);
     const CHECK_INTERVAL_MS = 30 * 1000; // check every 30s
 
