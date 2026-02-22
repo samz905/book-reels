@@ -4,13 +4,17 @@ Step-by-step visual direction: Characters -> Setting -> Key Moment (SPIKE)
 """
 import asyncio
 import base64
+import io
 import uuid
 from typing import Optional, Literal, List, Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import httpx
+from PIL import Image
+from google.genai import types
 
 from ..core import generate_image, generate_image_with_references, COST_IMAGE_GENERATION
+from ..config import genai_client
 from .story import Story, Character, Setting, Location, Beat
 
 router = APIRouter()
@@ -1389,8 +1393,8 @@ class RefineSceneImageResponse(BaseModel):
 @router.post("/refine-scene-image", response_model=RefineSceneImageResponse)
 async def refine_scene_image(request: RefineSceneImageRequest):
     """
-    Edit a scene image using the current image + feedback only.
-    This is a pure editing operation — no refs, no original prompt.
+    Edit a scene image using Gemini 2.5 Flash Image's native editing.
+    Supports text-based edits like removing people, changing elements, etc.
     """
     try:
         # Resolve current image to base64
@@ -1404,26 +1408,46 @@ async def refine_scene_image(request: RefineSceneImageRequest):
         if not image_b64:
             raise ValueError("No current image provided (neither base64 nor url)")
 
-        prompt = f"Edit this image: {request.feedback}"
+        # Convert base64 to PIL Image for Gemini API
+        image_bytes = base64.b64decode(image_b64)
+        pil_image = Image.open(io.BytesIO(image_bytes))
 
         print(f"Editing scene {request.scene_number} with feedback: {request.feedback}")
 
-        result = await generate_image_with_references(
-            prompt=prompt,
-            reference_images=[{"image_base64": image_b64, "mime_type": img.mime_type}],
-            aspect_ratio="9:16",
+        # Use Gemini 2.5 Flash Image for native editing (not generation with refs)
+        # This model understands text-based editing instructions like "remove X", "change Y"
+        response = await asyncio.to_thread(
+            genai_client.models.generate_content,
+            model='gemini-2.5-flash-image',
+            contents=[pil_image, request.feedback],
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(aspect_ratio="9:16")
+            )
         )
+
+        # Extract edited image from response
+        edited_image_b64 = None
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, 'inline_data') and part.inline_data is not None:
+                image_data = part.inline_data
+                if hasattr(image_data, 'data') and image_data.data:
+                    edited_image_b64 = base64.b64encode(image_data.data).decode("utf-8")
+                    break
+
+        if not edited_image_b64:
+            raise ValueError("No image was generated in the edit response")
 
         return RefineSceneImageResponse(
             scene_number=request.scene_number,
             image=MoodboardImage(
                 type="key_moment",
-                image_base64=result["image_base64"],
-                mime_type=result["mime_type"],
-                prompt_used=prompt,
+                image_base64=edited_image_b64,
+                mime_type="image/png",
+                prompt_used=request.feedback,
             ),
-            prompt_used=prompt,
-            cost_usd=COST_IMAGE_GENERATION,
+            prompt_used=request.feedback,
+            cost_usd=0.039,  # Gemini 2.5 Flash Image pricing
         )
 
     except Exception as e:

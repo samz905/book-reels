@@ -150,7 +150,8 @@
       "WebFetch(domain:seedanceapi.org)",
       "WebFetch(domain:atlascloud.ai)",
       "WebFetch(domain:www.aifreeapi.com)",
-      "WebFetch(domain:wavespeed.ai)"
+      "WebFetch(domain:wavespeed.ai)",
+      "Bash(del \"c:\\\\Users\\\\samZ9\\\\Downloads\\\\Code\\\\book-reels\\\\frontend\\\\app\\\\components\\\\account\\\\PaymentPayoutCard.tsx\")"
     ]
   },
   "enableAllProjectMcpServers": true,
