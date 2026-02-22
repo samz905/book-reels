@@ -76,11 +76,22 @@ export function useGenJobs(generationId: string | null): GenJob[] {
 
     channelRef.current = channel;
 
+    // Polling fallback: fetch jobs every 30s if any are still generating.
+    // Catches missed Realtime updates (websocket drops, long connections, etc).
+    const pollInterval = setInterval(() => {
+      const hasGenerating = jobs.some((j) => j.status === "generating");
+      if (hasGenerating) {
+        console.log("[useGenJobs] polling fallback — refetching jobs");
+        fetchJobs(generationId);
+      }
+    }, 30000); // 30 seconds
+
     return () => {
       supabase.removeChannel(channel);
       channelRef.current = null;
+      clearInterval(pollInterval);
     };
-  }, [generationId, fetchJobs]);
+  }, [generationId, fetchJobs, jobs]);
 
   return jobs;
 }
