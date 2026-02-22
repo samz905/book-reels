@@ -1114,11 +1114,11 @@ export default function CreateEpisodePage() {
 
   // Stale job watchdog: auto-fail jobs stuck in "generating".
   // Image jobs: 5 min (backend max: 90s × 3 retries = 270s = 4.5min, plus 30s buffer).
-  // Video jobs: 6 min (Seedance 5min poll timeout + startup overhead).
+  // Video jobs: 11 min (Seedance 10min poll timeout + 1min startup/retry overhead).
   // Catches cases where the backend dies without updating gen_jobs (OOM, network drop, etc.).
   useEffect(() => {
     const IMAGE_STALE_MS = 5 * 60 * 1000; // 5 minutes
-    const VIDEO_STALE_MS = 6 * 60 * 1000; // 6 minutes
+    const VIDEO_STALE_MS = 11 * 60 * 1000; // 11 minutes
     const VIDEO_JOB_TYPES = new Set(["film", "film_with_prompts", "shot_regenerate", "clip"]);
     const CHECK_INTERVAL_MS = 30 * 1000; // check every 30s
 
