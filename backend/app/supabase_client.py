@@ -161,16 +161,131 @@ async def async_touch_gen_job(job_id: str):
 # Startup-only (sync is fine — runs before event loop serves requests)
 # ============================================================
 
+def _check_and_resume_or_fail_clips(clip_jobs: list):
+    """Check Atlas Cloud for stale clip jobs - resume if completed, fail if not.
+
+    Safety-first: Any errors → mark job as failed (current behavior).
+    Timeouts: 5s per check to prevent startup hang.
+    """
+    import httpx
+    from .config import ATLASCLOUD_API_KEY
+    from .core.seedance import POLL_URL_TEMPLATE
+
+    sb = get_supabase()
+    if not sb:
+        return
+
+    for job in clip_jobs:
+        job_id = job["id"]
+        result = job.get("result", {})
+        prediction_id = result.get("prediction_id")
+
+        if not prediction_id:
+            # No prediction_id - mark failed (defensive)
+            try:
+                sb.table("gen_jobs").update({
+                    "status": "failed",
+                    "error_message": "No prediction_id found for resume",
+                    "updated_at": _now_iso(),
+                }).eq("id", job_id).execute()
+            except Exception:
+                pass
+            continue
+
+        try:
+            # Check Atlas Cloud status (5s timeout)
+            poll_url = POLL_URL_TEMPLATE.format(prediction_id=prediction_id)
+            headers = {"Authorization": f"Bearer {ATLASCLOUD_API_KEY}"}
+
+            with httpx.Client(timeout=5.0) as client:
+                response = client.get(poll_url, headers=headers)
+                response.raise_for_status()
+                atlas_result = response.json()
+
+            status = atlas_result["data"]["status"]
+
+            if status in ("completed", "succeeded"):
+                # Video completed! Don't mark as failed - let resume handle it
+                print(f"[startup] Clip {job_id[:8]} completed on Atlas - will resume")
+                continue  # Leave as "generating" for resume_interrupted_videos()
+
+            elif status == "failed":
+                # Failed on Atlas - mark failed with Atlas error
+                error = atlas_result["data"].get("error", "Generation failed on Atlas Cloud")
+                sb.table("gen_jobs").update({
+                    "status": "failed",
+                    "error_message": f"Atlas Cloud: {error}",
+                    "updated_at": _now_iso(),
+                }).eq("id", job_id).execute()
+                print(f"[startup] Clip {job_id[:8]} failed on Atlas")
+
+            else:
+                # Still generating on Atlas - mark failed (took too long, >5min stale)
+                sb.table("gen_jobs").update({
+                    "status": "failed",
+                    "error_message": "Interrupted by server restart (still generating on Atlas after >5min)",
+                    "updated_at": _now_iso(),
+                }).eq("id", job_id).execute()
+                print(f"[startup] Clip {job_id[:8]} still generating on Atlas - marking failed")
+
+        except Exception as e:
+            # Any error (timeout, network, etc) - mark failed (fail-safe)
+            try:
+                sb.table("gen_jobs").update({
+                    "status": "failed",
+                    "error_message": f"Interrupted by server restart (could not check Atlas: {str(e)[:100]})",
+                    "updated_at": _now_iso(),
+                }).eq("id", job_id).execute()
+                print(f"[startup] Clip {job_id[:8]} Atlas check failed - marking failed: {e}")
+            except Exception:
+                pass  # Even error handling can't break startup
+
+
 def mark_stale_jobs_failed(cutoff_minutes: int = 5):
-    """Mark jobs stuck in 'generating' as failed (e.g. after server restart)."""
+    """Mark jobs stuck in 'generating' as failed (e.g. after server restart).
+
+    For clip jobs with prediction_ids, checks Atlas Cloud first to see if they
+    completed while server was down. This prevents losing completed videos.
+    """
     sb = get_supabase()
     if not sb:
         return
     from datetime import timedelta
+
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=cutoff_minutes)).isoformat()
-    sb.table("gen_jobs").update({
-        "status": "failed",
-        "error_message": "Interrupted by server restart",
-        "updated_at": _now_iso(),
-    }).eq("status", "generating").lt("updated_at", cutoff).execute()
-    print(f"[startup] Marked stale gen_jobs (>{cutoff_minutes}min) as failed")
+
+    # Get all stale jobs (for smart clip handling)
+    stale_jobs_response = sb.table("gen_jobs").select("*").eq("status", "generating").lt("updated_at", cutoff).execute()
+    stale_jobs = stale_jobs_response.data if stale_jobs_response.data else []
+
+    if not stale_jobs:
+        print(f"[startup] No stale gen_jobs (>{cutoff_minutes}min) found")
+        return
+
+    # Separate clip jobs (might have completed) from other jobs (mark failed immediately)
+    clip_jobs_with_predictions = []
+    jobs_to_fail = []
+
+    for job in stale_jobs:
+        if job.get("job_type") == "clip" and job.get("result") and "prediction_id" in job.get("result", {}):
+            clip_jobs_with_predictions.append(job)
+        else:
+            jobs_to_fail.append(job["id"])
+
+    # Mark non-clip jobs as failed immediately (current behavior)
+    if jobs_to_fail:
+        for job_id in jobs_to_fail:
+            try:
+                sb.table("gen_jobs").update({
+                    "status": "failed",
+                    "error_message": "Interrupted by server restart",
+                    "updated_at": _now_iso(),
+                }).eq("id", job_id).execute()
+            except Exception as e:
+                print(f"[startup] Warning: could not mark job {job_id[:8]} as failed: {e}")
+        print(f"[startup] Marked {len(jobs_to_fail)} stale non-clip job(s) as failed")
+
+    # Check clip jobs with Atlas Cloud (defensive - max 10 jobs, 5s timeout each)
+    if clip_jobs_with_predictions:
+        print(f"[startup] Checking {len(clip_jobs_with_predictions)} stale clip job(s) on Atlas Cloud...")
+        _check_and_resume_or_fail_clips(clip_jobs_with_predictions[:10])  # Safety limit
