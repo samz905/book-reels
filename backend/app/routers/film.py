@@ -726,6 +726,8 @@ async def generate_shot_with_retry(
     image_url: str,
     max_retries: int = 2,
     heartbeat_callback: Optional[callable] = None,
+    job_id: Optional[str] = None,
+    generation_id: Optional[str] = None,
 ) -> dict:
     """Generate a video shot via Seedance with retry logic.
 
@@ -743,6 +745,9 @@ async def generate_shot_with_retry(
                     prompt=prompt,
                     image_url=image_url,
                     heartbeat_callback=heartbeat_callback,
+                    job_id=job_id,
+                    generation_id=generation_id,
+                    scene_number=beat.number,
                 )
             return result
         except Exception as e:
@@ -1421,13 +1426,15 @@ async def generate_single_clip(req: GenerateClipRequest) -> dict:
             print(f"[Clip {req.scene_number}] Heartbeat: updated job {req.job_id[:8]}...")
         heartbeat_callback = heartbeat
 
-    # Generate video via Seedance
+    # Generate video via Seedance (with restart recovery metadata)
     print(f"[Clip {req.scene_number}] Generating video via Seedance...")
     video_result = await generate_shot_with_retry(
         beat=beat,
         prompt=script_prompt,
         image_url=image_url,
         heartbeat_callback=heartbeat_callback,
+        job_id=req.job_id,
+        generation_id=generation_id,
     )
     cost_video = COST_PER_VIDEO
     print(f"[Clip {req.scene_number}] Video done (cost: ${cost_video:.2f})")

@@ -26,6 +26,9 @@ async def generate_video(
     generate_audio: bool = True,
     resolution: str = "720p",
     heartbeat_callback: Optional[callable] = None,
+    job_id: Optional[str] = None,
+    generation_id: Optional[str] = None,
+    scene_number: Optional[int] = None,
 ) -> dict:
     """Generate a video using Seedance 1.5 Pro (Fast) via Atlas Cloud.
 
@@ -38,6 +41,9 @@ async def generate_video(
         resolution: Video resolution (e.g. "720p")
         heartbeat_callback: Optional async callback to call every 30s during polling
                            (used to update job timestamps and prevent stale detection)
+        job_id: Optional gen_job ID for persistence (enables restart recovery)
+        generation_id: Optional generation ID (required for restart recovery)
+        scene_number: Optional scene number (required for restart recovery)
 
     Returns:
         dict with video_url (str)
@@ -68,6 +74,20 @@ async def generate_video(
 
         prediction_id = result["data"]["id"]
         print(f"[Seedance] Prediction ID: {prediction_id}")
+
+        # Persist prediction_id for restart recovery (bulletproof mode)
+        if job_id and generation_id is not None and scene_number is not None:
+            from ..supabase_client import async_update_gen_job
+            await async_update_gen_job(
+                job_id, "generating",
+                result={
+                    "prediction_id": prediction_id,
+                    "generation_id": generation_id,
+                    "scene_number": scene_number,
+                    "polling": True,
+                }
+            )
+            print(f"[Seedance] Persisted prediction for restart recovery")
 
         # Step 2: Poll for completion
         poll_url = POLL_URL_TEMPLATE.format(prediction_id=prediction_id)

@@ -10,11 +10,19 @@ from .supabase_client import mark_stale_jobs_failed
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: mark stale gen_jobs as failed
+    # Startup: mark very old stale jobs as failed (>5min without heartbeat)
     try:
         mark_stale_jobs_failed()
     except Exception as e:
         print(f"[startup] Warning: could not mark stale jobs: {e}")
+
+    # Startup: resume interrupted video generations (restart recovery)
+    try:
+        from .routers.film_resume import resume_interrupted_videos
+        asyncio.create_task(resume_interrupted_videos())
+    except Exception as e:
+        print(f"[startup] Warning: could not resume videos: {e}")
+
     yield
 
 
