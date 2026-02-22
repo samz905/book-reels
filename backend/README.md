@@ -124,3 +124,36 @@ The core utilities are in `app/core/`:
 - `imagen.py` - `generate_image()` - Image generation with Imagen
 - `veo.py` - `generate_video()` - Video generation with Veo 3.1
 - `ffmpeg.py` - `extract_frame()`, `assemble_videos()` - Video processing
+
+## Deployment
+
+### Environment Variables
+
+For production deployment (e.g., Render), configure these environment variables:
+
+#### Required Variables
+- `GOOGLE_GENAI_API_KEY` - Google AI API key for image generation
+- `ANTHROPIC_API_KEY` - Anthropic Claude API key for text generation
+- `ATLASCLOUD_API_KEY` - Atlas Cloud API key for Seedance video generation
+- `NEXT_PUBLIC_SUPABASE_URL` - Supabase project URL
+- `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key
+
+#### CORS Configuration
+- `CORS_ORIGINS` - **Required for production**: Comma-separated list of allowed frontend origins
+  - Example: `https://oddega.com,https://www.oddega.com`
+  - Include all production frontend domains
+  - Local development defaults: `http://localhost:3000,http://127.0.0.1:3000`
+
+**Important**: After updating environment variables on Render, trigger a manual deploy or wait for auto-deploy to apply changes.
+
+### Render Configuration
+
+The backend is configured for Render deployment via `Procfile`:
+```
+web: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1 --loop uvloop --timeout-keep-alive 120
+```
+
+- Single worker process for production stability
+- uvloop event loop for improved async performance
+- 120-second keep-alive timeout for long-running operations
+- Port automatically assigned via `$PORT` environment variable

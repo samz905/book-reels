@@ -2,9 +2,11 @@
 Standalone asset image generation for Creator Dashboard.
 Generates character and location images without needing full Story context.
 """
+import base64
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import httpx
 
 from ..core import generate_image, generate_image_with_references, COST_IMAGE_GENERATION
 
@@ -60,6 +62,18 @@ class ReferenceImage(BaseModel):
     image_base64: Optional[str] = None
     image_url: Optional[str] = None
     mime_type: str
+
+
+async def resolve_ref_base64(ref: ReferenceImage) -> str:
+    """Return base64 for a ReferenceImage, fetching from URL if needed."""
+    if ref.image_base64:
+        return ref.image_base64
+    if ref.image_url:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(ref.image_url, timeout=30)
+            resp.raise_for_status()
+            return base64.b64encode(resp.content).decode()
+    raise ValueError("ReferenceImage has neither image_base64 nor image_url")
 
 
 class GenerateCharacterImageRequest(BaseModel):
@@ -123,8 +137,10 @@ Portrait orientation, 9:16 aspect ratio."""
                 "Generate a completely different-looking person based on the "
                 "character description above."
             )
+            # Resolve reference image base64 (fetch from URL if needed)
+            ref_base64 = await resolve_ref_base64(request.reference_image)
             refs = [{
-                "image_base64": request.reference_image.image_base64,
+                "image_base64": ref_base64,
                 "mime_type": request.reference_image.mime_type,
             }]
             result = await generate_image_with_references(
@@ -176,8 +192,10 @@ Portrait orientation, 9:16 aspect ratio."""
                 "\n\nCRITICAL: Match the visual style of the reference image exactly. "
                 "Same rendering approach, same color treatment, same texture quality."
             )
+            # Resolve reference image base64 (fetch from URL if needed)
+            ref_base64 = await resolve_ref_base64(request.reference_image)
             refs = [{
-                "image_base64": request.reference_image.image_base64,
+                "image_base64": ref_base64,
                 "mime_type": request.reference_image.mime_type,
             }]
             result = await generate_image_with_references(
