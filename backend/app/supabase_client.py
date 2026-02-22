@@ -110,6 +110,18 @@ def update_gen_job(
     sb.table("gen_jobs").update(update).eq("id", job_id).execute()
 
 
+def touch_gen_job(job_id: str):
+    """Touch a gen_jobs row (update updated_at timestamp only).
+
+    Used as heartbeat during long-running operations like Seedance polling
+    to prevent the job from appearing stale and getting auto-failed on restart.
+    """
+    sb = get_supabase()
+    if not sb:
+        return
+    sb.table("gen_jobs").update({"updated_at": _now_iso()}).eq("id", job_id).execute()
+
+
 # ============================================================
 # Async wrappers — run sync Supabase calls in thread pool
 # so the asyncio event loop is never blocked.
@@ -138,6 +150,11 @@ async def async_upload_asset(generation_id: str, path: str, data: bytes, mime: s
 
 async def async_upload_image_base64(generation_id: str, path: str, b64: str, mime: str = "image/png") -> str:
     return await asyncio.to_thread(upload_image_base64, generation_id, path, b64, mime)
+
+
+async def async_touch_gen_job(job_id: str):
+    """Async wrapper for touch_gen_job (heartbeat update)."""
+    await asyncio.to_thread(touch_gen_job, job_id)
 
 
 # ============================================================

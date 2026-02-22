@@ -25,6 +25,7 @@ async def generate_video(
     aspect_ratio: str = "9:16",
     generate_audio: bool = True,
     resolution: str = "720p",
+    heartbeat_callback: Optional[callable] = None,
 ) -> dict:
     """Generate a video using Seedance 1.5 Pro (Fast) via Atlas Cloud.
 
@@ -35,6 +36,8 @@ async def generate_video(
         aspect_ratio: Video aspect ratio (e.g. "9:16", "16:9")
         generate_audio: Whether to generate synchronized audio
         resolution: Video resolution (e.g. "720p")
+        heartbeat_callback: Optional async callback to call every 30s during polling
+                           (used to update job timestamps and prevent stale detection)
 
     Returns:
         dict with video_url (str)
@@ -70,6 +73,7 @@ async def generate_video(
         poll_url = POLL_URL_TEMPLATE.format(prediction_id=prediction_id)
         poll_headers = {"Authorization": f"Bearer {ATLASCLOUD_API_KEY}"}
         elapsed = 0
+        last_heartbeat = 0
 
         while elapsed < POLL_TIMEOUT_SECONDS:
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
@@ -89,6 +93,14 @@ async def generate_video(
             if status == "failed":
                 error_msg = poll_result["data"].get("error") or "Generation failed"
                 raise Exception(f"Seedance generation failed: {error_msg}")
+
+            # Heartbeat: update job timestamp every 30s to prevent stale detection
+            if heartbeat_callback and elapsed - last_heartbeat >= 30:
+                try:
+                    await heartbeat_callback()
+                    last_heartbeat = elapsed
+                except Exception as e:
+                    print(f"[Seedance] Heartbeat callback failed: {e}")
 
             # Still processing
             if elapsed % 15 == 0:

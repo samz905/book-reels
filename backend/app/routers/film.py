@@ -725,6 +725,7 @@ async def generate_shot_with_retry(
     prompt: str,
     image_url: str,
     max_retries: int = 2,
+    heartbeat_callback: Optional[callable] = None,
 ) -> dict:
     """Generate a video shot via Seedance with retry logic.
 
@@ -741,6 +742,7 @@ async def generate_shot_with_retry(
                 result = await generate_video(
                     prompt=prompt,
                     image_url=image_url,
+                    heartbeat_callback=heartbeat_callback,
                 )
             return result
         except Exception as e:
@@ -1345,6 +1347,7 @@ class GenerateClipRequest(BaseModel):
     storyboard_image_url: Optional[str] = None  # First-frame image URL for Seedance
     feedback: Optional[str] = None
     generation_id: Optional[str] = None
+    job_id: Optional[str] = None  # For heartbeat updates during video generation
 
 
 class AssembleClipsRequest(BaseModel):
@@ -1409,12 +1412,22 @@ async def generate_single_clip(req: GenerateClipRequest) -> dict:
     if req.feedback:
         script_prompt += f"\n\nADJUSTMENT: {req.feedback}"
 
+    # Create heartbeat callback to prevent job from appearing stale
+    heartbeat_callback = None
+    if req.job_id:
+        from ..supabase_client import async_touch_gen_job
+        async def heartbeat():
+            await async_touch_gen_job(req.job_id)
+            print(f"[Clip {req.scene_number}] Heartbeat: updated job {req.job_id[:8]}...")
+        heartbeat_callback = heartbeat
+
     # Generate video via Seedance
     print(f"[Clip {req.scene_number}] Generating video via Seedance...")
     video_result = await generate_shot_with_retry(
         beat=beat,
         prompt=script_prompt,
         image_url=image_url,
+        heartbeat_callback=heartbeat_callback,
     )
     cost_video = COST_PER_VIDEO
     print(f"[Clip {req.scene_number}] Video done (cost: ${cost_video:.2f})")

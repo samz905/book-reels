@@ -807,7 +807,9 @@ async def handle_asset_location_image(payload: dict) -> dict:
 
 async def handle_clip_generate(payload: dict, job_id: str = "") -> dict:
     """Handle /film/generate-clip — generate a single scene clip."""
-    req = film_mod.GenerateClipRequest(**payload)
+    # Inject job_id for heartbeat updates during video generation
+    payload_with_job_id = {**payload, "job_id": job_id}
+    req = film_mod.GenerateClipRequest(**payload_with_job_id)
     result = await film_mod.generate_single_clip(req)
     return result
 
