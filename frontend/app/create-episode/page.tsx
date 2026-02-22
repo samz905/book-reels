@@ -4161,13 +4161,21 @@ export default function CreateEpisodePage() {
                                     placeholder="Your feedback to refine this scene shot"
                                     className="w-full bg-[#0A0A0F] text-white text-[10px] rounded-lg px-2 py-1.5 placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
                                   />
-                                  <button
-                                    onClick={() => refineSceneImage(scene.sceneNumber)}
-                                    disabled={!scene.feedback.trim()}
-                                    className="w-full py-1.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-medium rounded-lg border border-emerald-500/30 hover:bg-emerald-500/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                                  >
-                                    Refine This Shot
-                                  </button>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => refineSceneImage(scene.sceneNumber)}
+                                      disabled={!scene.feedback.trim()}
+                                      className="flex-1 py-1.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-medium rounded-lg border border-emerald-500/30 hover:bg-emerald-500/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                    >
+                                      Refine This Shot
+                                    </button>
+                                    <button
+                                      onClick={() => regenerateSceneImage(scene.sceneNumber)}
+                                      className="flex-1 py-1.5 bg-[#B8B6FC] text-black text-[10px] font-medium rounded-lg hover:opacity-90 transition-opacity"
+                                    >
+                                      Regenerate
+                                    </button>
+                                  </div>
                                 </div>
                               )}
                             </div>
