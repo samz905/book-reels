@@ -79,11 +79,14 @@ export function useGenJobs(generationId: string | null): GenJob[] {
     // Polling fallback: fetch jobs every 30s if any are still generating.
     // Catches missed Realtime updates (websocket drops, long connections, etc).
     const pollInterval = setInterval(() => {
-      const hasGenerating = jobs.some((j) => j.status === "generating");
-      if (hasGenerating) {
-        console.log("[useGenJobs] polling fallback — refetching jobs");
-        fetchJobs(generationId);
-      }
+      setJobs((currentJobs) => {
+        const hasGenerating = currentJobs.some((j) => j.status === "generating");
+        if (hasGenerating) {
+          console.log("[useGenJobs] polling fallback — refetching jobs");
+          fetchJobs(generationId);
+        }
+        return currentJobs; // No state change, just checking
+      });
     }, 30000); // 30 seconds
 
     return () => {
@@ -91,7 +94,7 @@ export function useGenJobs(generationId: string | null): GenJob[] {
       channelRef.current = null;
       clearInterval(pollInterval);
     };
-  }, [generationId, fetchJobs, jobs]);
+  }, [generationId, fetchJobs]); // Removed jobs from dependencies!
 
   return jobs;
 }
