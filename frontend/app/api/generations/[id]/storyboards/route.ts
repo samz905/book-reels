@@ -69,18 +69,31 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     return errorResponse("Request body must be a non-empty array");
   }
 
-  const rows: EpisodeStoryboardInsert[] = body.map((row) => ({
-    generation_id: generationId,
-    scene_number: row.scene_number!,
-    ...(row.title !== undefined && { title: row.title }),
-    ...(row.visual_description !== undefined && { visual_description: row.visual_description }),
-    ...(row.status !== undefined && { status: row.status }),
-    ...(row.image_url !== undefined && { image_url: row.image_url }),
-    image_base64: null, // Never store base64 in DB — use image_url (Storage) only
-    ...(row.image_mime_type !== undefined && { image_mime_type: row.image_mime_type }),
-    ...(row.prompt_used !== undefined && { prompt_used: row.prompt_used }),
-    ...(row.error_message !== undefined && { error_message: row.error_message }),
-  }));
+  // Fetch existing storyboards to preserve fields not being updated
+  const { data: existing } = await supabase
+    .from("episode_storyboards")
+    .select("scene_number, title, visual_description, status, image_url, image_mime_type, prompt_used, error_message")
+    .eq("generation_id", generationId)
+    .in("scene_number", body.map(r => r.scene_number!));
+
+  const existingMap = new Map(existing?.map(e => [e.scene_number, e]) || []);
+
+  const rows: EpisodeStoryboardInsert[] = body.map((row) => {
+    const existingRow = existingMap.get(row.scene_number!);
+    return {
+      generation_id: generationId,
+      scene_number: row.scene_number!,
+      // Merge with existing values to preserve fields not being updated
+      title: row.title !== undefined ? row.title : (existingRow?.title || ""),
+      visual_description: row.visual_description !== undefined ? row.visual_description : (existingRow?.visual_description || ""),
+      status: row.status !== undefined ? row.status : (existingRow?.status || "pending"),
+      image_url: row.image_url !== undefined ? row.image_url : (existingRow?.image_url || null),
+      image_base64: null, // Never store base64 in DB — use image_url (Storage) only
+      image_mime_type: row.image_mime_type !== undefined ? row.image_mime_type : (existingRow?.image_mime_type || null),
+      prompt_used: row.prompt_used !== undefined ? row.prompt_used : (existingRow?.prompt_used || null),
+      error_message: row.error_message !== undefined ? row.error_message : (existingRow?.error_message || null),
+    };
+  });
 
   const { data: storyboards, error } = await supabase
     .from("episode_storyboards")
