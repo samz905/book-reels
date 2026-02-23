@@ -8,8 +8,7 @@ import {
   createGeneration as supaCreateGeneration,
   updateGeneration as supaUpdateGeneration,
   getGeneration as supaGetGeneration,
-  getCompletedJobs,
-  getGeneratingJobs,
+  getAllGenJobs,
   clearGenJobs,
   type GenJob,
 } from "@/lib/supabase/ai-generations";
@@ -522,9 +521,9 @@ export default function CreateEpisodePage() {
       "Location images set the visual tone for your episode scenes",
     ],
     storyboard: [
-      "This could take a while to generate all storyboard images. Feel free to grab a coffee and come back later!",
       "Sometimes backgrounds or characters might be inconsistent across scenes — please ensure overall consistency for better video output",
       "Refine images using descriptive instructions like \"remove the man in the middle\" instead of using character names for best editing results",
+      "This could take a while to generate all storyboard images. Feel free to grab a coffee and come back later!",
     ],
     clips: [
       "You can regenerate individual clips till you get the best output. AI videos sometimes trip up but keep trying and something awesome will come out!",
@@ -671,6 +670,159 @@ export default function CreateEpisodePage() {
     }
 
     setAutoGenProgress({ total: autoGenTotalRef.current, completed: autoGenCompletedRef.current, retrying: 0 });
+  };
+
+  // ---- Restore regen helpers: accept data as parameters (React state not committed yet) ----
+
+  /** Regen missing chars + locs on restore. Uses protagonist-first flow if protagonist is missing. */
+  const _restoreRegenVisuals = (
+    storyData: Story, restoredStyle: Style,
+    missingCharIds: string[], missingLocIds: string[],
+    existingChars: Record<string, CharacterImageState>,
+  ) => {
+    const totalMissing = missingCharIds.length + missingLocIds.length;
+    _autoGenReset();
+    autoGenActiveRef.current = "visuals";
+    autoGenTotalRef.current = totalMissing;
+    autoGenCompletedRef.current = 0;
+    setAutoGenProgress({ total: totalMissing, completed: 0, retrying: 0 });
+
+    // Find protagonist
+    const protChar = storyData.characters.find(c => c.role === "protagonist") || storyData.characters[0];
+    const protId = protChar?.id;
+    const protIsMissing = protId && missingCharIds.includes(protId);
+
+    if (protIsMissing) {
+      // Protagonist missing → protagonist-first flow (phase 2 triggered by useEffect on char completion)
+      autoGenPhaseRef.current = "protagonist";
+      autoGenProtagonistIdRef.current = protId;
+      autoGenNeededIdsRef.current = { charIds: missingCharIds, locIds: missingLocIds, sceneNums: [] };
+      const protPayload = {
+        character_id: protId, name: protChar.name, age: protChar.age,
+        gender: protChar.gender || undefined, description: protChar.appearance,
+        visual_style: restoredStyle,
+      };
+      const key = `character_image:${protId}`;
+      autoGenPayloadsRef.current.set(key, { jobType: "character_image", backendPath: "/assets/generate-character-image", payload: protPayload });
+      setCharacterImages(prev => ({ ...prev, [protId]: { ...(prev[protId] || CHAR_IMG_DEFAULTS), isGenerating: true, error: "" } }));
+      clearProcessedJob("character_image", protId);
+      submitJob("character_image", "/assets/generate-character-image", protPayload, {
+        generationId: generationIdRef.current!, targetId: protId,
+      }).catch(() => scheduleAutoRetry("character_image", protId));
+      return;
+    }
+
+    // Protagonist exists — regen missing chars + locs in parallel using protag as ref
+    autoGenPhaseRef.current = "parallel";
+    const protImg = protId ? existingChars[protId]?.image : null;
+    const refImage = protImg
+      ? { image_base64: protImg.image_base64 || null, image_url: protImg.image_url || null, mime_type: protImg.mime_type }
+      : undefined;
+
+    for (const charId of missingCharIds) {
+      const char = storyData.characters.find(c => c.id === charId);
+      if (!char) continue;
+      const payload = {
+        character_id: charId, name: char.name, age: char.age,
+        gender: char.gender || undefined, description: char.appearance,
+        visual_style: restoredStyle, reference_image: refImage,
+      };
+      const key = `character_image:${charId}`;
+      autoGenPayloadsRef.current.set(key, { jobType: "character_image", backendPath: "/assets/generate-character-image", payload });
+      setCharacterImages(prev => ({ ...prev, [charId]: { ...(prev[charId] || CHAR_IMG_DEFAULTS), isGenerating: true, error: "" } }));
+      clearProcessedJob("character_image", charId);
+      submitJob("character_image", "/assets/generate-character-image", payload, {
+        generationId: generationIdRef.current!, targetId: charId,
+      }).catch(() => scheduleAutoRetry("character_image", charId));
+    }
+    for (const locId of missingLocIds) {
+      const loc = storyData.locations.find(l => l.id === locId);
+      if (!loc) continue;
+      const payload = {
+        location_id: locId, name: loc.name, description: loc.description,
+        atmosphere: loc.atmosphere, visual_style: restoredStyle, reference_image: refImage,
+      };
+      const key = `location_image:${locId}`;
+      autoGenPayloadsRef.current.set(key, { jobType: "location_image", backendPath: "/assets/generate-location-image", payload });
+      setLocationImages(prev => ({ ...prev, [locId]: { ...(prev[locId] || LOC_IMG_DEFAULTS), isGenerating: true, error: "" } }));
+      clearProcessedJob("location_image", locId);
+      submitJob("location_image", "/assets/generate-location-image", payload, {
+        generationId: generationIdRef.current!, targetId: locId,
+      }).catch(() => scheduleAutoRetry("location_image", locId));
+    }
+  };
+
+  /** Regen missing storyboard images on restore. Submits first batch directly (bypasses state-dependent _autoGenSubmitNextScene). */
+  const _restoreRegenStoryboard = (
+    storyData: Story,
+    approvedVisuals: ReturnType<typeof buildApprovedVisualsFromLocals>,
+    missingSceneNums: number[],
+    sceneData: Record<number, SceneImageState>,
+  ) => {
+    _autoGenReset();
+    autoGenActiveRef.current = "storyboard";
+    autoGenPhaseRef.current = "images";
+    autoGenTotalRef.current = missingSceneNums.length;
+    autoGenCompletedRef.current = 0;
+    setAutoGenProgress({ total: missingSceneNums.length, completed: 0, retrying: 0 });
+
+    // Queue all missing scenes
+    autoGenSceneQueueRef.current = missingSceneNums.map(sn => ({
+      sceneNumber: sn, visualDescription: sceneData[sn]?.visualDescription || "",
+    }));
+
+    // Submit first batch directly (React state not committed — can't use _autoGenSubmitNextScene)
+    const batch = autoGenSceneQueueRef.current.splice(0, STORYBOARD_PARALLEL);
+    autoGenSceneInflightRef.current = batch.length;
+    for (const next of batch) {
+      const payload = {
+        story: storyData, approved_visuals: approvedVisuals,
+        scene_number: next.sceneNumber, visual_description: next.visualDescription,
+      };
+      const key = `scene_image:${next.sceneNumber}`;
+      autoGenPayloadsRef.current.set(key, { jobType: "scene_image", backendPath: "/moodboard/generate-scene-image", payload });
+      setSceneImages(prev => ({ ...prev, [next.sceneNumber]: { ...prev[next.sceneNumber], isGenerating: true, error: "" } }));
+      clearProcessedJob("scene_image", String(next.sceneNumber));
+      submitJob("scene_image", "/moodboard/generate-scene-image", payload, {
+        generationId: generationIdRef.current!, targetId: String(next.sceneNumber),
+      }).catch(() => scheduleAutoRetry("scene_image", String(next.sceneNumber)));
+    }
+    // Subsequent batches triggered by _autoGenSubmitNextScene on completion (React state committed by then)
+  };
+
+  /** Regen missing clips on restore. */
+  const _restoreRegenClips = (
+    storyData: Story,
+    approvedVisuals: ReturnType<typeof buildApprovedVisualsFromLocals>,
+    missingClipNums: number[],
+    sceneData: Record<number, SceneImageState>,
+  ) => {
+    _autoGenReset();
+    autoGenActiveRef.current = "clips";
+    autoGenPhaseRef.current = "clips";
+    autoGenTotalRef.current = missingClipNums.length;
+    autoGenCompletedRef.current = 0;
+    setAutoGenProgress({ total: missingClipNums.length, completed: 0, retrying: 0 });
+
+    const scenes = getScenes(storyData);
+    const genId = generationIdRef.current;
+    for (const sceneNum of missingClipNums) {
+      const scene = scenes.find(sc => sc.scene_number === sceneNum);
+      if (!scene) continue;
+      const storyboardUrl = sceneData[sceneNum]?.image?.image_url || null;
+      const payload = {
+        story: storyData, approved_visuals: approvedVisuals,
+        scene_number: sceneNum, scene, storyboard_image_url: storyboardUrl,
+        generation_id: genId,
+      };
+      const key = `clip:${sceneNum}`;
+      autoGenPayloadsRef.current.set(key, { jobType: "clip", backendPath: "/film/generate-clip", payload });
+      setClipStates(prev => ({ ...prev, [sceneNum]: { ...prev[sceneNum], status: "generating", error: null } }));
+      clearProcessedJob("clip", String(sceneNum));
+      submitJob("clip", "/film/generate-clip", payload, {
+        generationId: genId!, targetId: String(sceneNum),
+      }).catch(() => scheduleAutoRetry("clip", String(sceneNum)));
+    }
   };
 
   // ---- Shared job processing: single source of truth for both Realtime & restore ----
@@ -1863,7 +2015,7 @@ export default function CreateEpisodePage() {
       if (s.selectedLocation !== undefined) setSelectedLocation(s.selectedLocation as StoryLocationFE | null);
 
       // Restore story from JSONB (AI chars keep their original IDs — no remapping needed)
-      const restoredStory = s.story as Story | null;
+      let restoredStory = s.story as Story | null;
       if (restoredStory !== undefined) setStory(restoredStory);
       // Restore new visuals state
       if (s.visualsActive !== undefined) setVisualsActive(s.visualsActive as boolean);
@@ -2032,6 +2184,7 @@ export default function CreateEpisodePage() {
       if (s.totalCost) setTotalCost(s.totalCost as TotalCost);
 
       // Restore clips stage from DB
+      let restoredClipMap: Record<number, ClipState> = {};
       if (s.clipsActive) {
         setClipsActive(true);
         if (s.selectedClipScene) setSelectedClipScene(s.selectedClipScene as number);
@@ -2065,6 +2218,7 @@ export default function CreateEpisodePage() {
               feedback: "",
             };
           }
+          restoredClipMap = clipMap;
           setClipStates(clipMap);
         } catch { /* non-fatal */ }
       }
@@ -2098,90 +2252,439 @@ export default function CreateEpisodePage() {
       // Film progress for in-flight jobs is delivered via Realtime subscription (no polling needed)
 
       // ---- Check gen_jobs for completed results (handles tab-close recovery) ----
+      // AWAITED (not fire-and-forget) so the restoring overlay stays until the loader
+      // is activated or confirmed unnecessary. Prevents flash of content before loader.
+      //
+      // Single atomic fetch eliminates TOCTOU race: previously, getCompletedJobs →
+      // clearGenJobs → getGeneratingJobs could lose jobs that completed between queries.
       const restoredGenId = data.id;
-      (async () => {
-        try {
-          const completedJobs = await getCompletedJobs(restoredGenId);
-          // Apply completed/failed jobs via shared functions (same logic as Realtime handler)
-          for (const job of completedJobs) {
-            processedJobsRef.current.add(job.id);
-            if (job.status === "failed") {
-              applyFailedJob(job);
-            } else {
-              applyCompletedJob(job);
+      try {
+        const allJobs = await getAllGenJobs(restoredGenId);
+        const completedJobs = allJobs.filter(j => j.status === "completed" || j.status === "failed");
+        const generatingJobs = allJobs.filter(j => j.status === "generating");
+        // Apply completed/failed jobs via shared functions (same logic as Realtime handler)
+        // Also merge results into local vars so the gatekeeper verification has fresh data
+        for (const job of completedJobs) {
+          processedJobsRef.current.add(job.id);
+          if (job.status === "failed") {
+            applyFailedJob(job);
+          } else {
+            applyCompletedJob(job);
+            // Merge scene_descriptions results into cleanedScenes (React state not committed yet)
+            const result = job.result as Record<string, unknown> | null;
+            if (job.job_type === "scene_descriptions" && result?.descriptions) {
+              const descs = result.descriptions as Array<{ scene_number: number; title: string; visual_description: string }>;
+              for (const desc of descs) {
+                cleanedScenes[desc.scene_number] = {
+                  sceneNumber: desc.scene_number, title: desc.title,
+                  visualDescription: desc.visual_description,
+                  image: null, isGenerating: false, error: "", feedback: "",
+                };
+              }
             }
-          }
-          if (completedJobs.length > 0) {
-            await clearGenJobs(restoredGenId);
-            saveNow();
-          } else if (s.isGenerating && !(s.story as Story | null)) {
-            setIsGenerating(false);
-          }
-
-          // ---- Re-activate loaders for in-flight jobs (survives refresh) ----
-          const generatingJobs = await getGeneratingJobs(restoredGenId);
-          if (generatingJobs.length > 0) {
-            const visualsTypes = new Set(["character_image", "protagonist", "location_image"]);
-            const storyboardTypes = new Set(["scene_image", "scene_descriptions"]);
-            const clipTypes = new Set(["clip"]);
-            const visualsInFlight = generatingJobs.filter(j => visualsTypes.has(j.job_type));
-            const storyboardInFlight = generatingJobs.filter(j => storyboardTypes.has(j.job_type));
-            const clipsInFlight = generatingJobs.filter(j => clipTypes.has(j.job_type));
-
-            // Populate autoGenPayloadsRef with stub entries so completion handlers
-            // recognize these jobs as auto-gen tracked (they check .has(key))
-            const stubPayload = (jt: string, tid: string) => {
-              autoGenPayloadsRef.current.set(`${jt}:${tid}`, { jobType: jt, backendPath: "", payload: {} });
-            };
-
-            if (visualsInFlight.length > 0) {
-              const totalChars = restoredStory?.characters?.length || 0;
-              const totalLocs = restoredStory?.locations?.length || 0;
-              const total = totalChars + totalLocs;
-              const completed = total - visualsInFlight.length;
-              autoGenActiveRef.current = "visuals";
-              autoGenPhaseRef.current = "parallel";
-              autoGenTotalRef.current = total;
-              autoGenCompletedRef.current = Math.max(0, completed);
-              setAutoGenProgress({ total, completed: Math.max(0, completed), retrying: 0 });
-              for (const j of visualsInFlight) {
-                stubPayload(j.job_type, j.target_id);
-                if (j.job_type === "character_image" || j.job_type === "protagonist") {
-                  setCharacterImages(prev => ({ ...prev, [j.target_id]: { ...(prev[j.target_id] || CHAR_IMG_DEFAULTS), isGenerating: true } }));
-                } else if (j.job_type === "location_image") {
-                  setLocationImages(prev => ({ ...prev, [j.target_id]: { ...(prev[j.target_id] || LOC_IMG_DEFAULTS), isGenerating: true } }));
+            // Merge individual scene_image results into cleanedScenes
+            if (job.job_type === "scene_image" && result?.image) {
+              const sn = parseInt(job.target_id);
+              if (!isNaN(sn)) {
+                cleanedScenes[sn] = {
+                  ...cleanedScenes[sn], sceneNumber: sn,
+                  image: result.image as MoodboardImage,
+                  isGenerating: false, error: "",
+                };
+              }
+            }
+            // Merge script completion: update restoredStory + build initial char/loc entries
+            if (job.job_type === "script" && result?.story) {
+              restoredStory = result.story as Story;
+              setStory(restoredStory);
+              // Build initial char/loc entries if JSONB was stale (save hadn't completed before refresh)
+              for (const char of restoredStory.characters) {
+                if (!cleanedChars[char.id]) {
+                  cleanedChars[char.id] = { ...CHAR_IMG_DEFAULTS, image: null };
                 }
               }
-            } else if (storyboardInFlight.length > 0) {
-              const totalScenes = restoredStory?.scenes?.length || 8;
-              const completed = totalScenes - storyboardInFlight.length;
-              autoGenActiveRef.current = "storyboard";
-              autoGenPhaseRef.current = "images";
-              autoGenTotalRef.current = totalScenes;
-              autoGenCompletedRef.current = Math.max(0, completed);
-              autoGenSceneInflightRef.current = storyboardInFlight.length;
-              setAutoGenProgress({ total: totalScenes, completed: Math.max(0, completed), retrying: 0 });
-              for (const j of storyboardInFlight) {
-                stubPayload(j.job_type, j.target_id);
-                const sn = parseInt(j.target_id);
-                if (!isNaN(sn)) {
-                  setSceneImages(prev => ({ ...prev, [sn]: { ...prev[sn], isGenerating: true, error: "" } }));
+              for (const loc of restoredStory.locations) {
+                if (!cleanedLocs[loc.id]) {
+                  cleanedLocs[loc.id] = { ...LOC_IMG_DEFAULTS, image: null };
                 }
               }
-            } else if (clipsInFlight.length > 0) {
-              const totalClips = restoredStory?.scenes?.length || 8;
-              const completed = totalClips - clipsInFlight.length;
-              autoGenActiveRef.current = "clips";
-              autoGenTotalRef.current = totalClips;
-              autoGenCompletedRef.current = Math.max(0, completed);
-              setAutoGenProgress({ total: totalClips, completed: Math.max(0, completed), retrying: 0 });
-              for (const j of clipsInFlight) stubPayload(j.job_type, j.target_id);
+              // Ensure stage reflects visuals (script completed → user was transitioning to visuals)
+              if (!s.visualsActive) {
+                setVisualsActive(true);
+                setDisplayedStage(2);
+                setVisualsTab("characters");
+              }
+            }
+            // Merge character/location images into local vars
+            if ((job.job_type === "character_image" || job.job_type === "protagonist") && result?.image) {
+              cleanedChars[job.target_id] = {
+                ...cleanedChars[job.target_id],
+                image: result.image as MoodboardImage, isGenerating: false, error: "",
+              };
+            }
+            if (job.job_type === "location_image" && result?.image) {
+              cleanedLocs[job.target_id] = {
+                ...cleanedLocs[job.target_id],
+                image: result.image as MoodboardImage, isGenerating: false, error: "",
+              };
             }
           }
-        } catch (err) {
-          console.error("Failed to check gen jobs on restore:", err);
         }
-      })();
+        if (completedJobs.length > 0) {
+          // Update React state with merged local vars (may have been enriched by completed jobs)
+          setCharacterImages({ ...cleanedChars });
+          setLocationImages({ ...cleanedLocs });
+          if (Object.keys(cleanedScenes).length > 0) setSceneImages({ ...cleanedScenes });
+          saveNow();
+        } else if (s.isGenerating && !(s.story as Story | null)) {
+          setIsGenerating(false);
+        }
+
+        // ---- Re-activate loaders for in-flight jobs (survives refresh) ----
+        // generatingJobs already partitioned from the single atomic fetch above
+        if (generatingJobs.length > 0) {
+          const visualsTypes = new Set(["character_image", "protagonist", "location_image"]);
+          const storyboardTypes = new Set(["scene_image", "scene_descriptions"]);
+          const clipTypes = new Set(["clip"]);
+          const visualsInFlight = generatingJobs.filter(j => visualsTypes.has(j.job_type));
+          const storyboardInFlight = generatingJobs.filter(j => storyboardTypes.has(j.job_type));
+          const clipsInFlight = generatingJobs.filter(j => clipTypes.has(j.job_type));
+
+          // Build retryable payload entries (not empty stubs) so if an in-flight job
+          // fails after restore, scheduleAutoRetry can resubmit with correct backendPath + payload.
+          const restoredStyle = ((s.style as string) || "cinematic") as Style;
+          const protId = restoredStory?.characters[0]?.id;
+          const protImg = protId ? cleanedChars[protId]?.image : null;
+          const protRef = protImg && (protImg.image_base64 || protImg.image_url)
+            ? { image_base64: protImg.image_base64 || null, image_url: protImg.image_url || null, mime_type: protImg.mime_type }
+            : undefined;
+
+          if (visualsInFlight.length > 0) {
+            const totalChars = restoredStory?.characters?.length || 0;
+            const totalLocs = restoredStory?.locations?.length || 0;
+            const total = totalChars + totalLocs;
+
+            // Build sets of in-flight IDs to distinguish "completed" from "never started"
+            const inFlightCharIds = new Set<string>();
+            const inFlightLocIds = new Set<string>();
+            for (const j of visualsInFlight) {
+              if (j.job_type === "character_image" || j.job_type === "protagonist") inFlightCharIds.add(j.target_id);
+              else if (j.job_type === "location_image") inFlightLocIds.add(j.target_id);
+            }
+
+            // Count ACTUAL completed (items with images, not in-flight).
+            // Previously: `completed = total - inFlight` — wrong! Treated never-started items as completed.
+            let actualCompleted = 0;
+            const neverStartedCharIds: string[] = [];
+            const neverStartedLocIds: string[] = [];
+            for (const char of restoredStory?.characters || []) {
+              if (inFlightCharIds.has(char.id)) continue;
+              if (hasRealImage(cleanedChars[char.id]?.image)) { actualCompleted++; }
+              else { neverStartedCharIds.push(char.id); }
+            }
+            for (const loc of restoredStory?.locations || []) {
+              if (inFlightLocIds.has(loc.id)) continue;
+              if (hasRealImage(cleanedLocs[loc.id]?.image)) { actualCompleted++; }
+              else { neverStartedLocIds.push(loc.id); }
+            }
+
+            autoGenActiveRef.current = "visuals";
+            autoGenTotalRef.current = total;
+            autoGenCompletedRef.current = actualCompleted;
+            setAutoGenProgress({ total, completed: actualCompleted, retrying: 0 });
+
+            // Determine protagonist state for protagonist-first vs parallel flow
+            const restoreProtChar = restoredStory?.characters.find(c => c.role === "protagonist") || restoredStory?.characters[0];
+            const restoreProtId = restoreProtChar?.id;
+            const protIsInFlight = restoreProtId ? inFlightCharIds.has(restoreProtId) : false;
+            const protNeedsGen = restoreProtId ? neverStartedCharIds.includes(restoreProtId) : false;
+
+            if (protIsInFlight && (neverStartedCharIds.length + neverStartedLocIds.length > 0)) {
+              // Protagonist still generating + items never started → protagonist-first flow.
+              // Phase 2 useEffect will submit remaining items when protagonist image lands.
+              autoGenPhaseRef.current = "protagonist";
+              autoGenProtagonistIdRef.current = restoreProtId!;
+              autoGenNeededIdsRef.current = { charIds: neverStartedCharIds, locIds: neverStartedLocIds, sceneNums: [] };
+            } else if (protNeedsGen) {
+              // Protagonist not in-flight but needs gen (job was lost) → submit protagonist,
+              // then phase 2 useEffect handles the rest
+              autoGenPhaseRef.current = "protagonist";
+              autoGenProtagonistIdRef.current = restoreProtId!;
+              autoGenNeededIdsRef.current = { charIds: neverStartedCharIds, locIds: neverStartedLocIds, sceneNums: [] };
+              const pChar = restoreProtChar!;
+              const pPayload = {
+                character_id: restoreProtId!, name: pChar.name, age: pChar.age,
+                gender: pChar.gender || undefined, description: pChar.appearance,
+                visual_style: restoredStyle,
+              };
+              autoGenPayloadsRef.current.set(`character_image:${restoreProtId}`, { jobType: "character_image", backendPath: "/assets/generate-character-image", payload: pPayload });
+              setCharacterImages(prev => ({ ...prev, [restoreProtId!]: { ...(prev[restoreProtId!] || CHAR_IMG_DEFAULTS), isGenerating: true, error: "" } }));
+              clearProcessedJob("character_image", restoreProtId!);
+              submitJob("character_image", "/assets/generate-character-image", pPayload, {
+                generationId: generationIdRef.current!, targetId: restoreProtId!,
+              }).catch(() => scheduleAutoRetry("character_image", restoreProtId!));
+            } else if (neverStartedCharIds.length + neverStartedLocIds.length > 0) {
+              // Protagonist has image → submit never-started items in parallel with protag ref
+              autoGenPhaseRef.current = "parallel";
+              for (const charId of neverStartedCharIds) {
+                const char = restoredStory?.characters.find(c => c.id === charId);
+                if (!char) continue;
+                const payload = {
+                  character_id: charId, name: char.name, age: char.age,
+                  gender: char.gender || undefined, description: char.appearance,
+                  visual_style: restoredStyle, ...(protRef ? { reference_image: protRef } : {}),
+                };
+                autoGenPayloadsRef.current.set(`character_image:${charId}`, { jobType: "character_image", backendPath: "/assets/generate-character-image", payload });
+                setCharacterImages(prev => ({ ...prev, [charId]: { ...(prev[charId] || CHAR_IMG_DEFAULTS), isGenerating: true, error: "" } }));
+                clearProcessedJob("character_image", charId);
+                submitJob("character_image", "/assets/generate-character-image", payload, {
+                  generationId: generationIdRef.current!, targetId: charId,
+                }).catch(() => scheduleAutoRetry("character_image", charId));
+              }
+              for (const locId of neverStartedLocIds) {
+                const loc = restoredStory?.locations.find(l => l.id === locId);
+                if (!loc) continue;
+                const payload = {
+                  location_id: locId, name: loc.name, description: loc.description,
+                  atmosphere: loc.atmosphere, visual_style: restoredStyle, ...(protRef ? { reference_image: protRef } : {}),
+                };
+                autoGenPayloadsRef.current.set(`location_image:${locId}`, { jobType: "location_image", backendPath: "/assets/generate-location-image", payload });
+                setLocationImages(prev => ({ ...prev, [locId]: { ...(prev[locId] || LOC_IMG_DEFAULTS), isGenerating: true, error: "" } }));
+                clearProcessedJob("location_image", locId);
+                submitJob("location_image", "/assets/generate-location-image", payload, {
+                  generationId: generationIdRef.current!, targetId: locId,
+                }).catch(() => scheduleAutoRetry("location_image", locId));
+              }
+            } else {
+              autoGenPhaseRef.current = "parallel";
+            }
+
+            // Build retryable payloads for in-flight jobs
+            for (const j of visualsInFlight) {
+              if (j.job_type === "character_image" || j.job_type === "protagonist") {
+                const char = restoredStory?.characters.find(c => c.id === j.target_id);
+                autoGenPayloadsRef.current.set(`${j.job_type}:${j.target_id}`, {
+                  jobType: j.job_type, backendPath: "/assets/generate-character-image",
+                  payload: {
+                    character_id: j.target_id, name: char?.name || "", age: char?.age || "",
+                    gender: char?.gender || "", description: char?.appearance || "",
+                    visual_style: restoredStyle,
+                    ...(j.target_id !== protId && protRef ? { reference_image: protRef } : {}),
+                  },
+                });
+                setCharacterImages(prev => ({ ...prev, [j.target_id]: { ...(prev[j.target_id] || CHAR_IMG_DEFAULTS), isGenerating: true } }));
+              } else if (j.job_type === "location_image") {
+                const loc = restoredStory?.locations.find(l => l.id === j.target_id);
+                autoGenPayloadsRef.current.set(`location_image:${j.target_id}`, {
+                  jobType: "location_image", backendPath: "/assets/generate-location-image",
+                  payload: {
+                    location_id: j.target_id, name: loc?.name || "", description: loc?.description || "",
+                    atmosphere: loc?.atmosphere || "", visual_style: restoredStyle,
+                    ...(protRef ? { reference_image: protRef } : {}),
+                  },
+                });
+                setLocationImages(prev => ({ ...prev, [j.target_id]: { ...(prev[j.target_id] || LOC_IMG_DEFAULTS), isGenerating: true } }));
+              }
+            }
+          } else if (storyboardInFlight.length > 0) {
+            const hasDescsJob = storyboardInFlight.some(j => j.job_type === "scene_descriptions");
+            const storyScenes = restoredStory ? getScenes(restoredStory) : [];
+            const totalScenes = storyScenes.length || 8;
+            autoGenActiveRef.current = "storyboard";
+            autoGenPhaseRef.current = hasDescsJob ? "descs" : "images";
+            autoGenTotalRef.current = totalScenes;
+
+            if (hasDescsJob) {
+              // Descriptions phase: no scene images yet, completed = 0
+              autoGenCompletedRef.current = 0;
+              autoGenSceneInflightRef.current = 0;
+              setAutoGenProgress({ total: 0, completed: 0, retrying: 0 });
+            } else {
+              // Images phase: count actual completed (scenes with images, not in-flight)
+              const inFlightSceneNums = new Set(
+                storyboardInFlight.filter(j => j.job_type === "scene_image").map(j => parseInt(j.target_id))
+              );
+              let actualSceneCompleted = 0;
+              const neverStartedSceneNums: number[] = [];
+              for (const scene of storyScenes) {
+                if (inFlightSceneNums.has(scene.scene_number)) continue;
+                if (cleanedScenes[scene.scene_number]?.image && hasRealImage(cleanedScenes[scene.scene_number]?.image as MoodboardImage | null)) {
+                  actualSceneCompleted++;
+                } else {
+                  neverStartedSceneNums.push(scene.scene_number);
+                }
+              }
+              autoGenCompletedRef.current = actualSceneCompleted;
+              autoGenSceneInflightRef.current = inFlightSceneNums.size;
+              setAutoGenProgress({ total: totalScenes, completed: actualSceneCompleted, retrying: 0 });
+
+              // Queue never-started scenes for sequential batching.
+              // When current in-flight batch completes, _autoGenSubmitNextScene picks these up.
+              if (neverStartedSceneNums.length > 0) {
+                autoGenSceneQueueRef.current = neverStartedSceneNums.map(sn => ({
+                  sceneNumber: sn,
+                  visualDescription: cleanedScenes[sn]?.visualDescription || "",
+                }));
+              }
+            }
+
+            const sbApproved = restoredStory ? buildApprovedVisualsFromLocals(restoredStory, cleanedChars, cleanedLocs) : {};
+            for (const j of storyboardInFlight) {
+              if (j.job_type === "scene_descriptions") {
+                autoGenPayloadsRef.current.set(`scene_descriptions:${j.target_id}`, {
+                  jobType: "scene_descriptions", backendPath: "/story/generate-scene-descriptions",
+                  payload: { story: restoredStory },
+                });
+              } else {
+                const sn = parseInt(j.target_id);
+                const si = !isNaN(sn) ? cleanedScenes[sn] : undefined;
+                autoGenPayloadsRef.current.set(`scene_image:${j.target_id}`, {
+                  jobType: "scene_image", backendPath: "/moodboard/generate-scene-image",
+                  payload: {
+                    story: restoredStory, approved_visuals: sbApproved,
+                    scene_number: sn, visual_description: si?.visualDescription || "",
+                  },
+                });
+              }
+              const sn = parseInt(j.target_id);
+              if (!isNaN(sn)) {
+                setSceneImages(prev => ({ ...prev, [sn]: { ...prev[sn], isGenerating: true, error: "" } }));
+              }
+            }
+          } else if (clipsInFlight.length > 0) {
+            const clipScenes = restoredStory ? getScenes(restoredStory) : [];
+            const totalClips = clipScenes.length || 8;
+
+            // Count actual completed clips (have video, not in-flight)
+            const inFlightClipNums = new Set(clipsInFlight.map(j => parseInt(j.target_id)));
+            let actualClipCompleted = 0;
+            const neverStartedClipNums: number[] = [];
+            for (const scene of clipScenes) {
+              if (inFlightClipNums.has(scene.scene_number)) continue;
+              const clip = restoredClipMap[scene.scene_number];
+              if (clip?.status === "completed" && clip?.videoUrl) { actualClipCompleted++; }
+              else { neverStartedClipNums.push(scene.scene_number); }
+            }
+
+            autoGenActiveRef.current = "clips";
+            autoGenTotalRef.current = totalClips;
+            autoGenCompletedRef.current = actualClipCompleted;
+            setAutoGenProgress({ total: totalClips, completed: actualClipCompleted, retrying: 0 });
+            const clipApproved = restoredStory ? buildApprovedVisualsFromLocals(restoredStory, cleanedChars, cleanedLocs) : {};
+
+            // Submit never-started clips
+            for (const sn of neverStartedClipNums) {
+              const si = cleanedScenes[sn];
+              const storyboardImages: Record<string, any> = {};
+              if (si?.image) {
+                storyboardImages[String(sn)] = { image_base64: si.image.image_base64 || null, image_url: si.image.image_url || null, mime_type: si.image.mime_type };
+              }
+              const payload = { story: restoredStory, approved_visuals: clipApproved, storyboard_images: storyboardImages, scene_number: sn };
+              autoGenPayloadsRef.current.set(`clip:${sn}`, { jobType: "clip", backendPath: "/film/generate-clip", payload });
+              clearProcessedJob("clip", String(sn));
+              submitJob("clip", "/film/generate-clip", payload, {
+                generationId: generationIdRef.current!, targetId: String(sn),
+              }).catch(() => scheduleAutoRetry("clip", String(sn)));
+            }
+
+            // Build retryable payloads for in-flight clips
+            for (const j of clipsInFlight) {
+              const sn = parseInt(j.target_id);
+              const si = !isNaN(sn) ? cleanedScenes[sn] : undefined;
+              const storyboardImages: Record<string, any> = {};
+              if (si?.image) {
+                storyboardImages[j.target_id] = { image_base64: si.image.image_base64 || null, image_url: si.image.image_url || null, mime_type: si.image.mime_type };
+              }
+              autoGenPayloadsRef.current.set(`clip:${j.target_id}`, {
+                jobType: "clip", backendPath: "/film/generate-clip",
+                payload: { story: restoredStory, approved_visuals: clipApproved, storyboard_images: storyboardImages, scene_number: sn },
+              });
+            }
+          }
+        } else if (restoredStory) {
+          // ---- Gatekeeper: verify all assets are present for the current stage ----
+          // No in-flight jobs, but assets may be missing (backend crashed, job lost, etc.)
+          // If missing, activate loader and auto-regen before showing content.
+          // Re-derive stage from latest data (JSONB may be stale if save hadn't completed before refresh)
+          const restoredStage = restoredStory
+            ? (Number(s.displayedStage) || (s.clipsActive ? 3 : (s.visualsActive || Object.keys(cleanedChars).length > 0) ? 2 : 1))
+            : 1;
+          const restoredVisualsTab = (s.visualsTab as VisualsTab) || "characters";
+          const restoredStyle = (s.style as Style) || "cinematic";
+
+          if (restoredStage === 2 && (restoredVisualsTab === "characters" || restoredVisualsTab === "locations")) {
+            // Verify all chars + locs have images
+            const missingCharIds: string[] = [];
+            const missingLocIds: string[] = [];
+            for (const char of restoredStory.characters) {
+              if (!cleanedChars[char.id]?.image || !hasRealImage(cleanedChars[char.id]?.image)) {
+                missingCharIds.push(char.id);
+              }
+            }
+            for (const loc of restoredStory.locations) {
+              if (!cleanedLocs[loc.id]?.image || !hasRealImage(cleanedLocs[loc.id]?.image)) {
+                missingLocIds.push(loc.id);
+              }
+            }
+            if (missingCharIds.length + missingLocIds.length > 0) {
+              _restoreRegenVisuals(restoredStory, restoredStyle, missingCharIds, missingLocIds, cleanedChars);
+            }
+          } else if (restoredStage === 2 && restoredVisualsTab === "scenes") {
+            // Verify ALL expected scenes have images (iterate story scenes, not just cleanedScenes entries)
+            const storyScenes = getScenes(restoredStory);
+            const missingSceneNums: number[] = [];
+            const scenesWithoutDescs: number[] = [];
+            for (const scene of storyScenes) {
+              const si = cleanedScenes[scene.scene_number];
+              if (!si) {
+                // No entry at all — needs descriptions first
+                scenesWithoutDescs.push(scene.scene_number);
+              } else if (!si.image || !hasRealImage(si.image)) {
+                missingSceneNums.push(scene.scene_number);
+              }
+            }
+            if (scenesWithoutDescs.length > 0) {
+              // Scene descriptions missing — submit scene_descriptions job (full storyboard flow)
+              autoGenActiveRef.current = "storyboard";
+              autoGenPhaseRef.current = "descs";
+              autoGenTotalRef.current = storyScenes.length;
+              autoGenCompletedRef.current = 0;
+              setAutoGenProgress({ total: 0, completed: 0, retrying: 0 }); // total=0 hides progress bar
+              const payload = { story: restoredStory };
+              autoGenPayloadsRef.current.set("scene_descriptions:", { jobType: "scene_descriptions", backendPath: "/story/generate-scene-descriptions", payload });
+              clearProcessedJob("scene_descriptions", "");
+              submitJob("scene_descriptions", "/story/generate-scene-descriptions", payload, {
+                generationId: generationIdRef.current!, targetId: "",
+              }).catch(() => scheduleAutoRetry("scene_descriptions", ""));
+            } else if (missingSceneNums.length > 0) {
+              const approvedVis = buildApprovedVisualsFromLocals(restoredStory, cleanedChars, cleanedLocs);
+              _restoreRegenStoryboard(restoredStory, approvedVis, missingSceneNums, cleanedScenes);
+            }
+          } else if (restoredStage === 3) {
+            // Verify all clips have completed videos
+            const missingClipNums: number[] = [];
+            const scenes = getScenes(restoredStory);
+            for (const scene of scenes) {
+              const clip = restoredClipMap[scene.scene_number];
+              if (!clip || clip.status !== "completed" || !clip.videoUrl) {
+                missingClipNums.push(scene.scene_number);
+              }
+            }
+            if (missingClipNums.length > 0) {
+              const approvedVis = buildApprovedVisualsFromLocals(restoredStory, cleanedChars, cleanedLocs);
+              _restoreRegenClips(restoredStory, approvedVis, missingClipNums, cleanedScenes);
+            }
+          }
+        }
+        // Clear completed/failed rows AFTER both sets have been fully processed.
+        // Deferred to avoid TOCTOU: clearing before reading generating jobs could
+        // destroy rows that transitioned from generating → completed during restore.
+        if (completedJobs.length > 0) {
+          await clearGenJobs(restoredGenId);
+        }
+      } catch (err) {
+        console.error("Failed to check gen jobs on restore:", err);
+      }
       // ---- Compute correct status from raw data and persist immediately ----
       // inferStatus() reads React state which hasn't rendered yet, so derive
       // the status from the fetched data directly.
@@ -2767,6 +3270,54 @@ export default function CreateEpisodePage() {
       setting_image: settingImg,
       location_images: locImages,
       character_descriptions: story.characters.map(
+        (char) => `${char.name} (${char.age} ${char.gender}): ${char.appearance}`
+      ),
+      setting_description: settingDesc,
+      location_descriptions: locDescs,
+    };
+  };
+
+  // Build approved visuals from local variables (used during restore when React state isn't committed yet)
+  const buildApprovedVisualsFromLocals = (
+    storyData: Story,
+    chars: Record<string, CharacterImageState>,
+    locs: Record<string, LocationImageState>,
+  ) => {
+    type ImgRef = { image_base64: string | null; image_url: string | null; mime_type: string };
+    const allCharacterImages: ImgRef[] = [];
+    const characterImageMap: Record<string, ImgRef> = {};
+    storyData.characters.forEach((char) => {
+      const charState = chars[char.id];
+      const img = charState?.image;
+      if (img && (img.image_base64 || img.image_url)) {
+        const ref: ImgRef = { image_base64: img.image_base64 || null, image_url: img.image_url || null, mime_type: img.mime_type };
+        allCharacterImages.push(ref);
+        characterImageMap[char.id] = ref;
+      }
+    });
+    const locImages: Record<string, ImgRef> = {};
+    const locDescs: Record<string, string> = {};
+    storyData.locations.forEach((loc) => {
+      const locState = locs[loc.id];
+      const img = locState?.image;
+      if (img && (img.image_base64 || img.image_url)) {
+        locImages[loc.id] = { image_base64: img.image_base64 || null, image_url: img.image_url || null, mime_type: img.mime_type };
+      }
+      locDescs[loc.id] = `${loc.description}. ${loc.atmosphere}`;
+    });
+    let settingImg: ImgRef | undefined = undefined;
+    let settingDesc = "";
+    if (Object.keys(locImages).length > 0) {
+      const firstLocId = Object.keys(locImages)[0];
+      settingImg = locImages[firstLocId];
+      settingDesc = locDescs[firstLocId] || "";
+    }
+    return {
+      character_images: allCharacterImages,
+      character_image_map: characterImageMap,
+      setting_image: settingImg,
+      location_images: locImages,
+      character_descriptions: storyData.characters.map(
         (char) => `${char.name} (${char.age} ${char.gender}): ${char.appearance}`
       ),
       setting_description: settingDesc,
@@ -4749,7 +5300,7 @@ export default function CreateEpisodePage() {
               ) : (<>
                 {/* Video tip */}
                 <p className="text-xs text-[#ADADAD]/70 text-center mb-4">
-                  Tip: Generate all clips first, then feel free to come back later. Your films will keep rendering in the background.
+                  Tip: Some clips may need regenerating to ensure consistency before they're ready for the final edit.
                 </p>
 
                 <div className="flex flex-col md:flex-row gap-0 bg-panel rounded-2xl md:rounded-3xl outline outline-1 outline-panel-border overflow-hidden md:h-[calc(100vh-220px)] md:min-h-[500px]">

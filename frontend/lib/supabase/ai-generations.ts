@@ -196,6 +196,24 @@ export interface GenJob {
 }
 
 /**
+ * Fetch ALL gen_jobs for a generation in a single atomic query.
+ * Returns a consistent snapshot — eliminates TOCTOU races between
+ * separate completed/generating queries.
+ */
+export async function getAllGenJobs(generationId: string): Promise<GenJob[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("gen_jobs")
+    .select("*")
+    .eq("generation_id", generationId);
+  if (error) {
+    console.error("getAllGenJobs error:", error);
+    return [];
+  }
+  return data || [];
+}
+
+/**
  * Check for completed (or failed) generation jobs for a given generation.
  * Called on restore to recover results from jobs that completed while
  * the client was disconnected.

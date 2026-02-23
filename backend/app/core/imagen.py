@@ -16,28 +16,61 @@ from ..config import genai_client
 
 
 MAX_RETRIES = 2
-RETRY_BASE_DELAY = 5  # seconds
-PER_CALL_TIMEOUT = 90  # seconds — kills individual hung API calls
+RETRY_BASE_DELAY = 10  # seconds — longer backoff since rate limiter prevents most 429s
+PER_CALL_TIMEOUT = 120  # seconds — individual hung API call timeout
 
-# Concurrent image generations. Default 8 fits comfortably in 2GB (8×20MB=160MB peak).
-# Override via env var if instance size changes.
-IMAGE_GEN_MAX_CONCURRENT = int(os.getenv("IMAGE_GEN_MAX_CONCURRENT", "8"))
-_image_gen_semaphore: Optional[asyncio.Semaphore] = None
+# Rate limiting: enforces both concurrency and images-per-minute (IPM).
+# At Tier 1 Gemini allows ~10-20 IPM. Default 10 is safe; set higher for Tier 2+.
+IMAGE_GEN_MAX_CONCURRENT = int(os.getenv("IMAGE_GEN_MAX_CONCURRENT", "4"))
+IMAGE_GEN_IPM = int(os.getenv("IMAGE_GEN_IPM", "10"))
 
 
-def _get_image_gen_semaphore() -> asyncio.Semaphore:
-    """Lazy-init semaphore (must be created inside a running event loop)."""
-    global _image_gen_semaphore
-    if _image_gen_semaphore is None:
-        _image_gen_semaphore = asyncio.Semaphore(IMAGE_GEN_MAX_CONCURRENT)
-    return _image_gen_semaphore
+class _ImageRateLimiter:
+    """Enforces concurrency + images-per-minute across all callers.
+
+    Semaphore caps how many API calls are in-flight simultaneously.
+    The IPM pacing ensures calls are spaced at least (60/IPM) seconds apart,
+    preventing bursts that trigger 429 RESOURCE_EXHAUSTED or silent hangs.
+    """
+
+    def __init__(self, max_concurrent: int, ipm: int):
+        self._sem = asyncio.Semaphore(max_concurrent)
+        self._interval = 60.0 / max(ipm, 1)
+        self._last_call = 0.0
+        self._lock = asyncio.Lock()
+
+    async def __aenter__(self):
+        await self._sem.acquire()
+        # Pace calls: wait if we'd exceed IPM
+        async with self._lock:
+            now = asyncio.get_event_loop().time()
+            wait = self._interval - (now - self._last_call)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_call = asyncio.get_event_loop().time()
+        return self
+
+    async def __aexit__(self, *exc):
+        self._sem.release()
+
+
+_rate_limiter: Optional[_ImageRateLimiter] = None
+
+
+def _get_rate_limiter() -> _ImageRateLimiter:
+    """Lazy-init rate limiter (must be created inside a running event loop)."""
+    global _rate_limiter
+    if _rate_limiter is None:
+        _rate_limiter = _ImageRateLimiter(IMAGE_GEN_MAX_CONCURRENT, IMAGE_GEN_IPM)
+        print(f"[imagen] Rate limiter: {IMAGE_GEN_MAX_CONCURRENT} concurrent, {IMAGE_GEN_IPM} IPM")
+    return _rate_limiter
 
 
 async def _retry_on_resource_exhausted(fn, *args, **kwargs):
     """Retry a sync function with exponential backoff on 429 RESOURCE_EXHAUSTED errors.
 
-    Each individual API call is wrapped in a 90s timeout so a hung HTTP
-    connection can't block the semaphore slot (or the whole batch) forever.
+    Each individual API call is wrapped in a timeout so a hung HTTP
+    connection can't block the rate limiter slot (or the whole batch) forever.
     """
     for attempt in range(MAX_RETRIES + 1):
         try:
@@ -83,8 +116,7 @@ async def generate_image(
           - image_base64: Base64 encoded image data
           - mime_type: Image MIME type
     """
-    sem = _get_image_gen_semaphore()
-    async with sem:
+    async with _get_rate_limiter():
         # Build the prompt with aspect ratio guidance
         full_prompt = f"Generate a high quality image: {prompt}"
         if aspect_ratio == "9:16":
@@ -142,8 +174,8 @@ async def generate_image_with_references(
     - Up to 5 human images for character consistency
     - Up to 6 object images for scene consistency
 
-    Concurrency-limited by semaphore to prevent OOM on memory-constrained
-    instances (each call holds multiple uncompressed PIL Images).
+    Rate-limited (concurrency + IPM) to prevent OOM and API throttling.
+    Each call holds multiple uncompressed PIL Images in memory.
 
     Args:
         prompt: Text description of the image to generate
@@ -157,8 +189,7 @@ async def generate_image_with_references(
           - image_base64: Base64 encoded image data
           - mime_type: Image MIME type
     """
-    sem = _get_image_gen_semaphore()
-    async with sem:
+    async with _get_rate_limiter():
         # Build contents list: prompt first, then reference images
         contents = [prompt]
         pil_images = []  # Track for explicit cleanup
