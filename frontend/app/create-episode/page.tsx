@@ -3593,7 +3593,7 @@ export default function CreateEpisodePage() {
                   Your Episode Idea
                 </h2>
                 <p className="text-sm text-[#ADADAD] mb-6">
-                  Describe your idea for the episode. Include characters, setting, genre, dialogue style, and other details you want to see.
+                  Keep it short — this is a 1 minute episode. Include characters, setting, genre, dialogue style, and other details you want to see.
                 </p>
 
                 <div className="mb-6">
@@ -4502,7 +4502,7 @@ export default function CreateEpisodePage() {
 
                     {/* Storyboard tip */}
                     {Object.keys(sceneImages).length > 0 && (
-                      <p className="text-xs text-[#ADADAD]/70 text-center mb-5">
+                      <p className="text-xs text-[#ADADAD]/70 text-left mb-5">
                         Tip: Keep an eye out for visual glitches like morphing hands, impossible physics, or melting objects. Regenerate any scene that looks off before filming.
                       </p>
                     )}

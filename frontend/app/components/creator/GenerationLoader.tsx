@@ -87,7 +87,7 @@ export default function GenerationLoader({
 
       {/* Rotating tip */}
       {tips.length > 0 && (
-        <div className="max-w-md text-left min-h-[48px] flex items-center">
+        <div className="w-full max-w-md text-left min-h-[48px] flex items-center">
           <p
             className={`text-[#ADADAD]/70 text-sm italic transition-opacity duration-400 ${
               tipVisible ? "opacity-100" : "opacity-0"
