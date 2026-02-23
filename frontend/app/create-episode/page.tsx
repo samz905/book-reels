@@ -1470,6 +1470,14 @@ export default function CreateEpisodePage() {
       processedJobsRef.current.add(job.id);
       if (job.status === "failed") {
         applyFailedJob(job);
+        // Auto-retry: if auto-gen is active and we have a stored payload, schedule retry
+        // instead of leaving the user stuck on a failed item
+        if (autoGenActiveRef.current) {
+          const retryKey = `${job.job_type}:${job.target_id}`;
+          if (autoGenPayloadsRef.current.has(retryKey)) {
+            scheduleAutoRetry(job.job_type, job.target_id);
+          }
+        }
         continue;
       }
       applyCompletedJob(job);
@@ -1498,6 +1506,13 @@ export default function CreateEpisodePage() {
           console.warn(`[stale-watchdog] Job ${job.job_type}/${job.target_id} stuck for ${Math.round(jobAge / 1000)}s — marking failed`);
           processedJobsRef.current.add(job.id);
           applyFailedJob({ ...job, status: "failed", error_message: "Timed out — click Regenerate to retry" });
+          // Auto-retry stale jobs too
+          if (autoGenActiveRef.current) {
+            const retryKey = `${job.job_type}:${job.target_id}`;
+            if (autoGenPayloadsRef.current.has(retryKey)) {
+              scheduleAutoRetry(job.job_type, job.target_id);
+            }
+          }
         }
       }
     }, CHECK_INTERVAL_MS);

@@ -15,7 +15,7 @@ from google.genai import types
 from ..config import genai_client
 
 
-MAX_RETRIES = 2
+MAX_RETRIES = 4  # 5 total attempts — Gemini 503 spikes are often transient
 RETRY_BASE_DELAY = 10  # seconds — longer backoff since rate limiter prevents most 429s
 PER_CALL_TIMEOUT = 120  # seconds — individual hung API call timeout
 
