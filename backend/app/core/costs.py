@@ -2,11 +2,9 @@
 Cost tracking for AI operations.
 
 Pricing (as of 2025):
-- Gemini 2.0 Flash: $0.15/1M input tokens, $0.60/1M output tokens
-- Gemini Image Generation: ~$0.04 per image (2K resolution)
+- Claude Haiku 4.5: $0.80/1M input tokens, $4.00/1M output tokens
+- Atlas Cloud Image (Nano Banana Pro Ultra): $0.15 per image
 - Seedance 1.5 Pro Fast (Atlas Cloud): $0.022 per second
-- Veo 3.1 Fast: $0.15 per second (deprecated)
-- Veo 3.1 Standard: $0.40 per second (deprecated)
 """
 from dataclasses import dataclass, field
 from typing import List, Literal
@@ -16,12 +14,12 @@ from typing import List, Literal
 # Cost Constants (USD)
 # ============================================================
 
-# Text generation (Gemini 2.0 Flash)
-COST_TEXT_INPUT_PER_1M_TOKENS = 0.15
-COST_TEXT_OUTPUT_PER_1M_TOKENS = 0.60
+# Text generation (Claude Haiku 4.5)
+COST_TEXT_INPUT_PER_1M_TOKENS = 0.80
+COST_TEXT_OUTPUT_PER_1M_TOKENS = 4.00
 
-# Image generation
-COST_IMAGE_GENERATION = 0.04  # Per image at 2K resolution
+# Image generation — Atlas Cloud Nano Banana Pro Ultra
+COST_IMAGE_GENERATION = 0.15  # Per image (Ultra tier)
 
 # Video generation — Seedance 1.5 Pro Fast (Atlas Cloud)
 COST_VIDEO_SEEDANCE_FAST_PER_SECOND = 0.022

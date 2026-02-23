@@ -614,11 +614,37 @@ export default function CreateEpisodePage() {
     const count = (retryCountRef.current.get(key) || 0) + 1;
     retryCountRef.current.set(key, count);
     if (count > 10) {
-      // Give up — free inflight slot for storyboard batch so remaining queue can proceed
+      // Give up — mark item as failed, count as "done", free inflight slot
       if (jobType === "scene_image") {
+        const sn = parseInt(targetId);
+        if (!isNaN(sn)) {
+          setSceneImages((prev) => ({
+            ...prev,
+            [sn]: { ...prev[sn], isGenerating: false, error: "Failed after retries — click Regenerate" },
+          }));
+        }
         autoGenSceneInflightRef.current = Math.max(0, autoGenSceneInflightRef.current - 1);
         if (autoGenSceneInflightRef.current === 0) _autoGenSubmitNextScene();
+      } else if (jobType === "character_image" || jobType === "protagonist") {
+        setCharacterImages((prev) => ({
+          ...prev,
+          [targetId]: { ...prev[targetId], isGenerating: false, error: "Failed after retries" },
+        }));
+      } else if (jobType === "location_image") {
+        setLocationImages((prev) => ({
+          ...prev,
+          [targetId]: { ...prev[targetId], isGenerating: false, error: "Failed after retries" },
+        }));
+      } else if (jobType === "clip") {
+        const sn = parseInt(targetId);
+        if (!isNaN(sn)) {
+          setClipStates((prev) => ({
+            ...prev,
+            [sn]: { ...prev[sn], status: "failed", error: "Failed after retries" },
+          }));
+        }
       }
+      _autoGenItemCompleted();
       return;
     }
     const delay = Math.min(3000 * Math.pow(2, count - 1), 30000);

@@ -57,39 +57,54 @@ def create_gen_job(
     If a job with the same (generation_id, job_type, target_id) is already
     "generating", returns it as-is with ``_already_generating=True`` so the
     caller can skip spawning a duplicate background task.
+
+    Retries transient Supabase errors (connection resets, timeouts) up to 3×.
     """
+    import time
+
     sb = get_supabase()
     if not sb:
         raise RuntimeError("Supabase not configured")
 
-    # Check for an already-running job to prevent duplicate background tasks
-    existing = (
-        sb.table("gen_jobs")
-        .select("*")
-        .eq("generation_id", generation_id)
-        .eq("job_type", job_type)
-        .eq("target_id", target_id)
-        .eq("status", "generating")
-        .execute()
-    )
-    if existing.data:
-        row = existing.data[0]
-        row["_already_generating"] = True
-        return row
+    last_err = None
+    for attempt in range(4):  # up to 4 attempts
+        try:
+            # Check for an already-running job to prevent duplicate background tasks
+            existing = (
+                sb.table("gen_jobs")
+                .select("*")
+                .eq("generation_id", generation_id)
+                .eq("job_type", job_type)
+                .eq("target_id", target_id)
+                .eq("status", "generating")
+                .execute()
+            )
+            if existing.data:
+                row = existing.data[0]
+                row["_already_generating"] = True
+                return row
 
-    row = sb.table("gen_jobs").upsert(
-        {
-            "generation_id": generation_id,
-            "job_type": job_type,
-            "target_id": target_id,
-            "status": "generating",
-            "result": None,
-            "error_message": None,
-            "updated_at": _now_iso(),
-        },
-        on_conflict="generation_id,job_type,target_id",
-    ).execute()
-    return row.data[0]
+            row = sb.table("gen_jobs").upsert(
+                {
+                    "generation_id": generation_id,
+                    "job_type": job_type,
+                    "target_id": target_id,
+                    "status": "generating",
+                    "result": None,
+                    "error_message": None,
+                    "updated_at": _now_iso(),
+                },
+                on_conflict="generation_id,job_type,target_id",
+            ).execute()
+            return row.data[0]
+        except Exception as e:
+            last_err = e
+            if attempt < 3:
+                delay = 1.0 * (2 ** attempt)
+                print(f"[supabase] create_gen_job retry {attempt + 1}/3 in {delay}s: {e}")
+                time.sleep(delay)
+
+    raise last_err  # type: ignore[misc]
 
 
 def update_gen_job(

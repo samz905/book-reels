@@ -675,30 +675,70 @@ export interface GenerationContext {
  * Submit a generation as a background job to the backend.
  * Returns immediately with job_id — results arrive via Supabase Realtime.
  * The user can close the tab; the backend continues processing.
+ *
+ * Retries transient server errors (500-504) up to 3 times with exponential
+ * backoff so callers never see transient Supabase/infra hiccups.
  */
+const SUBMIT_MAX_RETRIES = 3;
+const SUBMIT_RETRY_BASE_MS = 1500;
+
 export async function submitJob(
   jobType: string,
   backendPath: string,
   payload: unknown,
   ctx: GenerationContext
 ): Promise<string> {
-  const response = await fetch(`${BACKEND_URL}/jobs/submit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      generation_id: ctx.generationId,
-      job_type: jobType,
-      target_id: ctx.targetId || "",
-      backend_path: backendPath,
-      payload,
-    }),
+  const body = JSON.stringify({
+    generation_id: ctx.generationId,
+    job_type: jobType,
+    target_id: ctx.targetId || "",
+    backend_path: backendPath,
+    payload,
   });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || err.error || `Job submission failed: ${response.status}`);
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= SUBMIT_MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(`${BACKEND_URL}/jobs/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return data.job_id;
+      }
+
+      // Retry on transient server errors
+      if (response.status >= 500 && attempt < SUBMIT_MAX_RETRIES) {
+        const delay = SUBMIT_RETRY_BASE_MS * Math.pow(2, attempt);
+        console.warn(
+          `[submitJob] ${jobType}/${ctx.targetId} HTTP ${response.status} — retry ${attempt + 1}/${SUBMIT_MAX_RETRIES} in ${delay}ms`
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || err.error || `Job submission failed: ${response.status}`);
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+      // Network errors (fetch itself threw) — retry if attempts remain
+      if (attempt < SUBMIT_MAX_RETRIES && !lastError.message.includes("Job submission failed")) {
+        const delay = SUBMIT_RETRY_BASE_MS * Math.pow(2, attempt);
+        console.warn(
+          `[submitJob] ${jobType}/${ctx.targetId} network error — retry ${attempt + 1}/${SUBMIT_MAX_RETRIES} in ${delay}ms`
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw lastError;
+    }
   }
-  const data = await response.json();
-  return data.job_id;
+
+  throw lastError || new Error("Job submission failed after retries");
 }
 
 // ============ AI Image Generation ============

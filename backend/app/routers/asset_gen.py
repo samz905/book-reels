@@ -2,13 +2,11 @@
 Standalone asset image generation for Creator Dashboard.
 Generates character and location images without needing full Story context.
 """
-import base64
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import httpx
 
-from ..core import generate_image, generate_image_with_references, COST_IMAGE_GENERATION
+from ..core import generate_image, COST_IMAGE_GENERATION
 
 router = APIRouter()
 
@@ -64,17 +62,6 @@ class ReferenceImage(BaseModel):
     mime_type: str
 
 
-async def resolve_ref_base64(ref: ReferenceImage) -> str:
-    """Return base64 for a ReferenceImage, fetching from URL if needed."""
-    if ref.image_base64:
-        return ref.image_base64
-    if ref.image_url:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(ref.image_url, timeout=30)
-            resp.raise_for_status()
-            return base64.b64encode(resp.content).decode()
-    raise ValueError("ReferenceImage has neither image_base64 nor image_url")
-
 
 class GenerateCharacterImageRequest(BaseModel):
     name: str
@@ -129,27 +116,8 @@ Show enough detail to establish their complete look.
 
 Portrait orientation, 9:16 aspect ratio."""
 
-        if request.reference_image:
-            prompt += (
-                "\n\nSTYLE REFERENCE ONLY: Match the art style, color palette, "
-                "lighting, and rendering quality of the reference image. "
-                "Do NOT copy the reference person's face, body, or features. "
-                "Generate a completely different-looking person based on the "
-                "character description above."
-            )
-            # Resolve reference image base64 (fetch from URL if needed)
-            ref_base64 = await resolve_ref_base64(request.reference_image)
-            refs = [{
-                "image_base64": ref_base64,
-                "mime_type": request.reference_image.mime_type,
-            }]
-            result = await generate_image_with_references(
-                prompt=prompt,
-                reference_images=refs,
-                aspect_ratio="9:16",
-            )
-        else:
-            result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+        # Always T2I — chars are generated independently (no style ref needed)
+        result = await generate_image(prompt=prompt, aspect_ratio="9:16")
 
         return GeneratedImageResponse(
             image_base64=result["image_base64"],
@@ -164,12 +132,10 @@ Portrait orientation, 9:16 aspect ratio."""
 
 @router.post("/generate-location-image", response_model=GeneratedImageResponse)
 async def generate_location_image(request: GenerateLocationImageRequest):
-    """Generate a location/environment image from name/description + visual style or reference image."""
+    """Generate a location/environment image from name/description + visual style."""
     try:
         # Build style prefix
-        if request.reference_image:
-            style_prefix = "Match the visual style of the reference image exactly."
-        elif request.visual_style and request.visual_style in STYLE_PREFIXES:
+        if request.visual_style and request.visual_style in STYLE_PREFIXES:
             style_prefix = STYLE_PREFIXES[request.visual_style]
         else:
             style_prefix = STYLE_PREFIXES["cinematic"]
@@ -187,24 +153,8 @@ No characters in frame.
 
 Portrait orientation, 9:16 aspect ratio."""
 
-        if request.reference_image:
-            prompt += (
-                "\n\nCRITICAL: Match the visual style of the reference image exactly. "
-                "Same rendering approach, same color treatment, same texture quality."
-            )
-            # Resolve reference image base64 (fetch from URL if needed)
-            ref_base64 = await resolve_ref_base64(request.reference_image)
-            refs = [{
-                "image_base64": ref_base64,
-                "mime_type": request.reference_image.mime_type,
-            }]
-            result = await generate_image_with_references(
-                prompt=prompt,
-                reference_images=refs,
-                aspect_ratio="9:16",
-            )
-        else:
-            result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+        # Always T2I — locations are generated independently (no style ref needed)
+        result = await generate_image(prompt=prompt, aspect_ratio="9:16")
 
         return GeneratedImageResponse(
             image_base64=result["image_base64"],

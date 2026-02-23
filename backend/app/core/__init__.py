@@ -1,6 +1,6 @@
 # Core utilities package
 from .claude import generate_text_claude
-from .imagen import generate_image, generate_image_with_references
+from .imagen import generate_image, generate_image_with_references, edit_image
 from .seedance import generate_video as generate_video_seedance
 from .ffmpeg import extract_frame, assemble_videos
 from .costs import (
@@ -25,6 +25,7 @@ __all__ = [
     "generate_text_claude",
     "generate_image",
     "generate_image_with_references",
+    "edit_image",
     "generate_video",
     "generate_video_seedance",
     "extract_frame",

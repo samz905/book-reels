@@ -4,17 +4,13 @@ Step-by-step visual direction: Characters -> Setting -> Key Moment (SPIKE)
 """
 import asyncio
 import base64
-import io
 import uuid
 from typing import Optional, Literal, List, Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import httpx
-from PIL import Image
-from google.genai import types
 
-from ..core import generate_image, generate_image_with_references, COST_IMAGE_GENERATION
-from ..config import genai_client
+from ..core import generate_image, generate_image_with_references, edit_image, COST_IMAGE_GENERATION
 from .story import Story, Character, Setting, Location, Beat
 
 router = APIRouter()
@@ -646,7 +642,7 @@ async def generate_character(request: GenerateCharacterRequest):
 
         refs = []
         if request.protagonist_image:
-            refs = [{"image_base64": request.protagonist_image.image_base64, "mime_type": request.protagonist_image.mime_type}]
+            refs = [{"image_base64": request.protagonist_image.image_base64, "image_url": request.protagonist_image.image_url, "mime_type": request.protagonist_image.mime_type}]
 
         async def gen_variant(i: int):
             variation = CHARACTER_SHOT_VARIATIONS[i % len(CHARACTER_SHOT_VARIATIONS)]
@@ -713,10 +709,10 @@ async def refine_character(request: RefineCharacterRequest):
         # Build reference list: protagonist + user-uploaded refs
         refs = []
         if request.protagonist_image:
-            refs.append({"image_base64": request.protagonist_image.image_base64, "mime_type": request.protagonist_image.mime_type})
+            refs.append({"image_base64": request.protagonist_image.image_base64, "image_url": request.protagonist_image.image_url, "mime_type": request.protagonist_image.mime_type})
         if request.reference_images:
             for ref in request.reference_images[:5]:
-                refs.append({"image_base64": ref.image_base64, "mime_type": ref.mime_type})
+                refs.append({"image_base64": ref.image_base64, "image_url": ref.image_url, "mime_type": ref.mime_type})
 
         use_reference = len(refs) > 0
         prompt = build_character_prompt(story, character, request.feedback, use_reference=use_reference)
@@ -782,6 +778,7 @@ async def generate_setting(request: GenerateSettingRequest):
                 prompt=prompt,
                 reference_images=[{
                     "image_base64": request.protagonist_image.image_base64,
+                    "image_url": request.protagonist_image.image_url,
                     "mime_type": request.protagonist_image.mime_type,
                 }],
                 aspect_ratio="9:16",
@@ -831,6 +828,7 @@ async def refine_setting(request: RefineSettingRequest):
                 prompt=prompt,
                 reference_images=[{
                     "image_base64": request.protagonist_image.image_base64,
+                    "image_url": request.protagonist_image.image_url,
                     "mime_type": request.protagonist_image.mime_type,
                 }],
                 aspect_ratio="9:16",
@@ -889,7 +887,7 @@ async def generate_location(request: GenerateLocationRequest):
 
         refs = []
         if request.protagonist_image:
-            refs = [{"image_base64": request.protagonist_image.image_base64, "mime_type": request.protagonist_image.mime_type}]
+            refs = [{"image_base64": request.protagonist_image.image_base64, "image_url": request.protagonist_image.image_url, "mime_type": request.protagonist_image.mime_type}]
 
         async def gen_variant(i: int):
             variation = LOCATION_SHOT_VARIATIONS[i % len(LOCATION_SHOT_VARIATIONS)]
@@ -956,10 +954,10 @@ async def refine_location(request: RefineLocationRequest):
         # Build reference list: protagonist + user-uploaded refs
         refs = []
         if request.protagonist_image:
-            refs.append({"image_base64": request.protagonist_image.image_base64, "mime_type": request.protagonist_image.mime_type})
+            refs.append({"image_base64": request.protagonist_image.image_base64, "image_url": request.protagonist_image.image_url, "mime_type": request.protagonist_image.mime_type})
         if request.reference_images:
             for ref in request.reference_images[:5]:
-                refs.append({"image_base64": ref.image_base64, "mime_type": ref.mime_type})
+                refs.append({"image_base64": ref.image_base64, "image_url": ref.image_url, "mime_type": ref.mime_type})
 
         use_reference = len(refs) > 0
         prompt = build_location_prompt(story, location, request.feedback, use_reference=use_reference)
@@ -1040,11 +1038,11 @@ async def generate_key_moment(request: GenerateKeyMomentRequest):
                 for char_id in beat.characters_in_scene:
                     if char_id in approved.character_image_map:
                         char_ref = approved.character_image_map[char_id]
-                        refs.append({"image_base64": char_ref.image_base64, "mime_type": char_ref.mime_type})
+                        refs.append({"image_base64": char_ref.image_base64, "image_url": char_ref.image_url, "mime_type": char_ref.mime_type})
             # Fallback: use all character images if no per-beat info
             if not refs:
                 for char_img in approved.character_images[:5]:
-                    refs.append({"image_base64": char_img.image_base64, "mime_type": char_img.mime_type})
+                    refs.append({"image_base64": char_img.image_base64, "image_url": char_img.image_url, "mime_type": char_img.mime_type})
 
             # Add location image for this beat
             location_img = None
@@ -1056,7 +1054,7 @@ async def generate_key_moment(request: GenerateKeyMomentRequest):
                 location_img = approved.setting_image
 
             if location_img:
-                refs.append({"image_base64": location_img.image_base64, "mime_type": location_img.mime_type})
+                refs.append({"image_base64": location_img.image_base64, "image_url": location_img.image_url, "mime_type": location_img.mime_type})
 
             prompt = build_key_moment_prompt(story, beat, approved)
             print(f"  Beat {beat.number}: {len(refs)} refs, prompt: {prompt[:150]}...")
@@ -1264,11 +1262,11 @@ async def generate_scene_images(request: GenerateSceneImagesRequest):
                 for char_id in beat.characters_in_scene:
                     if char_id in approved.character_image_map:
                         char_ref = approved.character_image_map[char_id]
-                        refs.append({"image_base64": char_ref.image_base64, "mime_type": char_ref.mime_type})
+                        refs.append({"image_base64": char_ref.image_base64, "image_url": char_ref.image_url, "mime_type": char_ref.mime_type})
             # Fallback: use all character images if no per-beat info
             if not refs:
                 for char_img in approved.character_images[:5]:
-                    refs.append({"image_base64": char_img.image_base64, "mime_type": char_img.mime_type})
+                    refs.append({"image_base64": char_img.image_base64, "image_url": char_img.image_url, "mime_type": char_img.mime_type})
 
             # Add location image for this scene
             location_id = beat.location_id if beat else None
@@ -1281,7 +1279,7 @@ async def generate_scene_images(request: GenerateSceneImagesRequest):
                 location_img = approved.setting_image
 
             if location_img:
-                refs.append({"image_base64": location_img.image_base64, "mime_type": location_img.mime_type})
+                refs.append({"image_base64": location_img.image_base64, "image_url": location_img.image_url, "mime_type": location_img.mime_type})
 
             # Build character appearance context for prompt
             chars_in_scene = beat.characters_in_scene if beat and beat.characters_in_scene else [c.id for c in story.characters]
@@ -1393,61 +1391,38 @@ class RefineSceneImageResponse(BaseModel):
 @router.post("/refine-scene-image", response_model=RefineSceneImageResponse)
 async def refine_scene_image(request: RefineSceneImageRequest):
     """
-    Edit a scene image using Gemini 2.5 Flash Image's native editing.
+    Edit a scene image via Atlas Cloud's edit endpoint.
     Supports text-based edits like removing people, changing elements, etc.
     """
     try:
-        # Resolve current image to base64
+        # Resolve current image to a public URL (Atlas Cloud edit requires URLs)
         img = request.current_image
-        image_b64 = img.image_base64
-        if not image_b64 and img.image_url:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(img.image_url, timeout=30)
-                resp.raise_for_status()
-                image_b64 = base64.b64encode(resp.content).decode()
-        if not image_b64:
+        image_url = img.image_url
+        if not image_url and img.image_base64:
+            # Upload base64 to Storage to get a URL
+            from ..supabase_client import async_upload_image_base64
+            import uuid as _uuid
+            path = f"temp/{_uuid.uuid4().hex}.png"
+            image_url = await async_upload_image_base64(
+                "_refs", path, img.image_base64, img.mime_type,
+            )
+        if not image_url:
             raise ValueError("No current image provided (neither base64 nor url)")
-
-        # Convert base64 to PIL Image for Gemini API
-        image_bytes = base64.b64decode(image_b64)
-        pil_image = Image.open(io.BytesIO(image_bytes))
 
         print(f"Editing scene {request.scene_number} with feedback: {request.feedback}")
 
-        # Use Nano Banana Pro (Gemini 3 Pro Image) for editing — "thinking" phase
-        # handles complex edits much better than Flash (spatial changes, recomposition)
-        response = await asyncio.to_thread(
-            genai_client.models.generate_content,
-            model='gemini-3-pro-image-preview',
-            contents=[pil_image, request.feedback],
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"],
-                image_config=types.ImageConfig(aspect_ratio="9:16")
-            )
-        )
-
-        # Extract edited image from response
-        edited_image_b64 = None
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, 'inline_data') and part.inline_data is not None:
-                image_data = part.inline_data
-                if hasattr(image_data, 'data') and image_data.data:
-                    edited_image_b64 = base64.b64encode(image_data.data).decode("utf-8")
-                    break
-
-        if not edited_image_b64:
-            raise ValueError("No image was generated in the edit response")
+        result = await edit_image(image_url, request.feedback)
 
         return RefineSceneImageResponse(
             scene_number=request.scene_number,
             image=MoodboardImage(
                 type="key_moment",
-                image_base64=edited_image_b64,
-                mime_type="image/png",
+                image_base64=result["image_base64"],
+                mime_type=result["mime_type"],
                 prompt_used=request.feedback,
             ),
             prompt_used=request.feedback,
-            cost_usd=0.134,  # Gemini 3 Pro Image (Nano Banana Pro) pricing — 2K
+            cost_usd=0.15,  # Atlas Cloud Ultra
         )
 
     except Exception as e:

@@ -1374,12 +1374,12 @@ def _fallback_refs_from_visuals(beat: Beat, approved_visuals: ApprovedVisuals) -
             if char_id in approved_visuals.character_image_map:
                 ref = approved_visuals.character_image_map[char_id]
                 if ref.image_base64:
-                    refs.append({"image_base64": ref.image_base64, "mime_type": ref.mime_type})
+                    refs.append({"image_base64": ref.image_base64, "image_url": ref.image_url, "mime_type": ref.mime_type})
     # Fallback: all character images
     if not refs and approved_visuals.character_images:
         for ref in approved_visuals.character_images[:3]:
             if ref.image_base64:
-                refs.append({"image_base64": ref.image_base64, "mime_type": ref.mime_type})
+                refs.append({"image_base64": ref.image_base64, "image_url": ref.image_url, "mime_type": ref.mime_type})
 
     # Location ref
     loc_img = None
@@ -1388,7 +1388,7 @@ def _fallback_refs_from_visuals(beat: Beat, approved_visuals: ApprovedVisuals) -
     if not loc_img and approved_visuals.setting_image:
         loc_img = approved_visuals.setting_image
     if loc_img and loc_img.image_base64:
-        refs.append({"image_base64": loc_img.image_base64, "mime_type": loc_img.mime_type})
+        refs.append({"image_base64": loc_img.image_base64, "image_url": loc_img.image_url, "mime_type": loc_img.mime_type})
 
     # Veo accepts max 3 reference images
     return refs[:3]
