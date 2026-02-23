@@ -91,7 +91,24 @@ async def submit_job(request: SubmitJobRequest, background_tasks: BackgroundTask
 # Background Task Dispatcher
 # ============================================================
 
-JOB_TIMEOUT_SECONDS = 180  # 3 minutes — kills hung API calls
+JOB_TIMEOUT_DEFAULT = 180   # 3 minutes — text gen, misc
+JOB_TIMEOUT_IMAGE = 300     # 5 minutes — image gen with retries needs up to ~285s
+
+_IMAGE_PATHS = frozenset({
+    "/moodboard/generate-protagonist", "/moodboard/generate-character",
+    "/moodboard/generate-location", "/moodboard/generate-scene-image",
+    "/moodboard/generate-scene-images", "/moodboard/refine-character",
+    "/moodboard/refine-location", "/moodboard/refine-scene-image",
+    "/moodboard/generate-key-moment", "/moodboard/refine-key-moment",
+    "/assets/generate-character-image", "/assets/generate-location-image",
+})
+
+
+def _get_job_timeout(backend_path: str) -> int:
+    """Get timeout in seconds based on job type."""
+    if backend_path in _IMAGE_PATHS:
+        return JOB_TIMEOUT_IMAGE
+    return JOB_TIMEOUT_DEFAULT
 
 
 async def run_job(job_id: str, request: SubmitJobRequest):
@@ -109,12 +126,13 @@ async def run_job(job_id: str, request: SubmitJobRequest):
                 return await handler(request.payload, job_id=job_id)
             return await handler(request.payload)
 
-        # Timeout guard: kill hung image gen calls.
+        # Timeout guard: kill hung API calls.
         # Film jobs are exempt — Seedance has its own 5-min poll timeout.
         if is_film:
             result = await _run_handler()
         else:
-            result = await asyncio.wait_for(_run_handler(), timeout=JOB_TIMEOUT_SECONDS)
+            timeout = _get_job_timeout(request.backend_path)
+            result = await asyncio.wait_for(_run_handler(), timeout=timeout)
 
         # Upload any base64 images in the result to Storage
         result = await upload_result_images(
@@ -128,8 +146,9 @@ async def run_job(job_id: str, request: SubmitJobRequest):
         print(f"[job] {request.job_type}/{request.target_id} completed")
 
     except asyncio.TimeoutError:
-        error_msg = f"Job timed out after {JOB_TIMEOUT_SECONDS}s — please retry"
-        print(f"[job] {request.job_type}/{request.target_id} TIMED OUT")
+        timeout = _get_job_timeout(request.backend_path)
+        error_msg = f"Job timed out after {timeout}s — please retry"
+        print(f"[job] {request.job_type}/{request.target_id} TIMED OUT ({timeout}s)")
         await async_update_gen_job(job_id, "failed", error=error_msg)
 
     except Exception as e:

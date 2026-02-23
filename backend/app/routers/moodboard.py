@@ -1414,11 +1414,11 @@ async def refine_scene_image(request: RefineSceneImageRequest):
 
         print(f"Editing scene {request.scene_number} with feedback: {request.feedback}")
 
-        # Use Gemini 2.5 Flash Image for native editing (not generation with refs)
-        # This model understands text-based editing instructions like "remove X", "change Y"
+        # Use Nano Banana Pro (Gemini 3 Pro Image) for editing — "thinking" phase
+        # handles complex edits much better than Flash (spatial changes, recomposition)
         response = await asyncio.to_thread(
             genai_client.models.generate_content,
-            model='gemini-2.5-flash-image',
+            model='gemini-3-pro-image-preview',
             contents=[pil_image, request.feedback],
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
@@ -1447,7 +1447,7 @@ async def refine_scene_image(request: RefineSceneImageRequest):
                 prompt_used=request.feedback,
             ),
             prompt_used=request.feedback,
-            cost_usd=0.039,  # Gemini 2.5 Flash Image pricing
+            cost_usd=0.134,  # Gemini 3 Pro Image (Nano Banana Pro) pricing — 2K
         )
 
     except Exception as e:

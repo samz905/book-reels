@@ -8,13 +8,14 @@ import base64
 import gc
 import io
 import os
+import random
 from typing import Literal, List, Optional
 from PIL import Image
 from google.genai import types
 from ..config import genai_client
 
 
-MAX_RETRIES = 3
+MAX_RETRIES = 2
 RETRY_BASE_DELAY = 5  # seconds
 PER_CALL_TIMEOUT = 90  # seconds — kills individual hung API calls
 
@@ -56,7 +57,9 @@ async def _retry_on_resource_exhausted(fn, *args, **kwargs):
             if is_retryable:
                 if attempt < MAX_RETRIES:
                     delay = RETRY_BASE_DELAY * (2 ** attempt)
-                    print(f"  Transient error. Retrying in {delay}s... (attempt {attempt + 1}/{MAX_RETRIES})")
+                    jitter = delay * random.uniform(-0.3, 0.3)
+                    delay = max(1, delay + jitter)
+                    print(f"  Transient error. Retrying in {delay:.1f}s... (attempt {attempt + 1}/{MAX_RETRIES})")
                     await asyncio.sleep(delay)
                     continue
             raise

@@ -251,63 +251,6 @@ export default function LocationModal({
         {/* Hidden file input */}
         <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
 
-        {/* Image section */}
-        <div className="mb-5">
-          <div className="max-w-[280px] mx-auto aspect-[9/16] bg-[#262626] rounded-2xl overflow-hidden flex items-center justify-center mb-3">
-            {(imageBase64 || imageUrl) ? (
-              <img
-                src={imageBase64 ? `data:${imageMimeType};base64,${imageBase64}` : imageUrl!}
-                alt="Location"
-                className="w-full h-full object-cover"
-              />
-            ) : isGenerating ? (
-              <div className="flex flex-col items-center justify-center text-center">
-                <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                <p className="text-sm text-[#ADADAD]">Generating...</p>
-              </div>
-            ) : (
-              <div className="text-center text-[#ADADAD]">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" className="mx-auto mb-2">
-                  <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
-                </svg>
-                <p className="text-sm">Upload or generate an image</p>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleUpload}
-              disabled={isGenerating}
-              className="flex items-center gap-2 px-4 py-2 bg-[#262550] border border-[#B8B6FC] rounded-lg text-white text-sm hover:bg-[#363580] transition-colors disabled:opacity-50"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
-                <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" />
-              </svg>
-              Upload
-            </button>
-            <button
-              onClick={handleGenerate}
-              disabled={isGenerating || isSaving}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold transition-opacity hover:opacity-90 disabled:opacity-50"
-              style={{ background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)" }}
-            >
-              {isGenerating && (
-                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-              )}
-              {isGenerating ? "Generating..." : "Generate with AI"}
-            </button>
-          </div>
-          {genError && (
-            <p className="text-red-400 text-sm mt-2">{genError}</p>
-          )}
-        </div>
-
         {/* Location Name */}
         <div className="mb-4">
           <label className="block text-white text-sm mb-2">Location Name</label>
@@ -388,6 +331,63 @@ export default function LocationModal({
             </div>
           </div>
         )}
+
+        {/* Image section */}
+        <div className="mb-5">
+          <div className="max-w-[280px] mx-auto aspect-[9/16] bg-[#262626] rounded-2xl overflow-hidden flex items-center justify-center mb-3">
+            {(imageBase64 || imageUrl) ? (
+              <img
+                src={imageBase64 ? `data:${imageMimeType};base64,${imageBase64}` : imageUrl!}
+                alt="Location"
+                className="w-full h-full object-cover"
+              />
+            ) : isGenerating ? (
+              <div className="flex flex-col items-center justify-center text-center">
+                <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <p className="text-sm text-[#ADADAD]">Generating...</p>
+              </div>
+            ) : (
+              <div className="text-center text-[#ADADAD]">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" className="mx-auto mb-2">
+                  <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
+                </svg>
+                <p className="text-sm">Upload or generate an image</p>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleUpload}
+              disabled={isGenerating}
+              className="flex items-center gap-2 px-4 py-2 bg-[#262550] border border-[#B8B6FC] rounded-lg text-white text-sm hover:bg-[#363580] transition-colors disabled:opacity-50"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
+                <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" />
+              </svg>
+              Upload
+            </button>
+            <button
+              onClick={handleGenerate}
+              disabled={isGenerating || isSaving}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold transition-opacity hover:opacity-90 disabled:opacity-50"
+              style={{ background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)" }}
+            >
+              {isGenerating && (
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+              )}
+              {isGenerating ? "Generating..." : "Generate with AI"}
+            </button>
+          </div>
+          {genError && (
+            <p className="text-red-400 text-sm mt-2">{genError}</p>
+          )}
+        </div>
 
         {/* Action buttons */}
         <div className="flex items-center justify-end gap-3">

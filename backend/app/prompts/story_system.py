@@ -5,7 +5,7 @@ Change STORY_MODEL here to switch ALL story-related text generation.
 """
 
 # ── Single place to switch the Claude model for ALL story text generation ──
-STORY_MODEL = "claude-haiku-4-5-20251001"
+STORY_MODEL = "claude-sonnet-4-5"
 
 
 STORY_SYSTEM_PROMPT = """You are an 8-Scene Vertical Episode Generator designed for maximum viewer retention.

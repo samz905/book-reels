@@ -134,9 +134,10 @@ function DraftCard({
 }: {
   draft: GenerationWithStory;
   onClick: () => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const step = getStepIndex(draft.status);
   const isFailed = step === -1;
   const updatedDate = new Date(draft.updated_at).toLocaleDateString(undefined, {
@@ -153,14 +154,22 @@ function DraftCard({
           <p className="text-white text-xs text-center">Delete this draft?</p>
           <div className="flex gap-2">
             <button
-              onClick={(e) => { e.stopPropagation(); onDelete(draft.id); }}
-              className="px-3 py-1.5 bg-red-500/20 text-red-400 text-xs rounded-lg border border-red-500/30 hover:bg-red-500/30"
+              onClick={async (e) => { e.stopPropagation(); setDeleting(true); await onDelete(draft.id); }}
+              disabled={deleting}
+              className="px-3 py-1.5 bg-red-500/20 text-red-400 text-xs rounded-lg border border-red-500/30 hover:bg-red-500/30 disabled:opacity-50 flex items-center gap-1.5"
             >
-              Delete
+              {deleting && (
+                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+              )}
+              {deleting ? "Deleting..." : "Delete"}
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
-              className="px-3 py-1.5 bg-white/5 text-white/60 text-xs rounded-lg border border-white/10 hover:bg-white/10"
+              disabled={deleting}
+              className="px-3 py-1.5 bg-white/5 text-white/60 text-xs rounded-lg border border-white/10 hover:bg-white/10 disabled:opacity-50"
             >
               Cancel
             </button>
@@ -252,7 +261,7 @@ function StorySection({
   coverUrl: string | null;
   drafts: GenerationWithStory[];
   onDraftClick: (id: string) => void;
-  onDraftDelete: (id: string) => void;
+  onDraftDelete: (id: string) => Promise<void>;
 }) {
   return (
     <div className="border-l-2 border-[#9C99FF]/40 pl-5">

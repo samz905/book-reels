@@ -1205,12 +1205,14 @@ async def generate_scene_descriptions(request: GenerateSceneDescriptionsRequest)
 
         scenes_text = "\n\n".join(scene_summaries)
 
-        prompt = f"""You are generating cinematic visual descriptions for a vertical short film.
+        prompt = f"""You are generating FIRST FRAME image prompts for an AI video pipeline.
+
+CRITICAL CONTEXT: Each image you describe will be the ONLY visual input to a video generation model. The video model has NEVER seen these characters before — it will learn what each character looks like SOLELY from this single image. If a character is not clearly visible in the first frame, the video model cannot depict them at all during the clip.
 
 STORY TITLE: {story.title}
 STYLE: {STYLE_DISPLAY.get(story.style, story.style)}
 
-CHARACTERS:
+CHARACTERS (use these exact appearance details in every description):
 {characters_context}
 
 LOCATIONS:
@@ -1219,20 +1221,26 @@ LOCATIONS:
 SCENES:
 {scenes_text}
 
-For each scene, write a 1-2 sentence cinematic visual description suitable for generating a still image. Describe what the CAMERA SEES — character positioning, expressions, lighting, composition. Include specific character names.
+For each scene, write a 2-3 sentence image prompt describing the FIRST FRAME — the frozen instant the scene begins, before any action unfolds.
+
+FIRST FRAME RULES (NON-NEGOTIABLE):
+1. EVERY character in characters_on_screen MUST be VISIBLY PRESENT in the image. The video model learns what characters look like from this frame alone — if someone is missing, the model cannot render them.
+2. DESCRIBE each character by NAME with their key appearance details: "Kate (dark hair past shoulders, thin camisole, bare feet) stands at the counter" — NOT "she" or "a woman"
+3. POSITION all characters in the frame so each one's face and body are clearly visible to the camera. No character should be obscured, off-screen, or with their back fully turned.
+4. Include LOCATION details: environment, lighting, key objects
+5. Describe a SINGLE FROZEN MOMENT — the instant before action begins
+6. Write as a camera direction: shot type, framing, spatial arrangement
 
 OUTPUT FORMAT (JSON array only, no markdown, no explanation):
 [
-  {{"scene_number": 1, "title": "Short 2-4 word title", "visual_description": "1-2 sentence cinematic description of what the camera sees..."}},
+  {{"scene_number": 1, "title": "Short 2-4 word title", "visual_description": "2-3 sentence first frame image prompt..."}},
   ...
 ]
 
 RULES:
-- One entry per scene (exactly {len(scenes)} entries)
-- Focus on VISUAL details: framing, lighting, body language, spatial relationships
-- Include character NAMES (not IDs) in descriptions
-- Keep each description to 1-2 sentences
-- Make descriptions suitable for image generation prompts
+- Exactly {len(scenes)} entries, one per scene
+- NEVER use pronouns (he/she/they) — always character names with appearance
+- NEVER place a character off-screen, behind the camera, or arriving later
 - Output ONLY the JSON array"""
 
         response = await generate_text(

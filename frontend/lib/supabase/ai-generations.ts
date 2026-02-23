@@ -215,6 +215,24 @@ export async function getCompletedJobs(generationId: string): Promise<GenJob[]> 
 }
 
 /**
+ * Get in-flight (generating) gen_jobs for a generation.
+ * Used on restore to re-show loaders for jobs still running on the backend.
+ */
+export async function getGeneratingJobs(generationId: string): Promise<GenJob[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("gen_jobs")
+    .select("*")
+    .eq("generation_id", generationId)
+    .eq("status", "generating");
+  if (error) {
+    console.error("getGeneratingJobs error:", error);
+    return [];
+  }
+  return data || [];
+}
+
+/**
  * Delete processed gen_jobs after their results have been applied.
  */
 export async function clearGenJobs(generationId: string): Promise<void> {
