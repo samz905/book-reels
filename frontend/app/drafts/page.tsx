@@ -101,24 +101,22 @@ function ProgressDots({ status }: { status: string }) {
       {STEPS.map((label, i) => (
         <div key={label} className="flex items-center">
           <div
-            className={`w-[6px] h-[6px] rounded-full transition-colors ${
-              isFailed
+            className={`w-[6px] h-[6px] rounded-full transition-colors ${isFailed
                 ? "bg-red-400/50"
                 : i <= step
                   ? "bg-[#9C99FF]"
                   : "bg-white/10"
-            }`}
+              }`}
             title={label}
           />
           {i < STEPS.length - 1 && (
             <div
-              className={`w-2 h-[1px] ${
-                isFailed
+              className={`w-2 h-[1px] ${isFailed
                   ? "bg-red-400/20"
                   : i < step
                     ? "bg-[#9C99FF]/50"
                     : "bg-white/5"
-              }`}
+                }`}
             />
           )}
         </div>
@@ -179,9 +177,17 @@ function DraftCard({
 
       <button onClick={onClick} className="w-full p-4 text-left">
         <div className="flex items-start gap-3">
-          {/* Thumbnail or icon */}
-          {draft.thumbnail_base64 ? (
-            <div className="w-11 h-11 rounded-lg overflow-hidden flex-shrink-0 bg-panel-border">
+          {/* Thumbnail: first storyboard image > base64 thumbnail > generic icon */}
+          {draft.first_storyboard_url ? (
+            <div className="w-9 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-panel-border my-auto">
+              <img
+                src={draft.first_storyboard_url}
+                alt=""
+                className="w-full h-full object-cover"
+              />
+            </div>
+          ) : draft.thumbnail_base64 ? (
+            <div className="w-9 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-panel-border my-auto">
               <img
                 src={`data:image/jpeg;base64,${draft.thumbnail_base64}`}
                 alt=""
@@ -189,7 +195,7 @@ function DraftCard({
               />
             </div>
           ) : (
-            <div className="w-11 h-11 rounded-lg bg-panel-border flex items-center justify-center flex-shrink-0">
+            <div className="w-9 h-16 rounded-lg bg-panel-border flex items-center justify-center flex-shrink-0 my-auto">
               <svg
                 width="18"
                 height="18"
@@ -215,9 +221,8 @@ function DraftCard({
             <div className="flex items-center gap-2 mt-2">
               <ProgressDots status={draft.status} />
               <span
-                className={`text-[10px] font-medium ${
-                  isFailed ? "text-red-400" : "text-white/40"
-                }`}
+                className={`text-[10px] font-medium ${isFailed ? "text-red-400" : "text-white/40"
+                  }`}
               >
                 {getStatusLabel(draft.status)}
               </span>
@@ -481,17 +486,16 @@ export default function DraftsPage() {
                   <button
                     key={f.key}
                     onClick={() => setFilter(f.key)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                      active
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${active
                         ? "text-white border border-[#9C99FF]/60"
                         : "text-white/40 border border-transparent hover:text-white/60 hover:border-panel-border"
-                    }`}
+                      }`}
                     style={
                       active
                         ? {
-                            background:
-                              "linear-gradient(135deg, rgba(156,153,255,0.15) 0%, rgba(115,112,255,0.15) 100%)",
-                          }
+                          background:
+                            "linear-gradient(135deg, rgba(156,153,255,0.15) 0%, rgba(115,112,255,0.15) 100%)",
+                        }
                         : undefined
                     }
                   >

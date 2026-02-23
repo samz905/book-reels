@@ -104,6 +104,7 @@ export function useStoryLocations(storyId: string | undefined) {
 
 export interface GenerationWithStory extends AIGenerationSummary {
   stories: { id: string; title: string; cover_url: string | null } | null;
+  first_storyboard_url?: string | null;
 }
 
 export function useGenerationsWithStories() {
@@ -123,7 +124,29 @@ export function useGenerationsWithStories() {
         .limit(100);
 
       if (error) throw error;
-      return (data || []) as unknown as GenerationWithStory[];
+      const generations = (data || []) as unknown as GenerationWithStory[];
+
+      // Batch-fetch first storyboard image (scene_number=1) for all generations
+      if (generations.length > 0) {
+        const genIds = generations.map((g) => g.id);
+        const { data: storyboards } = await supabase
+          .from("episode_storyboards")
+          .select("generation_id, image_url")
+          .in("generation_id", genIds)
+          .eq("scene_number", 1)
+          .eq("status", "completed");
+        if (storyboards) {
+          const urlMap = new Map<string, string>();
+          for (const sb of storyboards) {
+            if (sb.image_url) urlMap.set(sb.generation_id, sb.image_url);
+          }
+          for (const gen of generations) {
+            gen.first_storyboard_url = urlMap.get(gen.id) || null;
+          }
+        }
+      }
+
+      return generations;
     },
     staleTime: 15_000, // drafts should feel fresh
   });
