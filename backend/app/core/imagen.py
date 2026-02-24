@@ -1,52 +1,53 @@
 """
-Image generation via Atlas Cloud (Nano Banana Pro / Gemini 3 Pro Image Preview).
+Image generation via Google GenAI SDK (primary) + OpenAI GPT Image (fallback).
 
-Supports:
-- T2I (text-to-image, no references)
-- Reference-based generation (character/scene consistency)
-- Image editing via text feedback
+Primary: Gemini 3 Pro Image Preview — T2I, reference-based generation, editing
+Fallback: GPT Image 1.5 — triggered only on transient Google errors (503/429/UNAVAILABLE)
 
-Pricing: $0.15 per image (Ultra tier)
+Public API (unchanged):
+  generate_image(prompt, aspect_ratio, model) -> {"image_base64", "mime_type"}
+  generate_image_with_references(prompt, refs, ...) -> {"image_base64", "mime_type"}
+  edit_image(current_image_url, feedback) -> {"image_base64", "mime_type"}
 """
 import asyncio
+import base64
+import gc
+import io
 import os
 import random
-import uuid
 from typing import Literal, List, Optional
 
 import httpx
+from PIL import Image
+from google.genai import types
 
-from ..config import ATLASCLOUD_API_KEY
-from ..supabase_client import async_upload_image_base64
+from ..config import genai_client, OPENAI_API_KEY
 
 
 # ============================================================
-# Atlas Cloud Image API
+# Models & Config
 # ============================================================
 
-ATLAS_IMAGE_URL = "https://api.atlascloud.ai/api/v1/model/generateImage"
-T2I_MODEL = "google/nano-banana-pro/text-to-image-ultra"
-EDIT_MODEL = "google/nano-banana-pro/edit-ultra"
+GENAI_IMAGE_MODEL = "gemini-3-pro-image-preview"
 
-# Retry config
-MAX_RETRIES = 4  # 5 total attempts
+MAX_RETRIES = 3       # 4 total attempts before fallback
 RETRY_BASE_DELAY = 5  # seconds — base for exponential backoff
-POST_TIMEOUT = 15  # seconds — POST returns instantly (just submits the job)
-POLL_INTERVAL = 3  # seconds between poll requests
-POLL_TIMEOUT = 300  # seconds (5 min) — Ultra tier can be slow
+PER_CALL_TIMEOUT = 60  # seconds — healthy calls return in 3-10s
 
-_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+# Transient error strings that trigger retry + OpenAI fallback
+_TRANSIENT_MARKERS = ("429", "503", "500", "502", "504",
+                      "UNAVAILABLE", "RESOURCE_EXHAUSTED",
+                      "DEADLINE_EXCEEDED", "INTERNAL", "timed out")
 
-POLL_URL_TEMPLATE = "https://api.atlascloud.ai/api/v1/model/prediction/{prediction_id}"
-
-# Rate limiting: enforces both concurrency and images-per-minute (IPM).
-# Atlas Cloud is far more resilient than direct Gemini — higher defaults.
-IMAGE_GEN_MAX_CONCURRENT = int(os.getenv("IMAGE_GEN_MAX_CONCURRENT", "8"))
-IMAGE_GEN_IPM = int(os.getenv("IMAGE_GEN_IPM", "60"))
+# Rate limiting — confirmed Google GenAI image IPM limits:
+#   Free: 2 IPM | Tier 1 (paid): 20 IPM | Tier 2: 100 IPM
+# Defaults target Tier 1 with safety margin. Override via env vars.
+IMAGE_GEN_MAX_CONCURRENT = int(os.getenv("IMAGE_GEN_MAX_CONCURRENT", "4"))
+IMAGE_GEN_IPM = int(os.getenv("IMAGE_GEN_IPM", "10"))
 
 
 # ============================================================
-# Rate Limiter
+# Rate Limiter (unchanged)
 # ============================================================
 
 class _ImageRateLimiter:
@@ -90,164 +91,192 @@ def _get_rate_limiter() -> _ImageRateLimiter:
 
 
 # ============================================================
-# Helpers
+# Google GenAI Helpers
 # ============================================================
 
-async def _ensure_ref_url(ref: dict) -> str:
-    """Ensure a reference image dict has a public URL.
+def _b64_to_pil(b64: str, mime_type: str = "image/png") -> Image.Image:
+    """Convert base64 string to PIL Image for Google GenAI SDK."""
+    return Image.open(io.BytesIO(base64.b64decode(b64)))
 
-    If only base64 is available, upload to Supabase Storage and return the URL.
-    """
-    url = ref.get("image_url")
-    if url:
-        return url
-    b64 = ref.get("image_base64")
-    if b64:
-        path = f"temp/{uuid.uuid4().hex}.png"
-        return await async_upload_image_base64(
-            "_refs", path, b64, ref.get("mime_type", "image/png"),
+
+def _is_transient(error: Exception) -> bool:
+    """Check if an error is transient (should trigger retry/fallback)."""
+    error_str = str(error).upper()
+    return any(t in error_str for t in _TRANSIENT_MARKERS)
+
+
+def _extract_genai_image(response) -> dict:
+    """Extract base64 image from Google GenAI generate_content response."""
+    if (not response.candidates or not response.candidates[0].content
+            or not response.candidates[0].content.parts):
+        raise ValueError(
+            "Image generation returned empty response — "
+            "the prompt may have been blocked by safety filters."
         )
-    raise ValueError("Reference image has neither image_url nor image_base64")
+
+    for part in response.candidates[0].content.parts:
+        if hasattr(part, "inline_data") and part.inline_data is not None:
+            data = part.inline_data
+            if hasattr(data, "data") and data.data:
+                b64 = base64.b64encode(data.data).decode("utf-8")
+                mime = getattr(data, "mime_type", "image/png") or "image/png"
+                return {"image_base64": b64, "mime_type": mime}
+
+    # Fallback: try part.as_image() which returns PIL Image
+    for part in response.candidates[0].content.parts:
+        try:
+            pil_img = part.as_image()
+            if pil_img:
+                buf = io.BytesIO()
+                pil_img.save(buf, format="PNG")
+                b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                return {"image_base64": b64, "mime_type": "image/png"}
+        except Exception:
+            pass
+
+    raise ValueError(
+        "No image in response. Parts: "
+        f"{[type(p).__name__ for p in response.candidates[0].content.parts]}"
+    )
 
 
-def _extract_image(data: dict) -> Optional[dict]:
-    """Extract base64 image from Atlas Cloud response data.
+# ============================================================
+# OpenAI Fallback
+# ============================================================
 
-    Atlas Cloud response format (verified):
-      data.outputs: list — URLs or base64 strings depending on enable_base64_output
-      data.status: "completed" | "succeeded" | "starting" | "processing" | "failed"
+_openai_client = None
 
-    Returns dict with image_base64/mime_type, or None if no image found.
+
+def _get_openai_client():
+    """Lazy-init async OpenAI client. Returns None if no API key."""
+    global _openai_client
+    if _openai_client is None and OPENAI_API_KEY:
+        from openai import AsyncOpenAI
+        _openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+    return _openai_client
+
+
+_OPENAI_SIZE_MAP = {
+    "9:16": "1024x1536",
+    "3:4": "1024x1536",
+    "2:3": "1024x1536",
+    "4:5": "1024x1536",
+    "16:9": "1536x1024",
+    "4:3": "1536x1024",
+    "3:2": "1536x1024",
+    "5:4": "1536x1024",
+    "1:1": "1024x1024",
+}
+
+
+def _aspect_to_openai_size(aspect_ratio: str) -> str:
+    return _OPENAI_SIZE_MAP.get(aspect_ratio, "1024x1024")
+
+
+async def _openai_generate(prompt: str, aspect_ratio: str = "9:16") -> dict:
+    """Generate image via OpenAI GPT Image 1.5."""
+    client = _get_openai_client()
+    if not client:
+        raise RuntimeError("OpenAI fallback unavailable (no OPENAI_API_KEY)")
+
+    result = await client.images.generate(
+        model="gpt-image-1.5",
+        prompt=prompt,
+        n=1,
+        size=_aspect_to_openai_size(aspect_ratio),
+        quality="medium",
+    )
+
+    return {"image_base64": result.data[0].b64_json, "mime_type": "image/png"}
+
+
+async def _openai_edit(image_b64: str, feedback: str) -> dict:
+    """Edit image via OpenAI GPT Image 1.5."""
+    client = _get_openai_client()
+    if not client:
+        raise RuntimeError("OpenAI fallback unavailable (no OPENAI_API_KEY)")
+
+    img_file = io.BytesIO(base64.b64decode(image_b64))
+    img_file.name = "image.png"
+
+    result = await client.images.edit(
+        model="gpt-image-1.5",
+        image=img_file,
+        prompt=feedback,
+        n=1,
+        size="1024x1536",
+        quality="medium",
+    )
+
+    return {"image_base64": result.data[0].b64_json, "mime_type": "image/png"}
+
+
+# ============================================================
+# Core: GenAI call with retry + OpenAI fallback
+# ============================================================
+
+async def _genai_generate_content(
+    contents: list,
+    aspect_ratio: str = "9:16",
+    image_size: str = "2K",
+    model: str = GENAI_IMAGE_MODEL,
+    fallback_prompt: Optional[str] = None,
+) -> dict:
+    """Call Google GenAI generate_content with IMAGE modality.
+
+    Retries on transient errors, then falls back to OpenAI GPT Image.
     """
-    outputs = data.get("outputs")
-    if not outputs or not isinstance(outputs, list):
-        return None
+    config = types.GenerateContentConfig(
+        response_modalities=["IMAGE"],
+        image_config=types.ImageConfig(
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
+        ),
+    )
 
-    b64 = outputs[0]
-    if not isinstance(b64, str) or not b64:
-        return None
-
-    # Strip data URI prefix if present (data:image/png;base64,...)
-    if b64.startswith("data:"):
-        b64 = b64.split(",", 1)[1]
-
-    # If it looks like a URL (not base64), we need to download it
-    if b64.startswith("http"):
-        return {"image_url_to_fetch": b64}
-
-    return {"image_base64": b64, "mime_type": "image/png"}
-
-
-async def _atlas_image_request(payload: dict) -> dict:
-    """POST to Atlas Cloud image API. Handles both sync and async (polling) modes.
-
-    Sync mode (enable_sync_mode=true): POST blocks until image ready, returns in <2s.
-    Async fallback: POST returns prediction_id, poll until complete.
-
-    Returns dict with image_base64 and mime_type.
-    """
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {ATLASCLOUD_API_KEY}",
-    }
-
+    last_error = None
     for attempt in range(MAX_RETRIES + 1):
         try:
-            async with httpx.AsyncClient(timeout=POST_TIMEOUT) as client:
-                print(f"  [imagen] POST to Atlas Cloud (attempt {attempt + 1}/{MAX_RETRIES + 1})...")
-                resp = await client.post(
-                    ATLAS_IMAGE_URL, headers=headers, json=payload,
-                )
-
-                # Retry on transient HTTP errors
-                if resp.status_code in _RETRYABLE_STATUS and attempt < MAX_RETRIES:
-                    delay = RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 2)
-                    print(
-                        f"  [imagen] HTTP {resp.status_code} — "
-                        f"retry {attempt + 1}/{MAX_RETRIES} in {delay:.1f}s"
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-
-                resp.raise_for_status()
-                result = resp.json()
-                data = result.get("data", result)
-
-                print(f"  [imagen] Response status={data.get('status')}, "
-                      f"has_outputs={bool(data.get('outputs'))}, id={data.get('id', 'N/A')}")
-
-                # ── Sync path: outputs already present ──
-                extracted = _extract_image(data)
-                if extracted and "image_base64" in extracted:
-                    return extracted
-                if extracted and "image_url_to_fetch" in extracted:
-                    # enable_base64_output was false or ignored — download the URL
-                    img_resp = await client.get(extracted["image_url_to_fetch"], timeout=30)
-                    img_resp.raise_for_status()
-                    import base64
-                    b64 = base64.b64encode(img_resp.content).decode()
-                    return {"image_base64": b64, "mime_type": "image/png"}
-
-                # ── Async path: need to poll ──
-                prediction_id = data.get("id")
-                if not prediction_id:
-                    print(f"  [imagen] No outputs and no prediction_id. Full keys: {list(data.keys())}")
-                    raise ValueError(f"Unexpected Atlas Cloud response: {list(data.keys())}")
-
-                print(f"  [imagen] Got prediction_id={prediction_id}, polling...")
-                return await _poll_prediction(client, prediction_id)
-
-        except httpx.TimeoutException:
-            if attempt < MAX_RETRIES:
-                print(f"  [imagen] Timeout ({POST_TIMEOUT}s) — retry {attempt + 1}/{MAX_RETRIES}")
-                await asyncio.sleep(RETRY_BASE_DELAY)
-                continue
-            raise TimeoutError(
-                f"Image generation timed out after {MAX_RETRIES + 1} attempts "
-                f"({POST_TIMEOUT}s each)"
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    genai_client.models.generate_content,
+                    model=model,
+                    contents=contents,
+                    config=config,
+                ),
+                timeout=PER_CALL_TIMEOUT,
             )
+            return _extract_genai_image(response)
 
-    raise RuntimeError("Image generation failed after all retries")
+        except asyncio.TimeoutError:
+            last_error = TimeoutError(
+                f"Google image gen timed out after {PER_CALL_TIMEOUT}s"
+            )
+            if attempt < MAX_RETRIES:
+                print(f"  [imagen] Timeout. Retry {attempt + 1}/{MAX_RETRIES}...")
+                continue
 
+        except Exception as e:
+            last_error = e
+            if _is_transient(e) and attempt < MAX_RETRIES:
+                delay = RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 2)
+                print(f"  [imagen] Transient error: {e}")
+                print(f"  [imagen] Retry {attempt + 1}/{MAX_RETRIES} in {delay:.1f}s")
+                await asyncio.sleep(delay)
+                continue
+            break  # Non-transient or final attempt
 
-async def _poll_prediction(client: httpx.AsyncClient, prediction_id: str) -> dict:
-    """Poll Atlas Cloud for prediction completion. Same pattern as Seedance."""
-    poll_url = POLL_URL_TEMPLATE.format(prediction_id=prediction_id)
-    poll_headers = {"Authorization": f"Bearer {ATLASCLOUD_API_KEY}"}
-    elapsed = 0
+    # OpenAI fallback (only for transient errors)
+    if _is_transient(last_error) and fallback_prompt and _get_openai_client():
+        try:
+            print(f"  [imagen] Google failed, falling back to OpenAI: {last_error}")
+            result = await _openai_generate(fallback_prompt, aspect_ratio)
+            print("  [imagen] OpenAI fallback succeeded")
+            return result
+        except Exception as openai_err:
+            print(f"  [imagen] OpenAI fallback also failed: {openai_err}")
 
-    while elapsed < POLL_TIMEOUT:
-        await asyncio.sleep(POLL_INTERVAL)
-        elapsed += POLL_INTERVAL
-
-        poll_resp = await client.get(poll_url, headers=poll_headers, timeout=15)
-        poll_resp.raise_for_status()
-        poll_data = poll_resp.json().get("data", poll_resp.json())
-
-        status = poll_data.get("status", "")
-
-        if status in ("completed", "succeeded"):
-            extracted = _extract_image(poll_data)
-            if extracted and "image_base64" in extracted:
-                print(f"  [imagen] Image ready in ~{elapsed}s")
-                return extracted
-            if extracted and "image_url_to_fetch" in extracted:
-                import base64
-                img_resp = await client.get(extracted["image_url_to_fetch"], timeout=30)
-                img_resp.raise_for_status()
-                b64 = base64.b64encode(img_resp.content).decode()
-                print(f"  [imagen] Image ready in ~{elapsed}s (downloaded from URL)")
-                return {"image_base64": b64, "mime_type": "image/png"}
-            raise ValueError(f"Prediction completed but no outputs: {list(poll_data.keys())}")
-
-        if status == "failed":
-            error_msg = poll_data.get("error") or "Image generation failed"
-            raise Exception(f"Atlas Cloud image generation failed: {error_msg}")
-
-        if elapsed % 10 == 0:
-            print(f"  [imagen] Still generating... ({elapsed}s, status={status})")
-
-    raise TimeoutError(f"Image generation polling timed out after {POLL_TIMEOUT}s")
+    raise last_error
 
 
 # ============================================================
@@ -257,14 +286,9 @@ async def _poll_prediction(client: httpx.AsyncClient, prediction_id: str) -> dic
 async def generate_image(
     prompt: str,
     aspect_ratio: Literal["9:16", "16:9", "1:1", "4:3", "3:4", "5:4", "4:5", "2:3", "3:2"] = "9:16",
-    model: str = T2I_MODEL,
+    model: str = GENAI_IMAGE_MODEL,
 ) -> dict:
     """Generate an image (text-to-image, no references).
-
-    Args:
-        prompt: Text description of the image to generate
-        aspect_ratio: Aspect ratio hint for the image
-        model: Atlas Cloud model ID
 
     Returns:
         dict with image_base64 and mime_type
@@ -276,61 +300,72 @@ async def generate_image(
         elif aspect_ratio == "16:9":
             full_prompt += " The image should be in landscape orientation (wider than tall)."
 
-        payload = {
-            "model": model,
-            "prompt": full_prompt,
-            "enable_base64_output": True,
-        }
-
-        return await _atlas_image_request(payload)
+        return await _genai_generate_content(
+            contents=[full_prompt],
+            aspect_ratio=aspect_ratio,
+            model=model,
+            fallback_prompt=full_prompt,
+        )
 
 
 async def generate_image_with_references(
     prompt: str,
-    reference_images: List[dict],  # List of {"image_base64": str, "mime_type": str} and/or {"image_url": str}
+    reference_images: List[dict],
     aspect_ratio: Literal["9:16", "16:9", "1:1", "4:3", "3:4", "5:4", "4:5", "2:3", "3:2"] = "9:16",
     resolution: Literal["1K", "2K", "4K"] = "2K",
-    model: str = EDIT_MODEL,
+    model: str = GENAI_IMAGE_MODEL,
 ) -> dict:
     """Generate an image using reference images for consistency.
 
-    Uses Atlas Cloud Edit endpoint which accepts 1-10 reference image URLs.
-
-    Args:
-        prompt: Text description of the image to generate
-        reference_images: List of dicts with image_base64/image_url and mime_type
-        aspect_ratio: Output aspect ratio (passed as prompt hint)
-        resolution: Output resolution hint
-        model: Atlas Cloud model ID
+    Google GenAI accepts PIL Images inline in the contents list (up to 14).
+    ApprovedVisuals.resolve_urls() ensures refs have base64 before this is called.
 
     Returns:
         dict with image_base64 and mime_type
     """
-    # Resolve refs to URLs BEFORE acquiring rate limiter (uploads may take time)
-    image_urls = await asyncio.gather(
-        *[_ensure_ref_url(ref) for ref in reference_images],
-        return_exceptions=True,
-    )
-    # Filter out failures, log errors
-    for i, u in enumerate(image_urls):
-        if isinstance(u, Exception):
-            print(f"  [imagen] Ref {i} failed: {u}")
-    valid_urls = [u for u in image_urls if isinstance(u, str)]
-    if not valid_urls:
-        print("[imagen] No valid reference URLs — falling back to T2I")
+    # Convert ref dicts to PIL Images
+    pil_images = []
+    for ref in reference_images:
+        b64 = ref.get("image_base64")
+        if b64:
+            try:
+                pil_images.append(_b64_to_pil(b64, ref.get("mime_type", "image/png")))
+            except Exception as e:
+                print(f"  [imagen] Failed to decode ref image: {e}")
+        elif ref.get("image_url"):
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(ref["image_url"], timeout=30)
+                    resp.raise_for_status()
+                    pil_images.append(Image.open(io.BytesIO(resp.content)))
+            except Exception as e:
+                print(f"  [imagen] Failed to fetch ref from URL: {e}")
+
+    if not pil_images:
+        print("[imagen] No valid reference images — falling back to T2I")
         return await generate_image(prompt, aspect_ratio)
 
-    print(f"[imagen] Generating with {len(valid_urls)} reference URLs...")
+    print(f"[imagen] Generating with {len(pil_images)} reference images...")
 
-    async with _get_rate_limiter():
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "images": valid_urls[:10],  # Atlas Cloud limit: 10 images
-            "enable_base64_output": True,
-        }
+    try:
+        async with _get_rate_limiter():
+            contents = [prompt] + pil_images[:14]
 
-        return await _atlas_image_request(payload)
+            return await _genai_generate_content(
+                contents=contents,
+                aspect_ratio=aspect_ratio,
+                image_size=resolution,
+                model=model,
+                fallback_prompt=prompt,
+            )
+    finally:
+        for img in pil_images:
+            try:
+                img.close()
+            except Exception:
+                pass
+        del pil_images
+        gc.collect()
 
 
 async def edit_image(
@@ -339,21 +374,73 @@ async def edit_image(
 ) -> dict:
     """Edit an existing image via text feedback.
 
-    Uses Atlas Cloud Edit endpoint with the current image as reference.
-
-    Args:
-        current_image_url: Public URL of the image to edit
-        feedback: Text description of the desired edit
+    Downloads the image from URL, passes it to Google GenAI with the edit prompt.
+    Falls back to OpenAI images.edit() on transient errors.
 
     Returns:
         dict with image_base64 and mime_type
     """
-    async with _get_rate_limiter():
-        payload = {
-            "model": EDIT_MODEL,
-            "prompt": feedback,
-            "images": [current_image_url],
-            "enable_base64_output": True,
-        }
+    # Download the current image
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(current_image_url, timeout=30)
+        resp.raise_for_status()
+        img_bytes = resp.content
 
-        return await _atlas_image_request(payload)
+    pil_image = Image.open(io.BytesIO(img_bytes))
+    image_b64 = base64.b64encode(img_bytes).decode("utf-8")
+
+    try:
+        async with _get_rate_limiter():
+            edit_prompt = f"Edit this image: {feedback}"
+            config = types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+            )
+
+            last_error = None
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            genai_client.models.generate_content,
+                            model=GENAI_IMAGE_MODEL,
+                            contents=[edit_prompt, pil_image],
+                            config=config,
+                        ),
+                        timeout=PER_CALL_TIMEOUT,
+                    )
+                    return _extract_genai_image(response)
+
+                except asyncio.TimeoutError:
+                    last_error = TimeoutError(
+                        f"Google image edit timed out after {PER_CALL_TIMEOUT}s"
+                    )
+                    if attempt < MAX_RETRIES:
+                        print(f"  [imagen] Edit timeout. Retry {attempt + 1}/{MAX_RETRIES}...")
+                        continue
+
+                except Exception as e:
+                    last_error = e
+                    if _is_transient(e) and attempt < MAX_RETRIES:
+                        delay = RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 2)
+                        print(f"  [imagen] Edit transient error: {e}")
+                        print(f"  [imagen] Retry {attempt + 1}/{MAX_RETRIES} in {delay:.1f}s")
+                        await asyncio.sleep(delay)
+                        continue
+                    break
+
+            # OpenAI fallback for editing
+            if _is_transient(last_error) and _get_openai_client():
+                try:
+                    print(f"  [imagen] Google edit failed, falling back to OpenAI: {last_error}")
+                    result = await _openai_edit(image_b64, feedback)
+                    print("  [imagen] OpenAI edit fallback succeeded")
+                    return result
+                except Exception as openai_err:
+                    print(f"  [imagen] OpenAI edit fallback also failed: {openai_err}")
+
+            raise last_error
+    finally:
+        try:
+            pil_image.close()
+        except Exception:
+            pass

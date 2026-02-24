@@ -1422,7 +1422,7 @@ async def refine_scene_image(request: RefineSceneImageRequest):
                 prompt_used=request.feedback,
             ),
             prompt_used=request.feedback,
-            cost_usd=0.15,  # Atlas Cloud Ultra
+            cost_usd=COST_IMAGE_GENERATION,
         )
 
     except Exception as e:

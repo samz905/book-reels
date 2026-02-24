@@ -18,8 +18,9 @@ from typing import List, Literal
 COST_TEXT_INPUT_PER_1M_TOKENS = 0.80
 COST_TEXT_OUTPUT_PER_1M_TOKENS = 4.00
 
-# Image generation — Atlas Cloud Nano Banana Pro Ultra
-COST_IMAGE_GENERATION = 0.15  # Per image (Ultra tier)
+# Image generation — Google GenAI (Gemini 3 Pro Image Preview)
+# OpenAI fallback (GPT Image 1.5): ~$0.04/image at medium quality
+COST_IMAGE_GENERATION = 0.04
 
 # Video generation — Seedance 1.5 Pro Fast (Atlas Cloud)
 COST_VIDEO_SEEDANCE_FAST_PER_SECOND = 0.022
