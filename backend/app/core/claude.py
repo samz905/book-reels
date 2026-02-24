@@ -23,7 +23,7 @@ def _get_client() -> anthropic.AsyncAnthropic:
 async def generate_text_claude(
     prompt: str,
     system_prompt: Optional[str] = None,
-    model: str = "claude-sonnet-4-5-20250929",
+    model: str = "claude-sonnet-4-5",
     few_shot_examples: Optional[List[dict]] = None,
     output_schema: Optional[dict] = None,
     max_tokens: int = 16384,
