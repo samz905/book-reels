@@ -15,7 +15,7 @@ POLL_URL_TEMPLATE = "https://api.atlascloud.ai/api/v1/model/prediction/{predicti
 
 # Polling config
 POLL_INTERVAL_SECONDS = 3
-POLL_TIMEOUT_SECONDS = 600  # 10 minute timeout (Atlas Cloud can be slow during peak hours)
+POLL_TIMEOUT_SECONDS = 180  # 3 min — covers P99 for 8s 720p clips
 
 
 async def generate_video(

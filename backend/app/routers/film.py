@@ -258,38 +258,56 @@ def default_director_script(beat: Beat) -> DirectorScript:
     )
 
 
-def format_beat_as_script(beat: Beat) -> str:
-    """Format beat content blocks into raw script text for Seedance.
+def format_beat_as_script(beat: Beat, story: Optional[Story] = None) -> str:
+    """Format beat content blocks into a Seedance prompt with character context.
 
-    Seedance accepts natural script-style prompts directly — no prompt
-    engineering layer needed. Output looks like:
+    Prepends brief character descriptions so Seedance can disambiguate
+    same-gender characters (e.g. two women speaking in the same scene).
 
+    Output looks like:
+
+        Characters:
+        ELENA — mid-30s female, sharp cheekbones, dark bob, leather jacket
+        NOVA — late 20s female, warm brown skin, tight curls, NASA patch on blazer
+
+        Script:
         Sparks fly from two crossed katanas.
-
-        Sweat drips from Zoro's chin. Hits the floorboards.
 
         KENSHIN: "You hesitate."
         ZORO: "You taught me better."
     """
-    parts: list[str] = []
+    # Build script body
+    script_parts: list[str] = []
 
     if beat.blocks:
         for block in beat.blocks:
             if block.type in ("description", "action"):
-                parts.append(block.text)
+                script_parts.append(block.text)
             elif block.type == "dialogue" and block.character:
-                parts.append(f'{block.character.upper()}: "{block.text}"')
+                script_parts.append(f'{block.character.upper()}: "{block.text}"')
     else:
         # Legacy fields fallback
         if beat.description:
-            parts.append(beat.description)
+            script_parts.append(beat.description)
         if beat.action:
-            parts.append(beat.action)
+            script_parts.append(beat.action)
         if beat.dialogue:
             for d in beat.dialogue:
-                parts.append(f'{d.character.upper()}: "{d.line}"')
+                script_parts.append(f'{d.character.upper()}: "{d.line}"')
 
-    return "\n\n".join(parts)
+    script_body = "\n\n".join(script_parts)
+
+    # Prepend character descriptions if story is available
+    if story and story.characters and beat.characters_in_scene:
+        char_lines = []
+        for char_id in beat.characters_in_scene:
+            char = next((c for c in story.characters if c.id == char_id), None)
+            if char:
+                char_lines.append(f"{char.name.upper()} — {char.age} {char.gender}, {char.appearance}")
+        if char_lines:
+            return f"Characters:\n" + "\n".join(char_lines) + f"\n\nScript:\n{script_body}"
+
+    return script_body
 
 
 def get_first_frame_url(
@@ -720,48 +738,26 @@ async def download_video(video_url: str, film_id: str, shot_number: int, generat
     return filepath, storage_url
 
 
-async def generate_shot_with_retry(
+async def generate_shot(
     beat: Beat,
     prompt: str,
     image_url: str,
-    max_retries: int = 2,
     heartbeat_callback: Optional[callable] = None,
     job_id: Optional[str] = None,
     generation_id: Optional[str] = None,
 ) -> dict:
-    """Generate a video shot via Seedance with retry logic.
-
-    Uses a semaphore to control concurrency (PAYG rate limits unknown).
-    Exponential backoff on 429s.
-    """
+    """Generate a video shot via Seedance. Zero retries — fail fast, let user retry."""
     sem = _get_seedance_semaphore()
-    last_error = None
-
-    for attempt in range(max_retries + 1):
-        try:
-            async with sem:
-                print(f"  [Seedance] Acquired slot — attempt {attempt + 1}/{max_retries + 1} for shot {beat.number}")
-                result = await generate_video(
-                    prompt=prompt,
-                    image_url=image_url,
-                    heartbeat_callback=heartbeat_callback,
-                    job_id=job_id,
-                    generation_id=generation_id,
-                    scene_number=beat.number,
-                )
-            return result
-        except Exception as e:
-            last_error = e
-            print(f"  Shot {beat.number} attempt {attempt + 1} failed: {e}")
-            if attempt < max_retries:
-                if "429" in str(e) or "rate" in str(e).lower():
-                    wait = 5 * (2 ** attempt)  # 5s, 10s
-                    print(f"  Rate limited — waiting {wait}s before retry...")
-                    await asyncio.sleep(wait)
-                else:
-                    await asyncio.sleep(3)
-
-    raise Exception(f"Shot {beat.number} failed after {max_retries + 1} attempts: {last_error}")
+    async with sem:
+        print(f"  [Seedance] Acquired slot for shot {beat.number}")
+        return await generate_video(
+            prompt=prompt,
+            image_url=image_url,
+            heartbeat_callback=heartbeat_callback,
+            job_id=job_id,
+            generation_id=generation_id,
+            scene_number=beat.number,
+        )
 
 
 # ============================================================
@@ -791,14 +787,22 @@ async def process_single_shot(
     print(f"[Shot {beat.number}] First frame: {image_url[:80]}...")
 
     # STEP 2: Format prompt (raw script or user override)
-    shot_prompt = prompt_override or format_beat_as_script(beat)
+    shot_prompt = prompt_override or format_beat_as_script(beat, story=job.story)
     print(f"[Shot {beat.number}] Generating video via Seedance...")
 
-    # STEP 3: Generate video via Seedance
-    video_result = await generate_shot_with_retry(
+    # STEP 3: Generate video via Seedance (with heartbeat + restart recovery)
+    async def heartbeat():
+        if getattr(job, "gen_job_id", None):
+            from ..supabase_client import async_touch_gen_job
+            await async_touch_gen_job(job.gen_job_id)
+
+    video_result = await generate_shot(
         beat=beat,
         prompt=shot_prompt,
         image_url=image_url,
+        heartbeat_callback=heartbeat if getattr(job, "gen_job_id", None) else None,
+        job_id=getattr(job, "gen_job_id", None),
+        generation_id=job.generation_id,
     )
     job.cost_videos += COST_PER_VIDEO
     print(f"[Shot {beat.number}] Video generated (cost: ${COST_PER_VIDEO:.2f}, total so far: ${job.cost_total:.2f})")
@@ -991,7 +995,7 @@ async def preview_prompts(request: GenerateFilmRequest):
 
     shots = []
     for beat in beats_to_process:
-        script_prompt = format_beat_as_script(beat)
+        script_prompt = format_beat_as_script(beat, story=story)
         shots.append(ShotPromptPreview(
             beat_number=beat.number,
             scene_heading=beat.scene_heading,
@@ -1242,12 +1246,12 @@ async def run_shot_regeneration(job: FilmJob, beat: Beat, feedback: Optional[str
         image_url = get_first_frame_url(beat, storyboard_image)
 
         # Format prompt (raw script + optional feedback)
-        shot_prompt = format_beat_as_script(beat)
+        shot_prompt = format_beat_as_script(beat, story=job.story)
         if feedback:
             shot_prompt += f"\n\nADJUSTMENT: {feedback}"
 
         print(f"Generating video via Seedance...")
-        video_result = await generate_shot_with_retry(
+        video_result = await generate_shot(
             beat=beat,
             prompt=shot_prompt,
             image_url=image_url,
@@ -1413,7 +1417,7 @@ async def generate_single_clip(req: GenerateClipRequest) -> dict:
     image_url = req.storyboard_image_url
 
     # Format prompt (raw script + optional feedback)
-    script_prompt = format_beat_as_script(beat)
+    script_prompt = format_beat_as_script(beat, story=req.story)
     if req.feedback:
         script_prompt += f"\n\nADJUSTMENT: {req.feedback}"
 
@@ -1428,7 +1432,7 @@ async def generate_single_clip(req: GenerateClipRequest) -> dict:
 
     # Generate video via Seedance (with restart recovery metadata)
     print(f"[Clip {req.scene_number}] Generating video via Seedance...")
-    video_result = await generate_shot_with_retry(
+    video_result = await generate_shot(
         beat=beat,
         prompt=script_prompt,
         image_url=image_url,

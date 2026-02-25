@@ -91,7 +91,7 @@ export interface EpisodeStoryboardFE {
   sceneNumber: number;
   title: string;
   visualDescription: string;
-  status: 'pending' | 'generating' | 'completed' | 'failed';
+  status: 'pending' | 'queued' | 'generating' | 'completed' | 'failed';
   imageUrl: string | null;
   imageBase64: string | null;
   imageMimeType: string;

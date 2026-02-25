@@ -55,8 +55,11 @@ def create_gen_job(
     """Create or upsert a gen_jobs row. Returns the row dict.
 
     If a job with the same (generation_id, job_type, target_id) is already
-    "generating", returns it as-is with ``_already_generating=True`` so the
-    caller can skip spawning a duplicate background task.
+    "generating", returns it as-is with ``_already_generating=True``
+    so the caller can skip spawning a duplicate background task.
+
+    A "queued" row is always overwritten — it means the previous background
+    task never started (or died before transitioning to "generating").
 
     Retries transient Supabase errors (connection resets, timeouts) up to 3×.
     """
@@ -69,7 +72,7 @@ def create_gen_job(
     last_err = None
     for attempt in range(4):  # up to 4 attempts
         try:
-            # Check for an already-running job to prevent duplicate background tasks
+            # Only skip if actively generating — "queued" is safe to overwrite
             existing = (
                 sb.table("gen_jobs")
                 .select("*")
@@ -89,7 +92,7 @@ def create_gen_job(
                     "generation_id": generation_id,
                     "job_type": job_type,
                     "target_id": target_id,
-                    "status": "generating",
+                    "status": "queued",
                     "result": None,
                     "error_message": None,
                     "updated_at": _now_iso(),
@@ -269,8 +272,13 @@ def mark_stale_jobs_failed(cutoff_minutes: int = 5):
 
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=cutoff_minutes)).isoformat()
 
-    # Get all stale jobs (for smart clip handling)
-    stale_jobs_response = sb.table("gen_jobs").select("*").eq("status", "generating").lt("updated_at", cutoff).execute()
+    # Get all stale jobs — both "generating" and "queued" (queued jobs die on restart)
+    stale_jobs_response = (
+        sb.table("gen_jobs").select("*")
+        .in_("status", ["queued", "generating"])
+        .lt("updated_at", cutoff)
+        .execute()
+    )
     stale_jobs = stale_jobs_response.data if stale_jobs_response.data else []
 
     if not stale_jobs:

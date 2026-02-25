@@ -2,9 +2,10 @@
 Claude text generation utility using the Anthropic SDK.
 
 Supports few-shot examples and structured outputs (guaranteed JSON).
-SDK auto-retries 429/500+ errors 2x with exponential backoff.
+Zero retries, 60s timeout — fail fast, let user retry.
 """
 import anthropic
+import httpx
 from typing import Optional, List
 from ..config import ANTHROPIC_API_KEY
 
@@ -16,7 +17,11 @@ _client: Optional[anthropic.AsyncAnthropic] = None
 def _get_client() -> anthropic.AsyncAnthropic:
     global _client
     if _client is None:
-        _client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        _client = anthropic.AsyncAnthropic(
+            api_key=ANTHROPIC_API_KEY,
+            max_retries=0,
+            timeout=httpx.Timeout(60.0),
+        )
     return _client
 
 

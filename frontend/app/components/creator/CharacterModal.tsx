@@ -131,6 +131,16 @@ export default function CharacterModal({
     setIsGenerating(false);
   }, [generatingError, isGenerating]);
 
+  // Safety timeout: clear spinner if stuck for >2 minutes
+  useEffect(() => {
+    if (!isGenerating) return;
+    const timer = setTimeout(() => {
+      setIsGenerating(false);
+      setGenError("Generation timed out — please try again");
+    }, 120_000);
+    return () => clearTimeout(timer);
+  }, [isGenerating]);
+
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = "hidden";
@@ -194,12 +204,13 @@ export default function CharacterModal({
 
     // Non-blocking: submit as background job, result arrives via Realtime
     if (generationId && characterId) {
+      // Clear parent error/state BEFORE await so failure effect doesn't see stale error
+      onGenerationStarted?.();
       try {
         await submitJob("character_image", "/assets/generate-character-image", payload, {
           generationId,
           targetId: characterId,
         });
-        onGenerationStarted?.();
         // isGenerating stays true — Realtime sync effect will clear it when image arrives
       } catch (err) {
         setGenError(err instanceof Error ? err.message : "Failed to start generation");

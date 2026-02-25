@@ -188,7 +188,7 @@ export interface GenJob {
   generation_id: string;
   job_type: string;
   target_id: string;
-  status: "generating" | "completed" | "failed";
+  status: "queued" | "generating" | "completed" | "failed";
   result: Record<string, unknown> | null;
   error_message: string | null;
   created_at: string;

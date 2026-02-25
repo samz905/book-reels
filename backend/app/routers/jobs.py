@@ -5,6 +5,7 @@ Backend processes asynchronously, writes results to gen_jobs in Supabase.
 Frontend receives updates via Supabase Realtime.
 """
 import asyncio
+import time
 import traceback
 import uuid
 from typing import Optional, Dict, Any, List
@@ -25,6 +26,7 @@ from ..core import (
     estimate_story_cost,
     COST_IMAGE_GENERATION,
 )
+from ..core.imagen import set_on_generation_start
 from ..prompts import (
     STORY_MODEL,
     STORY_SCHEMA,
@@ -84,15 +86,16 @@ async def submit_job(request: SubmitJobRequest, background_tasks: BackgroundTask
     if not row.get("_already_generating"):
         background_tasks.add_task(run_job, job_id, request)
 
-    return SubmitJobResponse(job_id=job_id, status="generating")
+    return SubmitJobResponse(job_id=job_id, status="queued")
 
 
 # ============================================================
 # Background Task Dispatcher
 # ============================================================
 
-JOB_TIMEOUT_DEFAULT = 180   # 3 minutes — text gen, misc
-JOB_TIMEOUT_IMAGE = 300     # 5 minutes — image gen with retries needs up to ~285s
+JOB_TIMEOUT_DEFAULT = 60    # 60s — text gen (Claude P99 <10s, 60s catches edge cases)
+JOB_TIMEOUT_IMAGE = 105     # 42s max queue wait (8th img) + 45s API timeout + 5s upload + 13s buffer
+JOB_TIMEOUT_FILM = 300      # 5 min — 180s max clip + assembly + overhead
 
 _IMAGE_PATHS = frozenset({
     "/moodboard/generate-protagonist", "/moodboard/generate-character",
@@ -120,6 +123,16 @@ async def run_job(job_id: str, request: SubmitJobRequest):
 
         # Film handlers need job_id for incremental progress updates
         is_film = request.backend_path.startswith("/film/")
+        is_image = request.backend_path in _IMAGE_PATHS
+
+        if is_image:
+            # Image jobs: transition queued → generating when rate limiter slot acquired
+            async def _mark_generating():
+                await async_update_gen_job(job_id, "generating")
+            set_on_generation_start(_mark_generating)
+        else:
+            # Non-image jobs: no rate limiter delay, mark generating immediately
+            await async_update_gen_job(job_id, "generating")
 
         async def _run_handler():
             if is_film:
@@ -127,9 +140,8 @@ async def run_job(job_id: str, request: SubmitJobRequest):
             return await handler(request.payload)
 
         # Timeout guard: kill hung API calls.
-        # Film jobs are exempt — Seedance has its own 5-min poll timeout.
         if is_film:
-            result = await _run_handler()
+            result = await asyncio.wait_for(_run_handler(), timeout=JOB_TIMEOUT_FILM)
         else:
             timeout = _get_job_timeout(request.backend_path)
             result = await asyncio.wait_for(_run_handler(), timeout=timeout)
@@ -146,7 +158,7 @@ async def run_job(job_id: str, request: SubmitJobRequest):
         print(f"[job] {request.job_type}/{request.target_id} completed")
 
     except asyncio.TimeoutError:
-        timeout = _get_job_timeout(request.backend_path)
+        timeout = JOB_TIMEOUT_FILM if is_film else _get_job_timeout(request.backend_path)
         error_msg = f"Job timed out after {timeout}s — please retry"
         print(f"[job] {request.job_type}/{request.target_id} TIMED OUT ({timeout}s)")
         await async_update_gen_job(job_id, "failed", error=error_msg)
@@ -234,7 +246,7 @@ async def _upload_image_in_dict(d: dict, gen_id: str, job_type: str, target_id: 
         safe_target = target_id.replace("/", "_") if target_id else "default"
         path = f"{job_type}/{safe_target}/{label}.{ext}"
         url = await async_upload_image_base64(gen_id, path, d["image_base64"], mime)
-        d["image_url"] = url
+        d["image_url"] = f"{url}?t={int(time.time())}"
         del d["image_base64"]
     except Exception as e:
         print(f"[upload] Warning: failed to upload {label}: {e}")

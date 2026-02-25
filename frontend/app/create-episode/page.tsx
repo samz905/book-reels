@@ -13,7 +13,7 @@ import {
   type GenJob,
 } from "@/lib/supabase/ai-generations";
 import { useAuth } from "@/app/context/AuthContext";
-import { getMyStories, getStoryCharacters, getStoryLocations, createStoryCharacter, createStoryLocation, deleteStoryCharacter, deleteStoryLocation, createStory, submitJob, getEpisodeStoryboards, upsertEpisodeStoryboards, getEpisodeClips, upsertEpisodeClips, type EpisodeClipFE } from "@/lib/api/creator";
+import { getMyStories, getStoryCharacters, getStoryLocations, createStoryCharacter, createStoryLocation, deleteStoryCharacter, deleteStoryLocation, createStory, submitJob, getEpisodeStoryboards, upsertEpisodeStoryboards, getEpisodeClips, upsertEpisodeClips } from "@/lib/api/creator";
 import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 import { useGenJobs } from "@/lib/hooks/useGenJobs";
 import type { StoryCharacterFE, StoryLocationFE, EpisodeStoryboardFE } from "@/app/data/mockCreatorData";
@@ -23,14 +23,14 @@ import CharacterModal from "@/app/components/creator/CharacterModal";
 import LocationModal from "@/app/components/creator/LocationModal";
 import FilmPreviewModal from "@/app/components/creator/FilmPreviewModal";
 import CharacterLocationPicker, { type SelectedCharacter } from "./components/CharacterLocationPicker";
-import GenerationLoader from "@/app/components/creator/GenerationLoader";
+// GenerationLoader removed — card-level status replaces overlay
 
 // ============================================================
 // Types
 // ============================================================
 
 type Style = "cinematic" | "anime" | "animated" | "pixar";
-type VisualsTab = "characters" | "locations" | "scenes";
+type VisualsTab = "lookbook" | "scenes";
 
 interface Character {
   id: string;
@@ -86,8 +86,6 @@ interface SceneBlock {
   character?: string; // dialogue blocks only
 }
 
-const MAX_BLOCKS_PER_SCENE = 5;
-
 function getBlocks(beat: Beat): SceneBlock[] {
   if (beat.blocks && beat.blocks.length > 0) return beat.blocks;
   // Fallback: derive from legacy fields
@@ -133,22 +131,6 @@ function getScenes(story: Story): Scene[] {
   return beatsToScenes(story.beats, story.locations);
 }
 
-function blocksToLegacy(blocks: SceneBlock[]): {
-  description?: string;
-  action?: string;
-  dialogue: DialogueLine[] | null;
-} {
-  const descBlock = blocks.find((b) => b.type === "description");
-  const actionBlock = blocks.find((b) => b.type === "action");
-  const dialogueBlocks = blocks.filter((b) => b.type === "dialogue");
-  return {
-    description: descBlock?.text,
-    action: actionBlock?.text,
-    dialogue: dialogueBlocks.length > 0
-      ? dialogueBlocks.map((b) => ({ character: b.character || "", line: b.text }))
-      : null,
-  };
-}
 
 interface Beat {
   scene_number: number;
@@ -225,7 +207,9 @@ interface SceneImageState {
   sceneNumber: number;
   title: string;
   visualDescription: string;
+  originalDescription: string;
   image: MoodboardImage | null;
+  isQueued: boolean;
   isGenerating: boolean;
   error: string;
   feedback: string;
@@ -304,26 +288,12 @@ function resolveVideoUrl(url: string): string {
   return `${BACKEND_URL}${url}`;
 }
 
-// Fixed at 8 shots (8 seconds each = ~64 seconds)
-const TOTAL_SHOTS = 8;
-
 const STYLE_OPTIONS: { value: Style; label: string }[] = [
   { value: "cinematic", label: "Cinematic" },
   { value: "anime", label: "Anime" },
   { value: "animated", label: "Animated" },
   { value: "pixar", label: "Pixar" },
 ];
-
-const STYLE_DISPLAY_MAP: Record<string, string> = {
-  cinematic: "Cinematic",
-  anime: "Anime",
-  animated: "Animated",
-  pixar: "Pixar",
-  // Legacy values for existing generations
-  "3d_animated": "Pixar",
-  "2d_animated": "Animated",
-  "2d_anime": "Anime",
-};
 
 // ============================================================
 // Main Component
@@ -396,13 +366,25 @@ export default function CreateEpisodePage() {
   // Build Your Visuals state (Phase 2)
   const [visualsActive, setVisualsActive] = useState(false);  // Unlock flag: Stage 2 started
   const [displayedStage, setDisplayedStage] = useState<1 | 2 | 3>(1);  // Which stage is currently shown
-  const [visualsTab, setVisualsTab] = useState<VisualsTab>("characters");
+  const [visualsTab, setVisualsTab] = useState<VisualsTab>("lookbook");
   const [characterImages, setCharacterImages] = useState<Record<string, CharacterImageState>>({});
   const [locationImages, setLocationImages] = useState<Record<string, LocationImageState>>({});
   const [sceneImages, setSceneImages] = useState<Record<number, SceneImageState>>({});
   const [isGeneratingSceneDescs, setIsGeneratingSceneDescs] = useState(false);
   const [sceneDescError, setSceneDescError] = useState("");
-  const [expandedSceneDescs, setExpandedSceneDescs] = useState<Set<number>>(new Set());
+  const [editingSceneFeedback, setEditingSceneFeedback] = useState<number | null>(null);
+
+  // Storyboard dual-view state
+  const [storyboardViewMode, setStoryboardViewMode] = useState<"grid" | "scene">("grid");
+  const [selectedStoryboardScene, setSelectedStoryboardScene] = useState(1);
+  const [approvedScenes, setApprovedScenes] = useState<Set<number>>(new Set());
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [editImageOpen, setEditImageOpen] = useState(false);
+  const sceneGenStartTimes = useRef<Record<number, number>>({});
+  const [sceneGenElapsed, setSceneGenElapsed] = useState<Record<number, number>>({});
+  const sceneQueuedAt = useRef<Record<number, number>>({}); // tracks when each scene entered queued/generating
+  // Universal generating-start tracker: key = "char:{id}" | "loc:{id}" | "story" | "sceneDescs" | "refine"
+  const genStartedAt = useRef<Record<string, number>>({});
 
   // Modal state for visuals stage
   const [editingVisualCharId, setEditingVisualCharId] = useState<string | null>(null);
@@ -424,7 +406,6 @@ export default function CreateEpisodePage() {
   });
   // Clip review state
   const [clipsApproved, setClipsApproved] = useState(false);
-  const [regeneratingShotNum, setRegeneratingShotNum] = useState<number | null>(null);
   const [shotFeedback, setShotFeedback] = useState<Record<number, string>>({});
 
   // Prompt preview (pre-flight check)
@@ -486,20 +467,6 @@ export default function CreateEpisodePage() {
   const processedJobsRef = useRef<Set<string>>(new Set());
   const snapshotRef = useRef<Record<string, unknown>>({});
 
-  // ---- Auto-generation system: auto-gen at step transitions + persistent retry ----
-  const autoGenActiveRef = useRef<"visuals" | "storyboard" | "clips" | null>(null);
-  const autoGenPhaseRef = useRef("");
-  const autoGenPayloadsRef = useRef<Map<string, { jobType: string; backendPath: string; payload: any }>>(new Map());
-  const autoGenTotalRef = useRef(0);
-  const autoGenCompletedRef = useRef(0);
-  const retryCountRef = useRef<Map<string, number>>(new Map());
-  const retryTimerRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
-  const autoGenProtagonistIdRef = useRef<string | null>(null);
-  const autoGenNeededIdsRef = useRef<{ charIds: string[]; locIds: string[]; sceneNums: number[] }>({ charIds: [], locIds: [], sceneNums: [] });
-  const autoGenSceneQueueRef = useRef<Array<{ sceneNumber: number; visualDescription: string }>>([]);
-  const autoGenSceneInflightRef = useRef(0); // how many scene_image jobs currently in-flight
-  const STORYBOARD_PARALLEL = 2; // generate 2 storyboard images at a time
-  const [autoGenProgress, setAutoGenProgress] = useState<{ total: number; completed: number; retrying: number } | null>(null);
 
   /** Remove a previously-processed job so re-submission is handled by Realtime */
   const clearProcessedJob = (jobType: string, targetId: string = "") => {
@@ -513,341 +480,103 @@ export default function CreateEpisodePage() {
   const CHAR_IMG_DEFAULTS = { images: [] as MoodboardImage[], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] as RefImageUpload[] };
   const LOC_IMG_DEFAULTS = { ...CHAR_IMG_DEFAULTS };
 
-  // ---- Auto-generation tips, phase text, and helper functions ----
-  const AUTO_GEN_TIPS: Record<string, string[]> = {
-    visuals: [
-      "You can click on any character or location portrait to regenerate it",
-      "Each character is generated using the protagonist as a style reference for consistency",
-      "Location images set the visual tone for your episode scenes",
-    ],
-    storyboard: [
-      "Sometimes backgrounds or characters might be inconsistent across scenes — please ensure overall consistency for better video output",
-      "Refine images using descriptive instructions like \"remove the man in the middle\" instead of using character names for best editing results",
-      "This could take a while to generate all storyboard images. Feel free to grab a coffee and come back later!",
-    ],
-    clips: [
-      "You can regenerate individual clips till you get the best output. AI videos sometimes trip up but keep trying and something awesome will come out!",
-      "Each clip uses your storyboard image as the first frame for visual consistency",
-      "Audio is automatically generated for each clip",
-    ],
-  };
+  // ---- Generation helpers (user-initiated, no auto-retry) ----
 
-  const _autoGenPhaseText = (): string => {
-    const mode = autoGenActiveRef.current;
-    const phase = autoGenPhaseRef.current;
-    if (mode === "visuals") return "Generating characters and locations...";
-    if (mode === "storyboard") return phase === "descs" ? "Generating scene descriptions..." : "Creating your storyboard...";
-    if (mode === "clips") return "Generating your video clips...";
-    return "";
-  };
-
-  const _autoGenReset = () => {
-    autoGenActiveRef.current = null;
-    autoGenPhaseRef.current = "";
-    autoGenPayloadsRef.current.clear();
-    autoGenTotalRef.current = 0;
-    autoGenCompletedRef.current = 0;
-    retryCountRef.current.clear();
-    for (const timer of retryTimerRef.current.values()) clearTimeout(timer);
-    retryTimerRef.current.clear();
-    autoGenProtagonistIdRef.current = null;
-    autoGenNeededIdsRef.current = { charIds: [], locIds: [], sceneNums: [] };
-    autoGenSceneQueueRef.current = [];
-    autoGenSceneInflightRef.current = 0;
-    setAutoGenProgress(null);
-  };
-
-  /** Submit the next batch of scene_image jobs (up to STORYBOARD_PARALLEL at a time).
-   *  Both images in a batch must succeed before the next batch starts. */
-  const _autoGenSubmitNextScene = () => {
-    if (autoGenActiveRef.current !== "storyboard") return;
-    if (autoGenSceneInflightRef.current > 0) return; // wait for current batch to finish
-    if (autoGenSceneQueueRef.current.length === 0) return; // queue empty
-    const approvedVisuals = buildApprovedVisuals();
-    if (!approvedVisuals || !story) return;
-    const batch = autoGenSceneQueueRef.current.splice(0, STORYBOARD_PARALLEL);
-    autoGenSceneInflightRef.current = batch.length;
-    for (const next of batch) {
-      const payload = {
-        story,
-        approved_visuals: approvedVisuals,
-        scene_number: next.sceneNumber,
-        visual_description: next.visualDescription,
-      };
-      const key = `scene_image:${next.sceneNumber}`;
-      autoGenPayloadsRef.current.set(key, { jobType: "scene_image", backendPath: "/moodboard/generate-scene-image", payload });
-      setSceneImages((prev) => ({
-        ...prev,
-        [next.sceneNumber]: { ...prev[next.sceneNumber], isGenerating: true, error: "" },
-      }));
-      clearProcessedJob("scene_image", String(next.sceneNumber));
-      submitJob("scene_image", "/moodboard/generate-scene-image", payload, {
-        generationId: generationIdRef.current!, targetId: String(next.sceneNumber),
-      }).catch(() => { scheduleAutoRetry("scene_image", String(next.sceneNumber)); });
-    }
-  };
-
-  const _autoGenItemCompleted = () => {
-    autoGenCompletedRef.current++;
-    const progress = {
-      total: autoGenTotalRef.current,
-      completed: autoGenCompletedRef.current,
-      retrying: retryTimerRef.current.size,
-    };
-    setAutoGenProgress(progress);
-    if (progress.total > 0 && progress.completed >= progress.total && retryTimerRef.current.size === 0) {
-      const mode = autoGenActiveRef.current;
-      // Set destination tab BEFORE reset — reset clears the loader, and the tab
-      // must already be correct when the loader disappears on the same render.
-      if (mode === "visuals") { setVisualsTab("characters"); saveNow({ visualsTab: "characters" }); }
-      else if (mode === "storyboard") { setVisualsTab("scenes"); saveNow({ visualsTab: "scenes" }); }
-      // clips: already on stage 3
-      _autoGenReset();
-    }
-  };
-
-  const scheduleAutoRetry = (jobType: string, targetId: string) => {
-    if (!autoGenActiveRef.current) return;
-    const key = `${jobType}:${targetId}`;
-    const stored = autoGenPayloadsRef.current.get(key);
-    if (!stored) return;
-    const count = (retryCountRef.current.get(key) || 0) + 1;
-    retryCountRef.current.set(key, count);
-    if (count > 10) {
-      // Give up — mark item as failed, count as "done", free inflight slot
-      if (jobType === "scene_image") {
-        const sn = parseInt(targetId);
-        if (!isNaN(sn)) {
-          setSceneImages((prev) => ({
-            ...prev,
-            [sn]: { ...prev[sn], isGenerating: false, error: "Failed after retries — click Regenerate" },
-          }));
-        }
-        autoGenSceneInflightRef.current = Math.max(0, autoGenSceneInflightRef.current - 1);
-        if (autoGenSceneInflightRef.current === 0) _autoGenSubmitNextScene();
-      } else if (jobType === "character_image" || jobType === "protagonist") {
-        setCharacterImages((prev) => ({
-          ...prev,
-          [targetId]: { ...prev[targetId], isGenerating: false, error: "Failed after retries" },
-        }));
-      } else if (jobType === "location_image") {
-        setLocationImages((prev) => ({
-          ...prev,
-          [targetId]: { ...prev[targetId], isGenerating: false, error: "Failed after retries" },
-        }));
-      } else if (jobType === "clip") {
-        const sn = parseInt(targetId);
-        if (!isNaN(sn)) {
-          setClipStates((prev) => ({
-            ...prev,
-            [sn]: { ...prev[sn], status: "failed", error: "Failed after retries" },
-          }));
-        }
-      }
-      _autoGenItemCompleted();
-      return;
-    }
-    const delay = Math.min(3000 * Math.pow(2, count - 1), 30000);
-    setAutoGenProgress((prev) => prev ? { ...prev, retrying: retryTimerRef.current.size + 1 } : prev);
-    const timer = setTimeout(async () => {
-      retryTimerRef.current.delete(key);
-      setAutoGenProgress((prev) => prev ? { ...prev, retrying: retryTimerRef.current.size } : prev);
-      try {
-        clearProcessedJob(stored.jobType, targetId);
-        await submitJob(stored.jobType, stored.backendPath, stored.payload, { generationId: generationIdRef.current!, targetId });
-      } catch {
-        scheduleAutoRetry(jobType, targetId);
-      }
-    }, delay);
-    retryTimerRef.current.set(key, timer);
-  };
-
-  /** Phase 2 of visuals auto-gen: generate remaining chars + all locs using protagonist as reference */
-  const _autoGenVisualsPhase2 = async (protagonistImg: MoodboardImage | null) => {
+  /** Generate All: submit ALL characters + ALL locations in parallel (like storyboard batch). */
+  const generateAllLookbook = async () => {
     if (!story) return;
-    autoGenPhaseRef.current = "parallel";
-    const refImage = protagonistImg
-      ? { image_base64: protagonistImg.image_base64 || null, image_url: protagonistImg.image_url || null, mime_type: protagonistImg.mime_type }
-      : undefined;
-    const { charIds, locIds } = autoGenNeededIdsRef.current;
-    const protId = autoGenProtagonistIdRef.current;
 
-    for (const charId of charIds) {
-      if (charId === protId) continue;
-      const char = story.characters.find((c) => c.id === charId);
-      if (!char) continue;
-      const payload = { character_id: charId, name: char.name, age: char.age, gender: char.gender || undefined, description: char.appearance, visual_style: style, reference_image: refImage };
-      const key = `character_image:${charId}`;
-      autoGenPayloadsRef.current.set(key, { jobType: "character_image", backendPath: "/assets/generate-character-image", payload });
-      setCharacterImages((prev) => ({ ...prev, [charId]: { ...(prev[charId] || CHAR_IMG_DEFAULTS), isGenerating: true, error: "" } }));
-      try { clearProcessedJob("character_image", charId); await submitJob("character_image", "/assets/generate-character-image", payload, { generationId: generationIdRef.current!, targetId: charId }); }
-      catch { scheduleAutoRetry("character_image", charId); }
-    }
+    // Collect items that need generation
+    const charsToGen = story.characters.filter(
+      c => !characterImages[c.id]?.image && !characterImages[c.id]?.isGenerating
+    );
+    const locsToGen = story.locations.filter(
+      l => !locationImages[l.id]?.image && !locationImages[l.id]?.isGenerating
+    );
+    if (charsToGen.length === 0 && locsToGen.length === 0) return;
 
-    for (const locId of locIds) {
-      const loc = story.locations.find((l) => l.id === locId);
-      if (!loc) continue;
-      const payload = { location_id: locId, name: loc.name, description: loc.description, atmosphere: loc.atmosphere, visual_style: style, reference_image: refImage };
-      const key = `location_image:${locId}`;
-      autoGenPayloadsRef.current.set(key, { jobType: "location_image", backendPath: "/assets/generate-location-image", payload });
-      setLocationImages((prev) => ({ ...prev, [locId]: { ...(prev[locId] || LOC_IMG_DEFAULTS), isGenerating: true, error: "" } }));
-      try { clearProcessedJob("location_image", locId); await submitJob("location_image", "/assets/generate-location-image", payload, { generationId: generationIdRef.current!, targetId: locId }); }
-      catch { scheduleAutoRetry("location_image", locId); }
-    }
+    // Mark all as generating + track start times
+    const now = Date.now();
+    for (const c of charsToGen) genStartedAt.current[`char:${c.id}`] = now;
+    for (const l of locsToGen) genStartedAt.current[`loc:${l.id}`] = now;
+    setCharacterImages(prev => {
+      const next = { ...prev };
+      for (const c of charsToGen) next[c.id] = { ...(next[c.id] || CHAR_IMG_DEFAULTS), isGenerating: true, error: "" };
+      return next;
+    });
+    setLocationImages(prev => {
+      const next = { ...prev };
+      for (const l of locsToGen) next[l.id] = { ...(next[l.id] || LOC_IMG_DEFAULTS), isGenerating: true, error: "" };
+      return next;
+    });
 
-    setAutoGenProgress({ total: autoGenTotalRef.current, completed: autoGenCompletedRef.current, retrying: 0 });
+    // Clear processed jobs BEFORE submitting (prevents Realtime skip on regen)
+    for (const c of charsToGen) clearProcessedJob("character_image", c.id);
+    for (const l of locsToGen) clearProcessedJob("location_image", l.id);
+
+    // Submit ALL in parallel — results arrive via Realtime individually
+    const charPromises = charsToGen.map(char =>
+      submitJob("character_image", "/assets/generate-character-image", {
+        character_id: char.id, name: char.name, age: char.age,
+        gender: char.gender || undefined, description: char.appearance, visual_style: style,
+      }, { generationId: generationIdRef.current!, targetId: char.id })
+      .catch(() => {
+        setCharacterImages(prev => ({ ...prev, [char.id]: { ...prev[char.id], isGenerating: false, error: "Failed to submit" } }));
+      })
+    );
+
+    const locPromises = locsToGen.map(loc =>
+      submitJob("location_image", "/assets/generate-location-image", {
+        location_id: loc.id, name: loc.name, description: loc.description,
+        atmosphere: loc.atmosphere, visual_style: style,
+      }, { generationId: generationIdRef.current!, targetId: loc.id })
+      .catch(() => {
+        setLocationImages(prev => ({ ...prev, [loc.id]: { ...prev[loc.id], isGenerating: false, error: "Failed to submit" } }));
+      })
+    );
+
+    await Promise.allSettled([...charPromises, ...locPromises]);
   };
 
-  // ---- Restore regen helpers: accept data as parameters (React state not committed yet) ----
-
-  /** Regen missing chars + locs on restore. Uses protagonist-first flow if protagonist is missing. */
-  const _restoreRegenVisuals = (
-    storyData: Story, restoredStyle: Style,
-    missingCharIds: string[], missingLocIds: string[],
-    existingChars: Record<string, CharacterImageState>,
-  ) => {
-    const totalMissing = missingCharIds.length + missingLocIds.length;
-    _autoGenReset();
-    autoGenActiveRef.current = "visuals";
-    autoGenTotalRef.current = totalMissing;
-    autoGenCompletedRef.current = 0;
-    setAutoGenProgress({ total: totalMissing, completed: 0, retrying: 0 });
-
-    // Find protagonist
-    const protChar = storyData.characters.find(c => c.role === "protagonist") || storyData.characters[0];
-    const protId = protChar?.id;
-    const protIsMissing = protId && missingCharIds.includes(protId);
-
-    if (protIsMissing) {
-      // Protagonist missing → protagonist-first flow (phase 2 triggered by useEffect on char completion)
-      autoGenPhaseRef.current = "protagonist";
-      autoGenProtagonistIdRef.current = protId;
-      autoGenNeededIdsRef.current = { charIds: missingCharIds, locIds: missingLocIds, sceneNums: [] };
-      const protPayload = {
-        character_id: protId, name: protChar.name, age: protChar.age,
-        gender: protChar.gender || undefined, description: protChar.appearance,
-        visual_style: restoredStyle,
-      };
-      const key = `character_image:${protId}`;
-      autoGenPayloadsRef.current.set(key, { jobType: "character_image", backendPath: "/assets/generate-character-image", payload: protPayload });
-      setCharacterImages(prev => ({ ...prev, [protId]: { ...(prev[protId] || CHAR_IMG_DEFAULTS), isGenerating: true, error: "" } }));
-      clearProcessedJob("character_image", protId);
-      submitJob("character_image", "/assets/generate-character-image", protPayload, {
-        generationId: generationIdRef.current!, targetId: protId,
-      }).catch(() => scheduleAutoRetry("character_image", protId));
-      return;
-    }
-
-    // Protagonist exists — regen missing chars + locs in parallel using protag as ref
-    autoGenPhaseRef.current = "parallel";
-    const protImg = protId ? existingChars[protId]?.image : null;
-    const refImage = protImg
-      ? { image_base64: protImg.image_base64 || null, image_url: protImg.image_url || null, mime_type: protImg.mime_type }
-      : undefined;
-
-    for (const charId of missingCharIds) {
-      const char = storyData.characters.find(c => c.id === charId);
-      if (!char) continue;
-      const payload = {
-        character_id: charId, name: char.name, age: char.age,
-        gender: char.gender || undefined, description: char.appearance,
-        visual_style: restoredStyle, reference_image: refImage,
-      };
-      const key = `character_image:${charId}`;
-      autoGenPayloadsRef.current.set(key, { jobType: "character_image", backendPath: "/assets/generate-character-image", payload });
-      setCharacterImages(prev => ({ ...prev, [charId]: { ...(prev[charId] || CHAR_IMG_DEFAULTS), isGenerating: true, error: "" } }));
+  /** Generate a single character image */
+  const generateSingleChar = async (charId: string) => {
+    if (!story) return;
+    const char = story.characters.find(c => c.id === charId);
+    if (!char) return;
+    genStartedAt.current[`char:${charId}`] = Date.now();
+    setCharacterImages(prev => ({ ...prev, [charId]: { ...(prev[charId] || CHAR_IMG_DEFAULTS), isGenerating: true, error: "" } }));
+    const payload = {
+      character_id: charId, name: char.name, age: char.age,
+      gender: char.gender || undefined, description: char.appearance, visual_style: style,
+    };
+    try {
       clearProcessedJob("character_image", charId);
-      submitJob("character_image", "/assets/generate-character-image", payload, {
+      await submitJob("character_image", "/assets/generate-character-image", payload, {
         generationId: generationIdRef.current!, targetId: charId,
-      }).catch(() => scheduleAutoRetry("character_image", charId));
+      });
+    } catch {
+      setCharacterImages(prev => ({ ...prev, [charId]: { ...prev[charId], isGenerating: false, error: "Failed to submit" } }));
     }
-    for (const locId of missingLocIds) {
-      const loc = storyData.locations.find(l => l.id === locId);
-      if (!loc) continue;
-      const payload = {
-        location_id: locId, name: loc.name, description: loc.description,
-        atmosphere: loc.atmosphere, visual_style: restoredStyle, reference_image: refImage,
-      };
-      const key = `location_image:${locId}`;
-      autoGenPayloadsRef.current.set(key, { jobType: "location_image", backendPath: "/assets/generate-location-image", payload });
-      setLocationImages(prev => ({ ...prev, [locId]: { ...(prev[locId] || LOC_IMG_DEFAULTS), isGenerating: true, error: "" } }));
+  };
+
+  /** Generate a single location image */
+  const generateSingleLoc = async (locId: string) => {
+    if (!story) return;
+    const loc = story.locations.find(l => l.id === locId);
+    if (!loc) return;
+    genStartedAt.current[`loc:${locId}`] = Date.now();
+    setLocationImages(prev => ({ ...prev, [locId]: { ...(prev[locId] || LOC_IMG_DEFAULTS), isGenerating: true, error: "" } }));
+    const payload = {
+      location_id: locId, name: loc.name, description: loc.description,
+      atmosphere: loc.atmosphere, visual_style: style,
+    };
+    try {
       clearProcessedJob("location_image", locId);
-      submitJob("location_image", "/assets/generate-location-image", payload, {
+      await submitJob("location_image", "/assets/generate-location-image", payload, {
         generationId: generationIdRef.current!, targetId: locId,
-      }).catch(() => scheduleAutoRetry("location_image", locId));
-    }
-  };
-
-  /** Regen missing storyboard images on restore. Submits first batch directly (bypasses state-dependent _autoGenSubmitNextScene). */
-  const _restoreRegenStoryboard = (
-    storyData: Story,
-    approvedVisuals: ReturnType<typeof buildApprovedVisualsFromLocals>,
-    missingSceneNums: number[],
-    sceneData: Record<number, SceneImageState>,
-  ) => {
-    _autoGenReset();
-    autoGenActiveRef.current = "storyboard";
-    autoGenPhaseRef.current = "images";
-    autoGenTotalRef.current = missingSceneNums.length;
-    autoGenCompletedRef.current = 0;
-    setAutoGenProgress({ total: missingSceneNums.length, completed: 0, retrying: 0 });
-
-    // Queue all missing scenes
-    autoGenSceneQueueRef.current = missingSceneNums.map(sn => ({
-      sceneNumber: sn, visualDescription: sceneData[sn]?.visualDescription || "",
-    }));
-
-    // Submit first batch directly (React state not committed — can't use _autoGenSubmitNextScene)
-    const batch = autoGenSceneQueueRef.current.splice(0, STORYBOARD_PARALLEL);
-    autoGenSceneInflightRef.current = batch.length;
-    for (const next of batch) {
-      const payload = {
-        story: storyData, approved_visuals: approvedVisuals,
-        scene_number: next.sceneNumber, visual_description: next.visualDescription,
-      };
-      const key = `scene_image:${next.sceneNumber}`;
-      autoGenPayloadsRef.current.set(key, { jobType: "scene_image", backendPath: "/moodboard/generate-scene-image", payload });
-      setSceneImages(prev => ({ ...prev, [next.sceneNumber]: { ...prev[next.sceneNumber], isGenerating: true, error: "" } }));
-      clearProcessedJob("scene_image", String(next.sceneNumber));
-      submitJob("scene_image", "/moodboard/generate-scene-image", payload, {
-        generationId: generationIdRef.current!, targetId: String(next.sceneNumber),
-      }).catch(() => scheduleAutoRetry("scene_image", String(next.sceneNumber)));
-    }
-    // Subsequent batches triggered by _autoGenSubmitNextScene on completion (React state committed by then)
-  };
-
-  /** Regen missing clips on restore. */
-  const _restoreRegenClips = (
-    storyData: Story,
-    approvedVisuals: ReturnType<typeof buildApprovedVisualsFromLocals>,
-    missingClipNums: number[],
-    sceneData: Record<number, SceneImageState>,
-  ) => {
-    _autoGenReset();
-    autoGenActiveRef.current = "clips";
-    autoGenPhaseRef.current = "clips";
-    autoGenTotalRef.current = missingClipNums.length;
-    autoGenCompletedRef.current = 0;
-    setAutoGenProgress({ total: missingClipNums.length, completed: 0, retrying: 0 });
-
-    const scenes = getScenes(storyData);
-    const genId = generationIdRef.current;
-    for (const sceneNum of missingClipNums) {
-      const scene = scenes.find(sc => sc.scene_number === sceneNum);
-      if (!scene) continue;
-      const storyboardUrl = sceneData[sceneNum]?.image?.image_url || null;
-      const payload = {
-        story: storyData, approved_visuals: approvedVisuals,
-        scene_number: sceneNum, scene, storyboard_image_url: storyboardUrl,
-        generation_id: genId,
-      };
-      const key = `clip:${sceneNum}`;
-      autoGenPayloadsRef.current.set(key, { jobType: "clip", backendPath: "/film/generate-clip", payload });
-      setClipStates(prev => ({ ...prev, [sceneNum]: { ...prev[sceneNum], status: "generating", error: null } }));
-      clearProcessedJob("clip", String(sceneNum));
-      submitJob("clip", "/film/generate-clip", payload, {
-        generationId: genId!, targetId: String(sceneNum),
-      }).catch(() => scheduleAutoRetry("clip", String(sceneNum)));
+      });
+    } catch {
+      setLocationImages(prev => ({ ...prev, [locId]: { ...prev[locId], isGenerating: false, error: "Failed to submit" } }));
     }
   };
 
@@ -867,17 +596,18 @@ export default function CreateEpisodePage() {
       case "scene_descriptions":
         setIsGeneratingSceneDescs(false);
         setSceneDescError(errMsg);
+        setEditingDesc(false);
         break;
       case "scene_images":
       case "key_moment": {
-        // Capture generating scene numbers before state update
-        const failedSceneNums = Object.keys(sceneImages).map(Number).filter((n) => sceneImages[n]?.isGenerating);
+        // Capture generating/queued scene numbers before state update
+        const failedSceneNums = Object.keys(sceneImages).map(Number).filter((n) => sceneImages[n]?.isGenerating || sceneImages[n]?.isQueued);
         setSceneImages((prev) => {
           const updated = { ...prev };
           for (const key of Object.keys(updated)) {
             const num = parseInt(key);
-            if (updated[num]?.isGenerating) {
-              updated[num] = { ...updated[num], isGenerating: false, error: errMsg };
+            if (updated[num]?.isGenerating || updated[num]?.isQueued) {
+              updated[num] = { ...updated[num], isQueued: false, isGenerating: false, error: errMsg };
             }
           }
           return updated;
@@ -895,7 +625,7 @@ export default function CreateEpisodePage() {
         const failedNum = parseInt(job.target_id);
         setSceneImages((prev) => ({
           ...prev,
-          [failedNum]: { ...prev[failedNum], isGenerating: false, error: errMsg },
+          [failedNum]: { ...prev[failedNum], isQueued: false, isGenerating: false, error: errMsg },
         }));
         // Update DB status to failed
         const genId2 = generationIdRef.current;
@@ -933,7 +663,6 @@ export default function CreateEpisodePage() {
         setFilm((prev) => ({ ...prev, status: "failed", error: errMsg }));
         break;
       case "shot_regenerate":
-        setRegeneratingShotNum(null);
         break;
       case "clip": {
         const failedScene = parseInt(job.target_id);
@@ -953,13 +682,6 @@ export default function CreateEpisodePage() {
         assembleIntentRef.current = null;
         setAssembleIntent(null);
         break;
-    }
-    // Auto-retry: if auto-gen is active and we have a stored payload, schedule retry
-    if (autoGenActiveRef.current) {
-      const retryKey = `${job.job_type}:${job.target_id || ""}`;
-      if (autoGenPayloadsRef.current.has(retryKey)) {
-        scheduleAutoRetry(job.job_type, job.target_id || "");
-      }
     }
   };
 
@@ -1063,13 +785,6 @@ export default function CreateEpisodePage() {
           }));
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, characters: prev.characters + (result.cost_usd as number) }));
-        // Auto-gen: track progress for visuals auto-generation
-        if (autoGenActiveRef.current === "visuals" && charId) {
-          const retryKey = `character_image:${charId}`;
-          if (autoGenPayloadsRef.current.has(retryKey) || charId === autoGenProtagonistIdRef.current) {
-            _autoGenItemCompleted();
-          }
-        }
         break;
       }
       case "refine_character": {
@@ -1105,13 +820,6 @@ export default function CreateEpisodePage() {
           }));
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, locations: prev.locations + (result.cost_usd as number) }));
-        // Auto-gen: track progress for visuals auto-generation
-        if (autoGenActiveRef.current === "visuals" && locId) {
-          const retryKey = `location_image:${locId}`;
-          if (autoGenPayloadsRef.current.has(retryKey)) {
-            _autoGenItemCompleted();
-          }
-        }
         break;
       }
       case "refine_location": {
@@ -1137,14 +845,14 @@ export default function CreateEpisodePage() {
           setSceneImages((prev) => {
             const updated = { ...prev };
             for (const m of kms) {
-              updated[m.beat_number] = { sceneNumber: m.beat_number, title: m.beat_description.slice(0, 50), visualDescription: m.beat_description, image: m.image, isGenerating: false, error: "", feedback: "" };
+              updated[m.beat_number] = { sceneNumber: m.beat_number, title: m.beat_description.slice(0, 50), visualDescription: m.beat_description, originalDescription: m.beat_description, image: m.image, isQueued: false, isGenerating: false, error: "", feedback: "" };
             }
             return updated;
           });
         } else if (km) {
           setSceneImages((prev) => ({
             ...prev,
-            [km.beat_number]: { sceneNumber: km.beat_number, title: km.beat_description.slice(0, 50), visualDescription: km.beat_description, image: km.image, isGenerating: false, error: "", feedback: "" },
+            [km.beat_number]: { sceneNumber: km.beat_number, title: km.beat_description.slice(0, 50), visualDescription: km.beat_description, originalDescription: km.beat_description, image: km.image, isQueued: false, isGenerating: false, error: "", feedback: "" },
           }));
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
@@ -1153,21 +861,40 @@ export default function CreateEpisodePage() {
       case "scene_descriptions": {
         const descs = result.descriptions as Array<{ scene_number: number; title: string; visual_description: string }>;
         if (descs) {
-          const newSceneImages: Record<number, SceneImageState> = {};
-          for (const desc of descs) {
-            newSceneImages[desc.scene_number] = { sceneNumber: desc.scene_number, title: desc.title, visualDescription: desc.visual_description, image: null, isGenerating: false, error: "", feedback: "" };
-          }
-          setSceneImages(newSceneImages);
+          setSceneImages((prev) => {
+            const hasExisting = Object.keys(prev).length > 0;
+            if (hasExisting) {
+              // Merge: update text fields, PRESERVE existing images
+              const updated = { ...prev };
+              for (const desc of descs) {
+                const existing = updated[desc.scene_number];
+                updated[desc.scene_number] = {
+                  ...(existing || { sceneNumber: desc.scene_number, image: null, isQueued: false, isGenerating: false, error: "", feedback: "" }),
+                  title: desc.title,
+                  visualDescription: desc.visual_description,
+                  originalDescription: desc.visual_description,
+                };
+              }
+              return updated;
+            }
+            // Fresh: no prior state, create from scratch
+            const fresh: Record<number, SceneImageState> = {};
+            for (const desc of descs) {
+              fresh[desc.scene_number] = { sceneNumber: desc.scene_number, title: desc.title, visualDescription: desc.visual_description, originalDescription: desc.visual_description, image: null, isQueued: false, isGenerating: false, error: "", feedback: "" };
+            }
+            return fresh;
+          });
           // Persist scene descriptions to episode_storyboards DB table
           const genId = generationIdRef.current;
           if (genId) {
             upsertEpisodeStoryboards(genId, descs.map((d) => ({
               scene_number: d.scene_number, title: d.title,
-              visual_description: d.visual_description, status: "pending",
+              visual_description: d.visual_description,
             }))).catch((e) => console.warn("DB storyboard upsert failed:", e));
           }
         }
         setIsGeneratingSceneDescs(false);
+        setEditingDesc(false);
         break;
       }
       case "scene_images": {
@@ -1199,13 +926,13 @@ export default function CreateEpisodePage() {
           setSceneImages((prev) => {
             const updated = { ...prev };
             for (const si of sceneImgs) {
-              if (updated[si.scene_number]) updated[si.scene_number] = { ...updated[si.scene_number], image: si.image, isGenerating: false, error: "" };
+              if (updated[si.scene_number]) updated[si.scene_number] = { ...updated[si.scene_number], image: si.image, isQueued: false, isGenerating: false, error: "" };
             }
-            // Mark scenes that were generating but NOT in results as failed
+            // Mark scenes that were generating/queued but NOT in results as failed
             for (const [key, scene] of Object.entries(updated)) {
               const num = parseInt(key);
-              if (scene.isGenerating && !successNums.has(num)) {
-                updated[num] = { ...scene, isGenerating: false, error: "Generation failed — click Regenerate to retry" };
+              if ((scene.isGenerating || scene.isQueued) && !successNums.has(num)) {
+                updated[num] = { ...scene, isQueued: false, isGenerating: false, error: "Generation failed — click Regenerate to retry" };
               }
             }
             return updated;
@@ -1252,7 +979,7 @@ export default function CreateEpisodePage() {
               })
               .catch(() => { });
           }
-          setSceneImages((prev) => ({ ...prev, [sceneNum]: { ...prev[sceneNum], image: img, isGenerating: false, feedback: "" } }));
+          setSceneImages((prev) => ({ ...prev, [sceneNum]: { ...prev[sceneNum], image: img, isQueued: false, isGenerating: false, feedback: "" } }));
           // Persist refined image to episode_storyboards DB table
           if (genId) {
             upsertEpisodeStoryboards(genId, [{
@@ -1264,15 +991,6 @@ export default function CreateEpisodePage() {
           }
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
-        // Auto-gen: track progress. When full batch completes, submit next batch.
-        if (autoGenActiveRef.current === "storyboard" && !isNaN(sceneNum)) {
-          const retryKey = `scene_image:${sceneNum}`;
-          if (autoGenPayloadsRef.current.has(retryKey)) {
-            autoGenSceneInflightRef.current = Math.max(0, autoGenSceneInflightRef.current - 1);
-            _autoGenItemCompleted();
-            if (autoGenSceneInflightRef.current === 0) _autoGenSubmitNextScene(); // batch done → next batch
-          }
-        }
         saveNow();
         break;
       }
@@ -1313,7 +1031,6 @@ export default function CreateEpisodePage() {
           });
         }
         if (result.cost) setTotalCost((prev) => ({ ...prev, film: (result.cost as { total_usd: number }).total_usd }));
-        setRegeneratingShotNum(null);
         break;
       }
       case "clip": {
@@ -1347,13 +1064,6 @@ export default function CreateEpisodePage() {
           if (cost) setTotalCost((prev) => ({ ...prev, film: prev.film + cost }));
           // Invalidate cached assembly so Preview/Publish re-assembles with new clip
           setAssembledVideoUrl(null);
-          // Auto-gen: track progress for clips auto-generation
-          if (autoGenActiveRef.current === "clips") {
-            const retryKey = `clip:${sceneNum}`;
-            if (autoGenPayloadsRef.current.has(retryKey)) {
-              _autoGenItemCompleted();
-            }
-          }
         }
         break;
       }
@@ -1395,8 +1105,36 @@ export default function CreateEpisodePage() {
   useEffect(() => {
     if (isRestoringState) return;
     for (const job of realtimeJobs) {
-      // Skip already-processed or still-generating jobs
+      // Skip already-processed jobs
       if (processedJobsRef.current.has(job.id)) continue;
+
+      // Jobs still queued — set queued indicators (e.g. after page refresh)
+      if (job.status === "queued") {
+        switch (job.job_type) {
+          case "scene_image":
+            setSceneImages((prev) => {
+              const num = parseInt(job.target_id);
+              if (prev[num] && !prev[num].image) return { ...prev, [num]: { ...prev[num], isQueued: true, isGenerating: false, error: "" } };
+              return prev;
+            });
+            break;
+          case "scene_images":
+          case "key_moment":
+            setSceneImages((prev) => {
+              const updated = { ...prev };
+              for (const key of Object.keys(updated)) {
+                const num = parseInt(key);
+                if (!updated[num].image) {
+                  updated[num] = { ...updated[num], isQueued: true, isGenerating: false, error: "" };
+                }
+              }
+              return updated;
+            });
+            break;
+        }
+        continue;
+      }
+
       if (job.status === "generating") {
         // For film jobs, update progress from the incremental result
         if ((job.job_type === "film" || job.job_type === "film_with_prompts") && job.result) {
@@ -1433,19 +1171,25 @@ export default function CreateEpisodePage() {
               for (const key of Object.keys(updated)) {
                 const num = parseInt(key);
                 if (!updated[num].image) {
-                  updated[num] = { ...updated[num], isGenerating: true, error: "" };
+                  updated[num] = { ...updated[num], isQueued: false, isGenerating: true, error: "" };
                 }
               }
               return updated;
             });
             break;
-          case "scene_image":
+          case "scene_image": {
+            const num = parseInt(job.target_id);
             setSceneImages((prev) => {
-              const num = parseInt(job.target_id);
-              if (prev[num]) return { ...prev, [num]: { ...prev[num], isGenerating: true, error: "" } };
+              if (prev[num]) return { ...prev, [num]: { ...prev[num], isQueued: false, isGenerating: true, error: "" } };
               return prev;
             });
+            // Persist generating status to DB
+            const genId = generationIdRef.current;
+            if (genId && !isNaN(num)) {
+              upsertEpisodeStoryboards(genId, [{ scene_number: num, status: "generating" }]).catch(() => {});
+            }
             break;
+          }
           case "protagonist":
           case "character_image":
           case "refine_character":
@@ -1485,7 +1229,6 @@ export default function CreateEpisodePage() {
             setFilm((prev) => prev.status === "idle" ? { ...prev, status: "generating" } : prev);
             break;
           case "shot_regenerate":
-            setRegeneratingShotNum(parseInt(job.target_id));
             break;
         }
 
@@ -1496,14 +1239,6 @@ export default function CreateEpisodePage() {
       processedJobsRef.current.add(job.id);
       if (job.status === "failed") {
         applyFailedJob(job);
-        // Auto-retry: if auto-gen is active and we have a stored payload, schedule retry
-        // instead of leaving the user stuck on a failed item
-        if (autoGenActiveRef.current) {
-          const retryKey = `${job.job_type}:${job.target_id}`;
-          if (autoGenPayloadsRef.current.has(retryKey)) {
-            scheduleAutoRetry(job.job_type, job.target_id);
-          }
-        }
         continue;
       }
       applyCompletedJob(job);
@@ -1512,33 +1247,26 @@ export default function CreateEpisodePage() {
   }, [realtimeJobs, isRestoringState]);
 
   // Stale job watchdog: auto-fail jobs stuck in "generating".
-  // Image jobs: 5 min (backend max: 90s × 3 retries = 270s = 4.5min, plus 30s buffer).
-  // Video jobs: 11 min (Seedance 10min poll timeout + 1min startup/retry overhead).
+  // Image jobs: 2.5 min (105s job timeout + 5s poll + 40s buffer).
+  // Video jobs: 6 min (180s Seedance poll + assembly + overhead).
   // Catches cases where the backend dies without updating gen_jobs (OOM, network drop, etc.).
   useEffect(() => {
-    const IMAGE_STALE_MS = 5 * 60 * 1000; // 5 minutes
-    const VIDEO_STALE_MS = 11 * 60 * 1000; // 11 minutes
+    const IMAGE_STALE_MS = 150_000; // 2.5 minutes
+    const VIDEO_STALE_MS = 6 * 60 * 1000; // 6 minutes
     const VIDEO_JOB_TYPES = new Set(["film", "film_with_prompts", "shot_regenerate", "clip"]);
     const CHECK_INTERVAL_MS = 30 * 1000; // check every 30s
 
     const interval = setInterval(() => {
       const now = Date.now();
       for (const job of realtimeJobs) {
-        if (job.status !== "generating") continue;
+        if (job.status !== "generating" && job.status !== "queued") continue;
         if (processedJobsRef.current.has(job.id)) continue;
         const threshold = VIDEO_JOB_TYPES.has(job.job_type) ? VIDEO_STALE_MS : IMAGE_STALE_MS;
         const jobAge = now - new Date(job.created_at).getTime();
         if (jobAge > threshold) {
           console.warn(`[stale-watchdog] Job ${job.job_type}/${job.target_id} stuck for ${Math.round(jobAge / 1000)}s — marking failed`);
           processedJobsRef.current.add(job.id);
-          applyFailedJob({ ...job, status: "failed", error_message: "Timed out — click Regenerate to retry" });
-          // Auto-retry stale jobs too
-          if (autoGenActiveRef.current) {
-            const retryKey = `${job.job_type}:${job.target_id}`;
-            if (autoGenPayloadsRef.current.has(retryKey)) {
-              scheduleAutoRetry(job.job_type, job.target_id);
-            }
-          }
+          applyFailedJob({ ...job, status: "failed", error_message: "Timed out — click Retry to try again" });
         }
       }
     }, CHECK_INTERVAL_MS);
@@ -1546,6 +1274,102 @@ export default function CreateEpisodePage() {
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realtimeJobs]);
+
+  // Local watchdog: catches ANY item stuck in generating/queued in UI state.
+  // Covers scenes, characters, locations, story, scene descriptions.
+  // The Realtime watchdog above only covers jobs in gen_jobs table.
+  // This catches: submitJob failed silently, backend never created the row, Realtime dropped, etc.
+  useEffect(() => {
+    const STALE_MS = 150_000; // 2.5 min — same as image job threshold
+    const CHECK_MS = 15_000; // check every 15s
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+
+      // 1. Scenes
+      const staleScenes: number[] = [];
+      for (const [key, scene] of Object.entries(sceneImages)) {
+        if (!scene.isQueued && !scene.isGenerating) continue;
+        const num = parseInt(key);
+        const enteredAt = sceneQueuedAt.current[num];
+        if (enteredAt && now - enteredAt > STALE_MS) staleScenes.push(num);
+      }
+      if (staleScenes.length > 0) {
+        console.warn(`[watchdog] Scenes stuck: ${staleScenes.join(", ")}`);
+        setSceneImages((prev) => {
+          const updated = { ...prev };
+          for (const num of staleScenes) {
+            updated[num] = { ...updated[num], isQueued: false, isGenerating: false, error: "Timed out — click Generate to retry" };
+            delete sceneQueuedAt.current[num];
+          }
+          return updated;
+        });
+      }
+
+      // 2. Characters
+      const staleChars: string[] = [];
+      for (const [id, state] of Object.entries(characterImages)) {
+        if (!state.isGenerating) continue;
+        const enteredAt = genStartedAt.current[`char:${id}`];
+        if (enteredAt && now - enteredAt > STALE_MS) staleChars.push(id);
+      }
+      if (staleChars.length > 0) {
+        console.warn(`[watchdog] Characters stuck: ${staleChars.join(", ")}`);
+        setCharacterImages((prev) => {
+          const updated = { ...prev };
+          for (const id of staleChars) {
+            updated[id] = { ...updated[id], isGenerating: false, error: "Timed out — click to retry" };
+            delete genStartedAt.current[`char:${id}`];
+          }
+          return updated;
+        });
+      }
+
+      // 3. Locations
+      const staleLocs: string[] = [];
+      for (const [id, state] of Object.entries(locationImages)) {
+        if (!state.isGenerating) continue;
+        const enteredAt = genStartedAt.current[`loc:${id}`];
+        if (enteredAt && now - enteredAt > STALE_MS) staleLocs.push(id);
+      }
+      if (staleLocs.length > 0) {
+        console.warn(`[watchdog] Locations stuck: ${staleLocs.join(", ")}`);
+        setLocationImages((prev) => {
+          const updated = { ...prev };
+          for (const id of staleLocs) {
+            updated[id] = { ...updated[id], isGenerating: false, error: "Timed out — click to retry" };
+            delete genStartedAt.current[`loc:${id}`];
+          }
+          return updated;
+        });
+      }
+
+      // 4. Story generation
+      if (isGenerating) {
+        const enteredAt = genStartedAt.current["story"];
+        if (enteredAt && now - enteredAt > STALE_MS) {
+          console.warn("[watchdog] Story generation stuck");
+          setIsGenerating(false);
+          setError("Generation timed out — please try again");
+          delete genStartedAt.current["story"];
+        }
+      }
+
+      // 5. Scene descriptions
+      if (isGeneratingSceneDescs) {
+        const enteredAt = genStartedAt.current["sceneDescs"];
+        if (enteredAt && now - enteredAt > STALE_MS) {
+          console.warn("[watchdog] Scene descriptions stuck");
+          setIsGeneratingSceneDescs(false);
+          setSceneDescError("Generation timed out — please try again");
+          delete genStartedAt.current["sceneDescs"];
+        }
+      }
+    }, CHECK_MS);
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneImages, characterImages, locationImages, isGenerating, isGeneratingSceneDescs]);
 
   // URL helper — generation ID in URL as ?g=xxx
   const setGenerationUrl = (id: string | null) => {
@@ -1603,6 +1427,7 @@ export default function CreateEpisodePage() {
       return;
     }
 
+    genStartedAt.current["story"] = Date.now();
     setIsGenerating(true);
     setError(null);
     setStory(null);
@@ -1650,6 +1475,7 @@ export default function CreateEpisodePage() {
   };
 
   const regenerateStory = async () => {
+    genStartedAt.current["story"] = Date.now();
     setIsGenerating(true);
     setError(null);
     resetVisualDirection();
@@ -1849,6 +1675,7 @@ export default function CreateEpisodePage() {
         sceneNumber: v.sceneNumber,
         title: v.title,
         visualDescription: v.visualDescription,
+        originalDescription: v.originalDescription,
         feedback: v.feedback,
         image: v.image ? { type: v.image.type, image_url: v.image.image_url, mime_type: v.image.mime_type, prompt_used: v.image.prompt_used } : null,
       }])
@@ -1866,6 +1693,9 @@ export default function CreateEpisodePage() {
     clipsActive,
     selectedClipScene,
     totalCost,
+    storyboardViewMode,
+    selectedStoryboardScene,
+    approvedScenes: Array.from(approvedScenes),
   });
 
   /** Derive generation status from current state — single source of truth */
@@ -2160,6 +1990,7 @@ export default function CreateEpisodePage() {
           sceneNumber: dbSb.sceneNumber,
           title: dbSb.title,
           visualDescription: dbSb.visualDescription,
+          originalDescription: dbSb.visualDescription,
           image: hasImg ? {
             type: "key_moment" as const,
             image_url: imgUrl,
@@ -2167,7 +1998,8 @@ export default function CreateEpisodePage() {
             mime_type: dbSb.imageMimeType || (jsImg?.mime_type) || "image/png",
             prompt_used: dbSb.promptUsed || "",
           } : null,
-          isGenerating: dbSb.status === "generating",
+          isQueued: false,  // On restore, never persist queued/generating — Realtime will re-deliver active jobs
+          isGenerating: false,
           error: dbSb.status === "failed" ? (dbSb.errorMessage || "Generation failed") : "",
           feedback: (js.feedback as string) || "",
         };
@@ -2178,13 +2010,20 @@ export default function CreateEpisodePage() {
         if (!cleanedScenes[num]) {
           const rawSi = si as SceneImageState;
           if (rawSi.image && hasRealImage(rawSi.image)) {
-            cleanedScenes[num] = { ...rawSi, isGenerating: false };
+            cleanedScenes[num] = { ...rawSi, originalDescription: rawSi.originalDescription || rawSi.visualDescription, isQueued: false, isGenerating: false };
           } else {
-            cleanedScenes[num] = { ...rawSi, image: null, isGenerating: false };
+            cleanedScenes[num] = { ...rawSi, originalDescription: rawSi.originalDescription || rawSi.visualDescription, image: null, isQueued: false, isGenerating: false };
           }
         }
       }
       setSceneImages(cleanedScenes);
+
+      // Restore storyboard dual-view state
+      const sbvm = (s as Record<string, unknown>).storyboardViewMode;
+      setStoryboardViewMode(sbvm === "scene" ? "scene" : "grid");
+      setSelectedStoryboardScene(((s as Record<string, unknown>).selectedStoryboardScene as number) || 1);
+      setApprovedScenes(new Set(((s as Record<string, unknown>).approvedScenes as number[]) || []));
+
 
       // Prefetch base64 for URL-only images (needed by buildApprovedVisuals)
       const prefetchBase64 = async () => {
@@ -2225,7 +2064,6 @@ export default function CreateEpisodePage() {
       if (s.totalCost) setTotalCost(s.totalCost as TotalCost);
 
       // Restore clips stage from DB
-      let restoredClipMap: Record<number, ClipState> = {};
       if (s.clipsActive) {
         setClipsActive(true);
         if (s.selectedClipScene) setSelectedClipScene(s.selectedClipScene as number);
@@ -2259,7 +2097,6 @@ export default function CreateEpisodePage() {
               feedback: "",
             };
           }
-          restoredClipMap = clipMap;
           setClipStates(clipMap);
         } catch { /* non-fatal */ }
       }
@@ -2318,8 +2155,8 @@ export default function CreateEpisodePage() {
               for (const desc of descs) {
                 cleanedScenes[desc.scene_number] = {
                   sceneNumber: desc.scene_number, title: desc.title,
-                  visualDescription: desc.visual_description,
-                  image: null, isGenerating: false, error: "", feedback: "",
+                  visualDescription: desc.visual_description, originalDescription: desc.visual_description,
+                  image: null, isQueued: false, isGenerating: false, error: "", feedback: "",
                 };
               }
             }
@@ -2353,7 +2190,7 @@ export default function CreateEpisodePage() {
               if (!s.visualsActive) {
                 setVisualsActive(true);
                 setDisplayedStage(2);
-                setVisualsTab("characters");
+                setVisualsTab("lookbook");
               }
             }
             // Merge character/location images into local vars
@@ -2391,332 +2228,41 @@ export default function CreateEpisodePage() {
           const storyboardInFlight = generatingJobs.filter(j => storyboardTypes.has(j.job_type));
           const clipsInFlight = generatingJobs.filter(j => clipTypes.has(j.job_type));
 
-          // Build retryable payload entries (not empty stubs) so if an in-flight job
-          // fails after restore, scheduleAutoRetry can resubmit with correct backendPath + payload.
-          const restoredStyle = ((s.style as string) || "cinematic") as Style;
-          const protId = restoredStory?.characters[0]?.id;
-          const protImg = protId ? cleanedChars[protId]?.image : null;
-          const protRef = protImg && (protImg.image_base64 || protImg.image_url)
-            ? { image_base64: protImg.image_base64 || null, image_url: protImg.image_url || null, mime_type: protImg.mime_type }
-            : undefined;
-
+          // Mark in-flight visuals jobs as generating on their cards
           if (visualsInFlight.length > 0) {
-            const totalChars = restoredStory?.characters?.length || 0;
-            const totalLocs = restoredStory?.locations?.length || 0;
-            const total = totalChars + totalLocs;
-
-            // Build sets of in-flight IDs to distinguish "completed" from "never started"
-            const inFlightCharIds = new Set<string>();
-            const inFlightLocIds = new Set<string>();
-            for (const j of visualsInFlight) {
-              if (j.job_type === "character_image" || j.job_type === "protagonist") inFlightCharIds.add(j.target_id);
-              else if (j.job_type === "location_image") inFlightLocIds.add(j.target_id);
-            }
-
-            // Count ACTUAL completed (items with images, not in-flight).
-            // Previously: `completed = total - inFlight` — wrong! Treated never-started items as completed.
-            let actualCompleted = 0;
-            const neverStartedCharIds: string[] = [];
-            const neverStartedLocIds: string[] = [];
-            for (const char of restoredStory?.characters || []) {
-              if (inFlightCharIds.has(char.id)) continue;
-              if (hasRealImage(cleanedChars[char.id]?.image)) { actualCompleted++; }
-              else { neverStartedCharIds.push(char.id); }
-            }
-            for (const loc of restoredStory?.locations || []) {
-              if (inFlightLocIds.has(loc.id)) continue;
-              if (hasRealImage(cleanedLocs[loc.id]?.image)) { actualCompleted++; }
-              else { neverStartedLocIds.push(loc.id); }
-            }
-
-            autoGenActiveRef.current = "visuals";
-            autoGenTotalRef.current = total;
-            autoGenCompletedRef.current = actualCompleted;
-            setAutoGenProgress({ total, completed: actualCompleted, retrying: 0 });
-
-            // Determine protagonist state for protagonist-first vs parallel flow
-            const restoreProtChar = restoredStory?.characters.find(c => c.role === "protagonist") || restoredStory?.characters[0];
-            const restoreProtId = restoreProtChar?.id;
-            const protIsInFlight = restoreProtId ? inFlightCharIds.has(restoreProtId) : false;
-            const protNeedsGen = restoreProtId ? neverStartedCharIds.includes(restoreProtId) : false;
-
-            if (protIsInFlight && (neverStartedCharIds.length + neverStartedLocIds.length > 0)) {
-              // Protagonist still generating + items never started → protagonist-first flow.
-              // Phase 2 useEffect will submit remaining items when protagonist image lands.
-              autoGenPhaseRef.current = "protagonist";
-              autoGenProtagonistIdRef.current = restoreProtId!;
-              autoGenNeededIdsRef.current = { charIds: neverStartedCharIds, locIds: neverStartedLocIds, sceneNums: [] };
-            } else if (protNeedsGen) {
-              // Protagonist not in-flight but needs gen (job was lost) → submit protagonist,
-              // then phase 2 useEffect handles the rest
-              autoGenPhaseRef.current = "protagonist";
-              autoGenProtagonistIdRef.current = restoreProtId!;
-              autoGenNeededIdsRef.current = { charIds: neverStartedCharIds, locIds: neverStartedLocIds, sceneNums: [] };
-              const pChar = restoreProtChar!;
-              const pPayload = {
-                character_id: restoreProtId!, name: pChar.name, age: pChar.age,
-                gender: pChar.gender || undefined, description: pChar.appearance,
-                visual_style: restoredStyle,
-              };
-              autoGenPayloadsRef.current.set(`character_image:${restoreProtId}`, { jobType: "character_image", backendPath: "/assets/generate-character-image", payload: pPayload });
-              setCharacterImages(prev => ({ ...prev, [restoreProtId!]: { ...(prev[restoreProtId!] || CHAR_IMG_DEFAULTS), isGenerating: true, error: "" } }));
-              clearProcessedJob("character_image", restoreProtId!);
-              submitJob("character_image", "/assets/generate-character-image", pPayload, {
-                generationId: generationIdRef.current!, targetId: restoreProtId!,
-              }).catch(() => scheduleAutoRetry("character_image", restoreProtId!));
-            } else if (neverStartedCharIds.length + neverStartedLocIds.length > 0) {
-              // Protagonist has image → submit never-started items in parallel with protag ref
-              autoGenPhaseRef.current = "parallel";
-              for (const charId of neverStartedCharIds) {
-                const char = restoredStory?.characters.find(c => c.id === charId);
-                if (!char) continue;
-                const payload = {
-                  character_id: charId, name: char.name, age: char.age,
-                  gender: char.gender || undefined, description: char.appearance,
-                  visual_style: restoredStyle, ...(protRef ? { reference_image: protRef } : {}),
-                };
-                autoGenPayloadsRef.current.set(`character_image:${charId}`, { jobType: "character_image", backendPath: "/assets/generate-character-image", payload });
-                setCharacterImages(prev => ({ ...prev, [charId]: { ...(prev[charId] || CHAR_IMG_DEFAULTS), isGenerating: true, error: "" } }));
-                clearProcessedJob("character_image", charId);
-                submitJob("character_image", "/assets/generate-character-image", payload, {
-                  generationId: generationIdRef.current!, targetId: charId,
-                }).catch(() => scheduleAutoRetry("character_image", charId));
-              }
-              for (const locId of neverStartedLocIds) {
-                const loc = restoredStory?.locations.find(l => l.id === locId);
-                if (!loc) continue;
-                const payload = {
-                  location_id: locId, name: loc.name, description: loc.description,
-                  atmosphere: loc.atmosphere, visual_style: restoredStyle, ...(protRef ? { reference_image: protRef } : {}),
-                };
-                autoGenPayloadsRef.current.set(`location_image:${locId}`, { jobType: "location_image", backendPath: "/assets/generate-location-image", payload });
-                setLocationImages(prev => ({ ...prev, [locId]: { ...(prev[locId] || LOC_IMG_DEFAULTS), isGenerating: true, error: "" } }));
-                clearProcessedJob("location_image", locId);
-                submitJob("location_image", "/assets/generate-location-image", payload, {
-                  generationId: generationIdRef.current!, targetId: locId,
-                }).catch(() => scheduleAutoRetry("location_image", locId));
-              }
-            } else {
-              autoGenPhaseRef.current = "parallel";
-            }
-
-            // Build retryable payloads for in-flight jobs
             for (const j of visualsInFlight) {
               if (j.job_type === "character_image" || j.job_type === "protagonist") {
-                const char = restoredStory?.characters.find(c => c.id === j.target_id);
-                autoGenPayloadsRef.current.set(`${j.job_type}:${j.target_id}`, {
-                  jobType: j.job_type, backendPath: "/assets/generate-character-image",
-                  payload: {
-                    character_id: j.target_id, name: char?.name || "", age: char?.age || "",
-                    gender: char?.gender || "", description: char?.appearance || "",
-                    visual_style: restoredStyle,
-                    ...(j.target_id !== protId && protRef ? { reference_image: protRef } : {}),
-                  },
-                });
                 setCharacterImages(prev => ({ ...prev, [j.target_id]: { ...(prev[j.target_id] || CHAR_IMG_DEFAULTS), isGenerating: true } }));
               } else if (j.job_type === "location_image") {
-                const loc = restoredStory?.locations.find(l => l.id === j.target_id);
-                autoGenPayloadsRef.current.set(`location_image:${j.target_id}`, {
-                  jobType: "location_image", backendPath: "/assets/generate-location-image",
-                  payload: {
-                    location_id: j.target_id, name: loc?.name || "", description: loc?.description || "",
-                    atmosphere: loc?.atmosphere || "", visual_style: restoredStyle,
-                    ...(protRef ? { reference_image: protRef } : {}),
-                  },
-                });
                 setLocationImages(prev => ({ ...prev, [j.target_id]: { ...(prev[j.target_id] || LOC_IMG_DEFAULTS), isGenerating: true } }));
               }
             }
-          } else if (storyboardInFlight.length > 0) {
-            const hasDescsJob = storyboardInFlight.some(j => j.job_type === "scene_descriptions");
-            const storyScenes = restoredStory ? getScenes(restoredStory) : [];
-            const totalScenes = storyScenes.length || 8;
-            autoGenActiveRef.current = "storyboard";
-            autoGenPhaseRef.current = hasDescsJob ? "descs" : "images";
-            autoGenTotalRef.current = totalScenes;
-
-            if (hasDescsJob) {
-              // Descriptions phase: no scene images yet, completed = 0
-              autoGenCompletedRef.current = 0;
-              autoGenSceneInflightRef.current = 0;
-              setAutoGenProgress({ total: 0, completed: 0, retrying: 0 });
-            } else {
-              // Images phase: count actual completed (scenes with images, not in-flight)
-              const inFlightSceneNums = new Set(
-                storyboardInFlight.filter(j => j.job_type === "scene_image").map(j => parseInt(j.target_id))
-              );
-              let actualSceneCompleted = 0;
-              const neverStartedSceneNums: number[] = [];
-              for (const scene of storyScenes) {
-                if (inFlightSceneNums.has(scene.scene_number)) continue;
-                if (cleanedScenes[scene.scene_number]?.image && hasRealImage(cleanedScenes[scene.scene_number]?.image as MoodboardImage | null)) {
-                  actualSceneCompleted++;
-                } else {
-                  neverStartedSceneNums.push(scene.scene_number);
-                }
-              }
-              autoGenCompletedRef.current = actualSceneCompleted;
-              autoGenSceneInflightRef.current = inFlightSceneNums.size;
-              setAutoGenProgress({ total: totalScenes, completed: actualSceneCompleted, retrying: 0 });
-
-              // Queue never-started scenes for sequential batching.
-              // When current in-flight batch completes, _autoGenSubmitNextScene picks these up.
-              if (neverStartedSceneNums.length > 0) {
-                autoGenSceneQueueRef.current = neverStartedSceneNums.map(sn => ({
-                  sceneNumber: sn,
-                  visualDescription: cleanedScenes[sn]?.visualDescription || "",
-                }));
-              }
-            }
-
-            const sbApproved = restoredStory ? buildApprovedVisualsFromLocals(restoredStory, cleanedChars, cleanedLocs) : {};
+          }
+          // Mark in-flight storyboard jobs as generating
+          if (storyboardInFlight.length > 0) {
             for (const j of storyboardInFlight) {
               if (j.job_type === "scene_descriptions") {
-                autoGenPayloadsRef.current.set(`scene_descriptions:${j.target_id}`, {
-                  jobType: "scene_descriptions", backendPath: "/story/generate-scene-descriptions",
-                  payload: { story: restoredStory },
-                });
+                setIsGeneratingSceneDescs(true);
               } else {
                 const sn = parseInt(j.target_id);
-                const si = !isNaN(sn) ? cleanedScenes[sn] : undefined;
-                autoGenPayloadsRef.current.set(`scene_image:${j.target_id}`, {
-                  jobType: "scene_image", backendPath: "/moodboard/generate-scene-image",
-                  payload: {
-                    story: restoredStory, approved_visuals: sbApproved,
-                    scene_number: sn, visual_description: si?.visualDescription || "",
-                  },
-                });
+                if (!isNaN(sn)) {
+                  setSceneImages(prev => ({ ...prev, [sn]: { ...prev[sn], isGenerating: true, error: "" } }));
+                }
               }
-              const sn = parseInt(j.target_id);
-              if (!isNaN(sn)) {
-                setSceneImages(prev => ({ ...prev, [sn]: { ...prev[sn], isGenerating: true, error: "" } }));
-              }
-            }
-          } else if (clipsInFlight.length > 0) {
-            const clipScenes = restoredStory ? getScenes(restoredStory) : [];
-            const totalClips = clipScenes.length || 8;
-
-            // Count actual completed clips (have video, not in-flight)
-            const inFlightClipNums = new Set(clipsInFlight.map(j => parseInt(j.target_id)));
-            let actualClipCompleted = 0;
-            const neverStartedClipNums: number[] = [];
-            for (const scene of clipScenes) {
-              if (inFlightClipNums.has(scene.scene_number)) continue;
-              const clip = restoredClipMap[scene.scene_number];
-              if (clip?.status === "completed" && clip?.videoUrl) { actualClipCompleted++; }
-              else { neverStartedClipNums.push(scene.scene_number); }
-            }
-
-            autoGenActiveRef.current = "clips";
-            autoGenTotalRef.current = totalClips;
-            autoGenCompletedRef.current = actualClipCompleted;
-            setAutoGenProgress({ total: totalClips, completed: actualClipCompleted, retrying: 0 });
-            const clipApproved = restoredStory ? buildApprovedVisualsFromLocals(restoredStory, cleanedChars, cleanedLocs) : {};
-
-            // Submit never-started clips
-            for (const sn of neverStartedClipNums) {
-              const si = cleanedScenes[sn];
-              const storyboardImages: Record<string, any> = {};
-              if (si?.image) {
-                storyboardImages[String(sn)] = { image_base64: si.image.image_base64 || null, image_url: si.image.image_url || null, mime_type: si.image.mime_type };
-              }
-              const payload = { story: restoredStory, approved_visuals: clipApproved, storyboard_images: storyboardImages, scene_number: sn };
-              autoGenPayloadsRef.current.set(`clip:${sn}`, { jobType: "clip", backendPath: "/film/generate-clip", payload });
-              clearProcessedJob("clip", String(sn));
-              submitJob("clip", "/film/generate-clip", payload, {
-                generationId: generationIdRef.current!, targetId: String(sn),
-              }).catch(() => scheduleAutoRetry("clip", String(sn)));
-            }
-
-            // Build retryable payloads for in-flight clips
-            for (const j of clipsInFlight) {
-              const sn = parseInt(j.target_id);
-              const si = !isNaN(sn) ? cleanedScenes[sn] : undefined;
-              const storyboardImages: Record<string, any> = {};
-              if (si?.image) {
-                storyboardImages[j.target_id] = { image_base64: si.image.image_base64 || null, image_url: si.image.image_url || null, mime_type: si.image.mime_type };
-              }
-              autoGenPayloadsRef.current.set(`clip:${j.target_id}`, {
-                jobType: "clip", backendPath: "/film/generate-clip",
-                payload: { story: restoredStory, approved_visuals: clipApproved, storyboard_images: storyboardImages, scene_number: sn },
-              });
             }
           }
-        } else if (restoredStory) {
-          // ---- Gatekeeper: verify all assets are present for the current stage ----
-          // No in-flight jobs, but assets may be missing (backend crashed, job lost, etc.)
-          // If missing, activate loader and auto-regen before showing content.
-          // Re-derive stage from latest data (JSONB may be stale if save hadn't completed before refresh)
-          const restoredStage = restoredStory
-            ? (Number(s.displayedStage) || (s.clipsActive ? 3 : (s.visualsActive || Object.keys(cleanedChars).length > 0) ? 2 : 1))
-            : 1;
-          const restoredVisualsTab = (s.visualsTab as VisualsTab) || "characters";
-          const restoredStyle = (s.style as Style) || "cinematic";
-
-          if (restoredStage === 2 && (restoredVisualsTab === "characters" || restoredVisualsTab === "locations")) {
-            // Verify all chars + locs have images
-            const missingCharIds: string[] = [];
-            const missingLocIds: string[] = [];
-            for (const char of restoredStory.characters) {
-              if (!cleanedChars[char.id]?.image || !hasRealImage(cleanedChars[char.id]?.image)) {
-                missingCharIds.push(char.id);
+          // Mark in-flight clip jobs as generating
+          if (clipsInFlight.length > 0) {
+            for (const j of clipsInFlight) {
+              const sn = parseInt(j.target_id);
+              if (!isNaN(sn)) {
+                setClipStates(prev => ({ ...prev, [sn]: { ...prev[sn], status: "generating", error: null } }));
               }
-            }
-            for (const loc of restoredStory.locations) {
-              if (!cleanedLocs[loc.id]?.image || !hasRealImage(cleanedLocs[loc.id]?.image)) {
-                missingLocIds.push(loc.id);
-              }
-            }
-            if (missingCharIds.length + missingLocIds.length > 0) {
-              _restoreRegenVisuals(restoredStory, restoredStyle, missingCharIds, missingLocIds, cleanedChars);
-            }
-          } else if (restoredStage === 2 && restoredVisualsTab === "scenes") {
-            // Verify ALL expected scenes have images (iterate story scenes, not just cleanedScenes entries)
-            const storyScenes = getScenes(restoredStory);
-            const missingSceneNums: number[] = [];
-            const scenesWithoutDescs: number[] = [];
-            for (const scene of storyScenes) {
-              const si = cleanedScenes[scene.scene_number];
-              if (!si) {
-                // No entry at all — needs descriptions first
-                scenesWithoutDescs.push(scene.scene_number);
-              } else if (!si.image || !hasRealImage(si.image)) {
-                missingSceneNums.push(scene.scene_number);
-              }
-            }
-            if (scenesWithoutDescs.length > 0) {
-              // Scene descriptions missing — submit scene_descriptions job (full storyboard flow)
-              autoGenActiveRef.current = "storyboard";
-              autoGenPhaseRef.current = "descs";
-              autoGenTotalRef.current = storyScenes.length;
-              autoGenCompletedRef.current = 0;
-              setAutoGenProgress({ total: 0, completed: 0, retrying: 0 }); // total=0 hides progress bar
-              const payload = { story: restoredStory };
-              autoGenPayloadsRef.current.set("scene_descriptions:", { jobType: "scene_descriptions", backendPath: "/story/generate-scene-descriptions", payload });
-              clearProcessedJob("scene_descriptions", "");
-              submitJob("scene_descriptions", "/story/generate-scene-descriptions", payload, {
-                generationId: generationIdRef.current!, targetId: "",
-              }).catch(() => scheduleAutoRetry("scene_descriptions", ""));
-            } else if (missingSceneNums.length > 0) {
-              const approvedVis = buildApprovedVisualsFromLocals(restoredStory, cleanedChars, cleanedLocs);
-              _restoreRegenStoryboard(restoredStory, approvedVis, missingSceneNums, cleanedScenes);
-            }
-          } else if (restoredStage === 3) {
-            // Verify all clips have completed videos
-            const missingClipNums: number[] = [];
-            const scenes = getScenes(restoredStory);
-            for (const scene of scenes) {
-              const clip = restoredClipMap[scene.scene_number];
-              if (!clip || clip.status !== "completed" || !clip.videoUrl) {
-                missingClipNums.push(scene.scene_number);
-              }
-            }
-            if (missingClipNums.length > 0) {
-              const approvedVis = buildApprovedVisualsFromLocals(restoredStory, cleanedChars, cleanedLocs);
-              _restoreRegenClips(restoredStory, approvedVis, missingClipNums, cleanedScenes);
             }
           }
         }
+        // No gatekeeper auto-regen — missing assets show as empty/failed cards.
+        // User manually triggers generation via Generate / Retry buttons.
         // Clear completed/failed rows AFTER both sets have been fully processed.
         // Deferred to avoid TOCTOU: clearing before reading generating jobs could
         // destroy rows that transitioned from generating → completed during restore.
@@ -2783,7 +2329,6 @@ export default function CreateEpisodePage() {
       cost: { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
     });
     setClipsApproved(false);
-    setRegeneratingShotNum(null);
     setShotFeedback({});
     setPromptPreview({ shots: [], editedPrompts: {}, estimatedCostUsd: 0, isLoading: false });
     setClipsActive(false);
@@ -2813,7 +2358,7 @@ export default function CreateEpisodePage() {
     if (!story) return;
     setVisualsActive(true);
     setDisplayedStage(2);
-    setVisualsTab("characters");
+    setVisualsTab("lookbook");
     const gid = generationIdRef.current;
 
     // ── Step 1: Ensure a story exists in DB (auto-create if needed) ──
@@ -2933,47 +2478,9 @@ export default function CreateEpisodePage() {
 
     setCharacterImages(charStates);
     setLocationImages(locStates);
-    saveNow({ characterImages: charStates, locationImages: locStates, story: story, visualsActive: true, displayedStage: 2, visualsTab: "characters" }, "visuals");
+    saveNow({ characterImages: charStates, locationImages: locStates, story: story, visualsActive: true, displayedStage: 2, visualsTab: "lookbook" }, "visuals");
 
-    // ---- Auto-generate images for chars/locs that don't already have them ----
-    const charsNeedingGen = story.characters.filter((c) => !charStates[c.id]?.image).map((c) => c.id);
-    const locsNeedingGen = story.locations.filter((l) => !locStates[l.id]?.image).map((l) => l.id);
-    const totalNeeded = charsNeedingGen.length + locsNeedingGen.length;
-    if (totalNeeded === 0) return; // all have images from library — skip auto-gen
-
-    // Identify protagonist (role="protagonist" or first char needing gen)
-    const protagonistId = charsNeedingGen.find((id) => story.characters.find((c) => c.id === id)?.role === "protagonist") || charsNeedingGen[0];
-    if (!protagonistId) return; // shouldn't happen but guard
-
-    // Initialize auto-gen state
-    _autoGenReset();
-    autoGenActiveRef.current = "visuals";
-    autoGenPhaseRef.current = "protagonist";
-    autoGenProtagonistIdRef.current = protagonistId;
-    autoGenNeededIdsRef.current = { charIds: charsNeedingGen, locIds: locsNeedingGen, sceneNums: [] };
-    autoGenTotalRef.current = totalNeeded;
-    autoGenCompletedRef.current = 0;
-    setAutoGenProgress({ total: totalNeeded, completed: 0, retrying: 0 });
-
-    // Submit protagonist job
-    const protChar = story.characters.find((c) => c.id === protagonistId)!;
-    const protPayload = {
-      character_id: protagonistId,
-      name: protChar.name,
-      age: protChar.age,
-      gender: protChar.gender || undefined,
-      description: protChar.appearance,
-      visual_style: style,
-    };
-    const protKey = `character_image:${protagonistId}`;
-    autoGenPayloadsRef.current.set(protKey, { jobType: "character_image", backendPath: "/assets/generate-character-image", payload: protPayload });
-    setCharacterImages((prev) => ({ ...prev, [protagonistId]: { ...(prev[protagonistId] || CHAR_IMG_DEFAULTS), isGenerating: true, error: "" } }));
-    try {
-      clearProcessedJob("character_image", protagonistId);
-      await submitJob("character_image", "/assets/generate-character-image", protPayload, {
-        generationId: generationIdRef.current!, targetId: protagonistId,
-      });
-    } catch { scheduleAutoRetry("character_image", protagonistId); }
+    // No auto-generation — user triggers via "Generate All" or individual Generate buttons
   };
 
   // Character visuals modal save handler
@@ -3109,6 +2616,7 @@ export default function CreateEpisodePage() {
   // Fetch scene visual descriptions from AI
   const fetchSceneDescriptions = async () => {
     if (!story || !generationIdRef.current) return;
+    genStartedAt.current["sceneDescs"] = Date.now();
     setIsGeneratingSceneDescs(true);
     setSceneDescError("");
 
@@ -3135,31 +2643,38 @@ export default function CreateEpisodePage() {
     if (!approvedVisuals) return;
 
     // Only generate scenes that don't already have an image and aren't in progress
-    const scenes = Object.values(sceneImages).filter(s => !s.image && !s.isGenerating);
+    const scenes = Object.values(sceneImages).filter(s => !s.image && !s.isGenerating && !s.isQueued);
     if (scenes.length === 0) return;
 
-    // Mark only those scenes as generating
+    // Reset timers and track queue entry time
+    const now = Date.now();
+    for (const scene of scenes) {
+      delete sceneGenStartTimes.current[scene.sceneNumber];
+      sceneQueuedAt.current[scene.sceneNumber] = now;
+    }
+
+    // Mark scenes as queued (honest — they wait for rate limiter slots)
     setSceneImages((prev) => {
       const updated = { ...prev };
       for (const scene of scenes) {
-        updated[scene.sceneNumber] = { ...updated[scene.sceneNumber], isGenerating: true, error: "" };
+        updated[scene.sceneNumber] = { ...updated[scene.sceneNumber], isQueued: true, isGenerating: false, error: "" };
       }
       return updated;
     });
 
-    // Persist generating status to DB
+    // Persist queued status to DB (fire-and-forget — don't block job submission)
     const genId = generationIdRef.current;
     if (genId) {
-      await upsertEpisodeStoryboards(genId, scenes.map((si) => ({
-        scene_number: si.sceneNumber, status: "generating",
-      })));
+      upsertEpisodeStoryboards(genId, scenes.map((si) => ({
+        scene_number: si.sceneNumber, status: "queued",
+      }))).catch(() => { });
     }
 
     // Submit all scenes in parallel — results arrive via Realtime individually
     for (const scene of scenes) {
       clearProcessedJob("scene_image", String(scene.sceneNumber));
     }
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       scenes.map((scene) =>
         submitJob(
           "scene_image",
@@ -3171,14 +2686,24 @@ export default function CreateEpisodePage() {
             visual_description: scene.visualDescription,
           },
           { generationId: generationIdRef.current!, targetId: String(scene.sceneNumber) }
-        ).catch(() => {
-          setSceneImages((prev) => ({
-            ...prev,
-            [scene.sceneNumber]: { ...prev[scene.sceneNumber], isGenerating: false, error: "Failed to submit" },
-          }));
-        })
+        )
       )
     );
+
+    // Mark any failed submissions so they don't stay stuck in "queued"
+    const failedScenes: number[] = [];
+    results.forEach((r, i) => {
+      if (r.status === "rejected") failedScenes.push(scenes[i].sceneNumber);
+    });
+    if (failedScenes.length > 0) {
+      setSceneImages((prev) => {
+        const updated = { ...prev };
+        for (const num of failedScenes) {
+          updated[num] = { ...updated[num], isQueued: false, isGenerating: false, error: "Failed to submit — click Generate to retry" };
+        }
+        return updated;
+      });
+    }
   };
 
   // Refine a single scene image with feedback — edit-only: current image + feedback
@@ -3186,6 +2711,10 @@ export default function CreateEpisodePage() {
     if (!story) return;
     const scene = sceneImages[sceneNumber];
     if (!scene || !scene.feedback.trim() || !scene.image) return;
+
+    // Reset timer and track queue entry time
+    delete sceneGenStartTimes.current[sceneNumber];
+    sceneQueuedAt.current[sceneNumber] = Date.now();
 
     setSceneImages((prev) => ({
       ...prev,
@@ -3233,6 +2762,10 @@ export default function CreateEpisodePage() {
 
     const approvedVisuals = buildApprovedVisuals();
     if (!approvedVisuals) return;
+
+    // Reset timer and track queue entry time
+    delete sceneGenStartTimes.current[sceneNumber];
+    sceneQueuedAt.current[sceneNumber] = Date.now();
 
     setSceneImages((prev) => ({
       ...prev,
@@ -3318,105 +2851,20 @@ export default function CreateEpisodePage() {
     };
   };
 
-  // Build approved visuals from local variables (used during restore when React state isn't committed yet)
-  const buildApprovedVisualsFromLocals = (
-    storyData: Story,
-    chars: Record<string, CharacterImageState>,
-    locs: Record<string, LocationImageState>,
-  ) => {
-    type ImgRef = { image_base64: string | null; image_url: string | null; mime_type: string };
-    const allCharacterImages: ImgRef[] = [];
-    const characterImageMap: Record<string, ImgRef> = {};
-    storyData.characters.forEach((char) => {
-      const charState = chars[char.id];
-      const img = charState?.image;
-      if (img && (img.image_base64 || img.image_url)) {
-        const ref: ImgRef = { image_base64: img.image_base64 || null, image_url: img.image_url || null, mime_type: img.mime_type };
-        allCharacterImages.push(ref);
-        characterImageMap[char.id] = ref;
-      }
-    });
-    const locImages: Record<string, ImgRef> = {};
-    const locDescs: Record<string, string> = {};
-    storyData.locations.forEach((loc) => {
-      const locState = locs[loc.id];
-      const img = locState?.image;
-      if (img && (img.image_base64 || img.image_url)) {
-        locImages[loc.id] = { image_base64: img.image_base64 || null, image_url: img.image_url || null, mime_type: img.mime_type };
-      }
-      locDescs[loc.id] = `${loc.description}. ${loc.atmosphere}`;
-    });
-    let settingImg: ImgRef | undefined = undefined;
-    let settingDesc = "";
-    if (Object.keys(locImages).length > 0) {
-      const firstLocId = Object.keys(locImages)[0];
-      settingImg = locImages[firstLocId];
-      settingDesc = locDescs[firstLocId] || "";
-    }
-    return {
-      character_images: allCharacterImages,
-      character_image_map: characterImageMap,
-      setting_image: settingImg,
-      location_images: locImages,
-      character_descriptions: storyData.characters.map(
-        (char) => `${char.name} (${char.age} ${char.gender}): ${char.appearance}`
-      ),
-      setting_description: settingDesc,
-      location_descriptions: locDescs,
-    };
-  };
-
   const resetVisualDirection = () => {
-    _autoGenReset();
     setVisualsActive(false);
     setDisplayedStage(1);
-    setVisualsTab("characters");
+    setVisualsTab("lookbook");
     setCharacterImages({});
     setLocationImages({});
     setSceneImages({});
+    setStoryboardViewMode("grid");
+    setSelectedStoryboardScene(1);
+    setApprovedScenes(new Set());
+
+    sceneGenStartTimes.current = {};
+    setSceneGenElapsed({});
   };
-
-  // ---- Auto-gen phase transition: protagonist completed → trigger phase 2 ----
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (autoGenActiveRef.current !== "visuals") return;
-    if (autoGenPhaseRef.current !== "protagonist") return;
-    const protId = autoGenProtagonistIdRef.current;
-    if (!protId) return;
-    const protImg = characterImages[protId]?.image;
-    if (!protImg) return;
-    _autoGenVisualsPhase2(protImg).catch(console.error);
-  }, [characterImages]);
-
-  // ---- Auto-gen phase transition: scene descriptions ready → trigger scene image gen (SEQUENTIAL) ----
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (autoGenActiveRef.current !== "storyboard") return;
-    if (autoGenPhaseRef.current !== "descs") return;
-    const sceneCount = Object.keys(sceneImages).length;
-    if (sceneCount === 0) return;
-
-    // Descriptions are ready — queue scenes and submit the FIRST one only
-    autoGenPhaseRef.current = "images";
-
-    const scenes = Object.values(sceneImages);
-    autoGenTotalRef.current = scenes.length;
-    autoGenCompletedRef.current = 0;
-    autoGenNeededIdsRef.current = { ...autoGenNeededIdsRef.current, sceneNums: scenes.map((s) => s.sceneNumber) };
-    setAutoGenProgress({ total: scenes.length, completed: 0, retrying: 0 });
-
-    // Store all scenes in queue, submit first one
-    autoGenSceneQueueRef.current = scenes.map((s) => ({ sceneNumber: s.sceneNumber, visualDescription: s.visualDescription }));
-    _autoGenSubmitNextScene();
-
-    // Persist pending status to DB
-    const genId = generationIdRef.current;
-    if (genId) {
-      upsertEpisodeStoryboards(genId, scenes.map((s) => ({ scene_number: s.sceneNumber, status: "generating" }))).catch(() => { });
-    }
-  }, [sceneImages]);
-
-  // (old startVisualDirection removed — replaced by startBuildVisuals above)
 
 
   // ============================================================
@@ -3461,6 +2909,42 @@ export default function CreateEpisodePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storyLibraryChars, storyLibraryLocs, visualsActive]);
+
+
+
+  // Timer tracking for generating scene images
+  useEffect(() => {
+    const generating = Object.values(sceneImages).filter(s => s.isGenerating);
+    if (generating.length === 0) {
+      setSceneGenElapsed({});
+      return;
+    }
+    // Initialize start times for newly generating scenes
+    const now = Date.now();
+    for (const s of generating) {
+      if (!sceneGenStartTimes.current[s.sceneNumber]) {
+        sceneGenStartTimes.current[s.sceneNumber] = now;
+      }
+    }
+    // Clean up start times for scenes that stopped generating
+    for (const key of Object.keys(sceneGenStartTimes.current)) {
+      const num = parseInt(key);
+      if (!sceneImages[num]?.isGenerating) {
+        delete sceneGenStartTimes.current[num];
+      }
+    }
+    const interval = setInterval(() => {
+      const elapsed: Record<number, number> = {};
+      const t = Date.now();
+      for (const s of Object.values(sceneImages)) {
+        if (s.isGenerating && sceneGenStartTimes.current[s.sceneNumber]) {
+          elapsed[s.sceneNumber] = Math.floor((t - sceneGenStartTimes.current[s.sceneNumber]) / 1000);
+        }
+      }
+      setSceneGenElapsed(elapsed);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [sceneImages]);
 
   // Keep snapshotRef in sync with latest state — runs after every relevant render
   // so saveNow()/saveGeneration() always read current values instead of stale closures
@@ -3537,219 +3021,6 @@ export default function CreateEpisodePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const startFilmGeneration = async () => {
-    if (!story) return;
-
-    const approvedVisuals = buildApprovedVisuals();
-    if (!approvedVisuals) return;
-
-    // Build storyboard image map: beat_number → {image_url, mime_type}
-    const storyboardImages: Record<number, { image_url: string; mime_type: string }> = {};
-    for (const key in sceneImages) {
-      const si = sceneImages[key as unknown as number];
-      if (si?.image?.image_url) {
-        storyboardImages[si.sceneNumber] = {
-          image_url: si.image.image_url,
-          mime_type: si.image.mime_type,
-        };
-      }
-    }
-
-    setFilm({
-      filmId: null,
-      status: "generating",
-      currentShot: 0,
-      totalShots: getScenes(story).length || story.beats.length,
-      phase: "filming",
-      completedShots: [],
-      finalVideoUrl: null,
-      error: null,
-      cost: { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
-    });
-
-    try {
-      clearProcessedJob("film");
-      await submitJob(
-        "film",
-        "/film/generate",
-        {
-          story,
-          approved_visuals: approvedVisuals,
-          storyboard_images: storyboardImages,
-          generation_id: generationIdRef.current,
-        },
-        { generationId: generationIdRef.current! }
-      );
-      // Progress + completion handled by Realtime useEffect — no polling needed
-    } catch (err) {
-      setFilm((prev) => ({
-        ...prev,
-        status: "failed",
-        error: err instanceof Error ? err.message : "Failed to start film generation",
-      }));
-    }
-  };
-
-  // --- Prompt Preview (Pre-Flight Check) ---
-
-  const fetchPromptPreviews = async () => {
-    if (!story) return;
-
-    const approvedVisuals = buildApprovedVisuals();
-    if (!approvedVisuals) return;
-
-    setPromptPreview((prev) => ({ ...prev, isLoading: true }));
-
-    try {
-      clearProcessedJob("prompt_preview");
-      await submitJob(
-        "prompt_preview",
-        "/film/preview-prompts",
-        {
-          story,
-          approved_visuals: approvedVisuals,
-          beat_numbers: [],
-        },
-        { generationId: generationIdRef.current! }
-      );
-      // Result handled by Realtime useEffect
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to preview prompts");
-      setPromptPreview((prev) => ({ ...prev, isLoading: false }));
-    }
-  };
-
-  const startFilmWithEditedPrompts = async () => {
-    if (!story) return;
-
-    const approvedVisuals = buildApprovedVisuals();
-    if (!approvedVisuals) return;
-
-    // Build storyboard image map for Seedance first frames
-    const storyboardImages: Record<number, { image_url: string; mime_type: string }> = {};
-    for (const key in sceneImages) {
-      const si = sceneImages[key as unknown as number];
-      if (si?.image?.image_url) {
-        storyboardImages[si.sceneNumber] = {
-          image_url: si.image.image_url,
-          mime_type: si.image.mime_type,
-        };
-      }
-    }
-
-    // Build per-shot reference images (image_url for Seedance)
-    const editedShots = promptPreview.shots.map((shot) => {
-      const sb = storyboardImages[shot.beat_number];
-      return {
-        beat_number: shot.beat_number,
-        veo_prompt: promptPreview.editedPrompts[shot.beat_number] || shot.veo_prompt,
-        reference_image: sb ? { image_url: sb.image_url, mime_type: sb.mime_type } : null,
-      };
-    });
-
-    setFilm({
-      filmId: null,
-      status: "generating",
-      currentShot: 0,
-      totalShots: editedShots.length,
-      phase: "filming",
-      completedShots: [],
-      finalVideoUrl: null,
-      error: null,
-      cost: { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
-    });
-
-    try {
-      clearProcessedJob("film_with_prompts");
-      await submitJob(
-        "film_with_prompts",
-        "/film/generate-with-prompts",
-        {
-          story,
-          approved_visuals: approvedVisuals,
-          storyboard_images: storyboardImages,
-          edited_shots: editedShots,
-          generation_id: generationIdRef.current,
-        },
-        { generationId: generationIdRef.current! }
-      );
-      // Progress + completion handled by Realtime useEffect — no polling needed
-    } catch (err) {
-      setFilm((prev) => ({
-        ...prev,
-        status: "failed",
-        error: err instanceof Error ? err.message : "Failed to start film generation",
-      }));
-    }
-  };
-
-  const resetFilm = () => {
-    setFilm({
-      filmId: null,
-      status: "idle",
-      currentShot: 0,
-      totalShots: 0,
-      phase: "filming",
-      completedShots: [],
-      finalVideoUrl: null,
-      error: null,
-      cost: { scene_refs_usd: 0, videos_usd: 0, total_usd: 0 },
-    });
-    setClipsApproved(false);
-    setRegeneratingShotNum(null);
-    setShotFeedback({});
-  };
-
-  const regenerateShot = async (shotNumber: number) => {
-    if (!film.filmId) return;
-    const feedbackText = shotFeedback[shotNumber] || null;
-
-    setRegeneratingShotNum(shotNumber);
-
-    try {
-      clearProcessedJob("shot_regenerate", String(shotNumber));
-      await submitJob(
-        "shot_regenerate",
-        "/film/shot/regenerate",
-        { film_id: film.filmId, shot_number: shotNumber, feedback: feedbackText },
-        { generationId: generationIdRef.current!, targetId: String(shotNumber) }
-      );
-
-      // Clear feedback for this shot
-      setShotFeedback((prev) => {
-        const next = { ...prev };
-        delete next[shotNumber];
-        return next;
-      });
-      // Result handled by Realtime useEffect — no polling needed
-    } catch (err) {
-      setRegeneratingShotNum(null);
-      console.error("Regeneration failed:", err);
-    }
-  };
-
-  const resetAll = () => {
-    resetFilm();
-    resetVisualDirection();
-    setStory(null);
-    setIdea("");
-    setClipsActive(false);
-    setClipStates({});
-    setSelectedClipScene(1);
-    setAssembledVideoUrl(null);
-    assembleIntentRef.current = null;
-    setAssembleIntent(null);
-    setShowFilmPreview(false);
-    // Reset all costs
-    setTotalCost({
-      story: 0,
-      characters: 0,
-      locations: 0,
-      keyMoments: 0,
-      film: 0,
-    });
-  };
-
   // ============================================================
   // Phase 5: Per-Scene Clip Generation (Clips Stage)
   // ============================================================
@@ -3806,55 +3077,7 @@ export default function CreateEpisodePage() {
       } catch (e) { console.warn("Failed to fetch existing clips:", e); }
     }
 
-    // Auto-gen: generate ALL clips that don't already have videos
-    const scenesNeedingClips = scenes.filter((s) => {
-      // Don't regenerate clips that are already completed from DB
-      return true; // We'll check against initial state — all start as idle unless DB says otherwise
-    });
-    const clipTotal = scenes.length - existingCompleted;
-    if (clipTotal <= 0) return; // all clips already exist
-
-    const approvedVisuals = buildApprovedVisuals();
-    if (!approvedVisuals) return;
-
-    _autoGenReset();
-    autoGenActiveRef.current = "clips";
-    autoGenPhaseRef.current = "clips";
-    autoGenTotalRef.current = clipTotal;
-    autoGenCompletedRef.current = 0;
-    setAutoGenProgress({ total: clipTotal, completed: 0, retrying: 0 });
-
-    for (const scene of scenes) {
-      // Skip scenes that already have completed clips from DB
-      if (existingCompleted > 0) {
-        // Check if this scene was completed in DB (we set it above)
-        // Simple approach: re-read from initial + DB clips
-      }
-      const storyboardUrl = sceneImages[scene.scene_number]?.image?.image_url || null;
-      const payload = {
-        story,
-        approved_visuals: approvedVisuals,
-        scene_number: scene.scene_number,
-        scene,
-        storyboard_image_url: storyboardUrl,
-        generation_id: genId,
-      };
-      const key = `clip:${scene.scene_number}`;
-      autoGenPayloadsRef.current.set(key, { jobType: "clip", backendPath: "/film/generate-clip", payload });
-      setClipStates((prev) => ({
-        ...prev,
-        [scene.scene_number]: { ...prev[scene.scene_number], status: "generating", error: null },
-      }));
-      if (genId) {
-        upsertEpisodeClips(genId, [{ scene_number: scene.scene_number, status: "generating" }]).catch(() => { });
-      }
-      try {
-        clearProcessedJob("clip", String(scene.scene_number));
-        await submitJob("clip", "/film/generate-clip", payload, {
-          generationId: genId!, targetId: String(scene.scene_number),
-        });
-      } catch { scheduleAutoRetry("clip", String(scene.scene_number)); }
-    }
+    // No auto-generation of clips — user triggers individually via Generate Clip buttons
   };
 
   /** Generate a single clip for the given scene number */
@@ -3957,9 +3180,6 @@ export default function CreateEpisodePage() {
     ? getScenes(story).length > 0 && getScenes(story).every((s) => clipStates[s.scene_number]?.status === "completed")
     : false;
 
-  // Calculate grand total cost
-  const grandTotalCost = totalCost.story + totalCost.characters + totalCost.locations + totalCost.keyMoments + totalCost.film;
-
   // Helper: convert File to RefImageUpload
   const fileToRefImage = (file: File): Promise<RefImageUpload> =>
     new Promise((resolve, reject) => {
@@ -3973,19 +3193,78 @@ export default function CreateEpisodePage() {
       reader.readAsDataURL(file);
     });
 
-  // Helper: handle ref image file input for any entity
-  const handleRefImageUpload = async (
-    files: FileList | null,
-    maxCount: number,
-    setter: (imgs: RefImageUpload[]) => void,
-    existing: RefImageUpload[]
-  ) => {
-    if (!files) return;
-    const remaining = maxCount - existing.length;
-    const toProcess = Array.from(files).slice(0, remaining);
-    const newRefs = await Promise.all(toProcess.map(fileToRefImage));
-    setter([...existing, ...newRefs]);
-  };
+  // ============================================================
+  // Shared Filmstrip Component (Storyboard Scene View + Film)
+  // ============================================================
+
+  type FilmstripStatus = "approved" | "completed" | "generating" | "queued" | "failed" | "ready" | "empty";
+
+  const renderFilmstrip = (opts: {
+    scenes: { scene_number: number }[];
+    currentScene: number;
+    onSelect: (n: number) => void;
+    getStatus: (n: number) => FilmstripStatus;
+    getThumbnail: (n: number) => string | null;
+    isFilm?: boolean;
+  }) => (
+    <div className="mt-4 border-t border-white/5 pt-3 pb-1">
+      <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${opts.scenes.length}, 1fr)` }}>
+        {opts.scenes.map((scene) => {
+          const status = opts.getStatus(scene.scene_number);
+          const thumb = opts.getThumbnail(scene.scene_number);
+          const isSelected = opts.currentScene === scene.scene_number;
+          return (
+            <button
+              key={scene.scene_number}
+              onClick={() => opts.onSelect(scene.scene_number)}
+              className={`relative rounded-lg overflow-hidden transition-all ${
+                isSelected ? "ring-2 ring-[#B8B6FC] ring-offset-1 ring-offset-[#0A0A0F]"
+                : status === "generating" ? "ring-1 ring-[#9C99FF]/60"
+                : status === "queued" ? "ring-1 ring-white/20"
+                : "ring-1 ring-white/10 hover:ring-white/30"
+              }`}
+            >
+              <div className="aspect-[9/16] bg-[#13131A]">
+                {thumb ? (
+                  <img src={thumb} alt={`Scene ${scene.scene_number}`} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-white/20 text-xs font-bold">
+                    {scene.scene_number}
+                  </div>
+                )}
+              </div>
+              {/* Status overlays */}
+              {status === "approved" && (
+                <div className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center">
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><path d="M5 13l4 4L19 7" /></svg>
+                </div>
+              )}
+              {opts.isFilm && status === "completed" && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z" /></svg>
+                </div>
+              )}
+              {status === "queued" && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" className="opacity-40"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+                </div>
+              )}
+              {status === "generating" && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                  <div className="w-4 h-4 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
+              {status === "failed" && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                  <div className="w-4 h-4 rounded-full bg-red-500/80 flex items-center justify-center text-white text-[8px] font-bold">!</div>
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   // ============================================================
   // Render
@@ -4197,6 +3476,28 @@ export default function CreateEpisodePage() {
                   />
                 </div>
 
+                {/* Try these: suggestions */}
+                {!idea.trim() && !story && (
+                  <div className="mb-6">
+                    <p className="text-xs text-[#ADADAD] mb-2">Try these:</p>
+                    <div className="space-y-2">
+                      {[
+                        "A jazz musician discovers she can hear other people's memories through their music",
+                        "Two rival food truck owners are forced to share a parking spot at a music festival",
+                        "A retired astronaut receives a mysterious signal from a probe she launched 30 years ago",
+                      ].map((suggestion, i) => (
+                        <button
+                          key={i}
+                          onClick={() => setIdea(suggestion)}
+                          className="w-full text-left px-4 py-3 bg-[#262626] hover:bg-[#2a2a2a] border border-white/5 hover:border-[#B8B6FC]/30 rounded-xl text-sm text-[#ADADAD] hover:text-white transition-all"
+                        >
+                          &ldquo;{suggestion}&rdquo;
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex items-center gap-3 mb-6">
                   <span className="text-xs text-[#ADADAD] bg-[#262626] px-3 py-1.5 rounded-full">Episode Length: ~60s</span>
                 </div>
@@ -4254,7 +3555,7 @@ export default function CreateEpisodePage() {
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                       </svg>
-                      Generate Script
+                      Generate Script ~$0.05
                     </>
                   )}
                 </button>
@@ -4712,10 +4013,26 @@ export default function CreateEpisodePage() {
         {/* Section 2: Build Your Visuals */}
         {displayedStage === 2 && story && (
           <>
+            {/* Back navigation */}
+            {visualsTab === "lookbook" ? (
+              <button
+                onClick={() => { setDisplayedStage(1); saveNow({ displayedStage: 1 }); }}
+                className="text-sm text-[#ADADAD] hover:text-white transition-colors mb-4"
+              >
+                &larr; Back to Create Your Script
+              </button>
+            ) : (
+              <button
+                onClick={() => { setVisualsTab("lookbook"); saveNow({ visualsTab: "lookbook" }); }}
+                className="text-sm text-[#ADADAD] hover:text-white transition-colors mb-4"
+              >
+                &larr; Back to Lookbook
+              </button>
+            )}
             {/* Sub-tab breadcrumb navigation */}
             <div className="flex items-center gap-2 mb-6">
-              {(["characters", "locations", "scenes"] as VisualsTab[]).map((tab, idx) => {
-                const labels = { characters: "Your Characters", locations: "Your Locations", scenes: "Your Scenes" };
+              {(["lookbook", "scenes"] as VisualsTab[]).map((tab, idx) => {
+                const labels: Record<VisualsTab, string> = { lookbook: "Lookbook", scenes: "Storyboard" };
                 const isActive = visualsTab === tab;
                 return (
                   <div key={tab} className="flex items-center gap-2">
@@ -4742,229 +4059,158 @@ export default function CreateEpisodePage() {
             </div>
 
             <div className="bg-panel rounded-3xl outline outline-1 outline-panel-border p-8">
-              {/* ─── Auto-gen Loader (replaces tabs while generating) ─── */}
-              {autoGenProgress && (autoGenActiveRef.current === "visuals" || autoGenActiveRef.current === "storyboard") ? (
-                <GenerationLoader
-                  total={autoGenProgress.total}
-                  completed={autoGenProgress.completed}
-                  retrying={autoGenProgress.retrying}
-                  tips={AUTO_GEN_TIPS[autoGenActiveRef.current] || []}
-                  phase={_autoGenPhaseText()}
-                />
-              ) : (<>
-                {/* ─── Characters Tab ─── */}
-                {visualsTab === "characters" && (
+                {/* ─── Lookbook ─── */}
+                {visualsTab === "lookbook" && (() => {
+                  const protChar = story.characters.find(c => c.role === "protagonist") || story.characters[0];
+                  const protId = protChar?.id;
+                  const anyGenerating = Object.values(characterImages).some(s => s.isGenerating) || Object.values(locationImages).some(s => s.isGenerating);
+                  const needsGenCount = story.characters.filter(c => !characterImages[c.id]?.image).length + story.locations.filter(l => !locationImages[l.id]?.image).length;
+
+                  return (
                   <div>
-                    <h2 className="text-2xl font-bold text-white mb-6">Characters In This Episode</h2>
+                    {/* Header with Generate All */}
+                    <div className="flex items-center justify-between mb-6">
+                      <h2 className="text-2xl font-bold text-white">Your Cast & World</h2>
+                      {needsGenCount > 0 && (
+                        <button
+                          onClick={generateAllLookbook}
+                          disabled={anyGenerating}
+                          className="px-5 py-2.5 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
+                        >
+                          {anyGenerating ? "Generating..." : `Generate All ~$${(needsGenCount * 0.02).toFixed(2)}`}
+                        </button>
+                      )}
+                    </div>
 
-                    {/* Horizontal scrollable card row with nav arrows */}
-                    <div className="relative group/carousel">
-                      {/* Left arrow */}
-                      <button
-                        onClick={() => {
-                          const el = document.getElementById("char-scroll");
-                          if (el) el.scrollBy({ left: -280, behavior: "smooth" });
-                        }}
-                        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-panel-border border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
-                      </button>
-                      {/* Right arrow */}
-                      <button
-                        onClick={() => {
-                          const el = document.getElementById("char-scroll");
-                          if (el) el.scrollBy({ left: 280, behavior: "smooth" });
-                        }}
-                        className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-panel-border border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
-                      </button>
+                    {/* ─── Characters ─── */}
+                    <h3 className="text-sm font-semibold text-white/50 uppercase tracking-wider mb-4">Characters</h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-8">
+                      {story.characters.map((char) => {
+                        const imgState = characterImages[char.id];
+                        const hasImage = !!imgState?.image;
+                        const isProtag = char.id === protId;
+                        const hasFailed = !!imgState?.error && !imgState?.isGenerating;
+                        return (
+                          <div key={char.id} className="flex flex-col">
+                            <div className={`group relative aspect-[9/16] rounded-2xl overflow-hidden transition-all ${
+                              hasFailed ? "border-2 border-red-500/40 bg-panel-border" :
+                              hasImage ? "bg-panel-border" :
+                              "border-2 border-dashed border-white/20 bg-panel-border"
+                            }`}>
+                              {/* Completed badge */}
+                              {hasImage && (
+                                <div className="absolute top-2 right-2 z-10 w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
+                                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><path d="M5 13l4 4L19 7" /></svg>
+                                </div>
+                              )}
 
-                      <div id="char-scroll" className="flex gap-5 overflow-x-auto scrollbar-hide pb-2" style={{ scrollbarWidth: "none" }}>
-                        {story.characters.map((char) => {
-                          const imgState = characterImages[char.id];
-                          const hasImage = !!imgState?.image;
-                          return (
-                            <div key={char.id} className="flex-shrink-0 w-[160px] md:w-[220px]">
-                              <div className="group relative aspect-[9/16] bg-panel-border rounded-2xl overflow-hidden">
-                                {hasImage && imgState?.image ? (
-                                  <>
-                                    <img
-                                      src={getImageSrc(imgState.image)}
-                                      alt={char.name}
-                                      className="w-full h-full object-cover"
-                                    />
-                                    <div
-                                      className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                                      onClick={() => setEditingVisualCharId(char.id)}
-                                    >
-                                      <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
-                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
-                                          <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
-                                        </svg>
-                                      </div>
+                              {hasImage && imgState?.image ? (
+                                <>
+                                  <img src={getImageSrc(imgState.image)} alt={char.name} className="w-full h-full object-cover" />
+                                  <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" onClick={() => setEditingVisualCharId(char.id)}>
+                                    <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
                                     </div>
-                                  </>
-                                ) : imgState?.isGenerating ? (
-                                  <div className="w-full h-full flex flex-col items-center justify-center">
-                                    <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                    </svg>
-                                    <span className="text-[#ADADAD] text-xs">Generating...</span>
                                   </div>
-                                ) : (
-                                  <div
-                                    className="w-full h-full flex items-end justify-start p-4 cursor-pointer hover:bg-[#262550]/30 transition-colors"
-                                    onClick={() => setEditingVisualCharId(char.id)}
-                                  >
-                                    <button className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium rounded-full transition-colors">
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2z" /></svg>
-                                      Generate Character
-                                    </button>
+                                </>
+                              ) : imgState?.isGenerating ? (
+                                <div className="w-full h-full flex flex-col items-center justify-center">
+                                  <svg className="animate-spin h-7 w-7 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                  </svg>
+                                  <span className="text-[#ADADAD] text-xs">Generating...</span>
+                                </div>
+                              ) : hasFailed ? (
+                                <div className="w-full h-full flex flex-col items-center justify-center p-3">
+                                  <span className="text-red-400 text-xs mb-2 text-center line-clamp-2">{imgState?.error}</span>
+                                  <button onClick={() => generateSingleChar(char.id)} className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs rounded-lg transition-colors">Retry ~$0.02</button>
+                                </div>
+                              ) : (
+                                <div className="w-full h-full flex flex-col items-center justify-center p-3 cursor-pointer hover:bg-white/5 transition-colors" onClick={() => generateSingleChar(char.id)}>
+                                  <div className="w-10 h-10 rounded-full border-2 border-dashed border-white/20 flex items-center justify-center mb-2">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40"><path d="M12 5v14M5 12h14" /></svg>
                                   </div>
-                                )}
-                                {imgState?.error && (
-                                  <div className="absolute bottom-0 left-0 right-0 bg-red-500/80 px-2 py-1">
-                                    <span className="text-white text-[10px]">{imgState.error}</span>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="mt-3">
-                                <p className="text-white text-sm font-medium truncate">{char.name}</p>
-                                <p className="text-[#ADADAD] text-xs">Role: {char.role === "protagonist" ? "Main Character" : char.role === "antagonist" ? "Antagonist" : "Supporting"}</p>
-                                {hasImage && (() => {
-                                  const isSaved = char.origin === "story" || storyLibraryChars.some(c => c.name.toLowerCase() === char.name.toLowerCase());
-                                  const isSaving = savingToLibKeys.has(`character:${char.id}`);
-                                  return isSaved ? (
-                                    <span className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
-                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>
-                                      In Library
-                                    </span>
-                                  ) : (
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); handleSaveToLibrary("character", char.id); }}
-                                      disabled={isSaving}
-                                      className={`mt-1 text-[10px] flex items-center gap-1 transition-colors ${isSaving ? "text-[#ADADAD] cursor-wait" : "text-[#B8B6FC] hover:text-white"}`}
-                                    >
-                                      {isSaving ? (
-                                        <svg className="animate-spin h-[10px] w-[10px]" viewBox="0 0 24 24" fill="none">
-                                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                        </svg>
-                                      ) : (
-                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></svg>
-                                      )}
-                                      {isSaving ? "Saving..." : "Save to Library"}
-                                    </button>
-                                  );
-                                })()}
-                              </div>
+                                  <span className="text-white/40 text-xs">Generate ~$0.02</span>
+                                </div>
+                              )}
                             </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Footer navigation */}
-                    <div className="mt-10 flex items-center justify-between">
-                      <button
-                        onClick={() => {
-                          setDisplayedStage(1);
-                          saveNow({ displayedStage: 1 });
-                        }}
-                        className="text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
-                      >
-                        &larr; Back to Create Your Script
-                      </button>
-                      <button
-                        onClick={() => {
-                          setVisualsTab("locations");
-                          saveNow({ visualsTab: "locations" });
-                        }}
-                        disabled={!story?.characters.every(c => characterImages[c.id]?.image)}
-                        className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Approve &amp; Continue
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* ─── Locations Tab ─── */}
-                {visualsTab === "locations" && (
-                  <div>
-                    <h2 className="text-2xl font-bold text-white mb-6">Locations In This Episode</h2>
-
-                    <div className="relative group/carousel">
-                      <button
-                        onClick={() => {
-                          const el = document.getElementById("loc-scroll");
-                          if (el) el.scrollBy({ left: -320, behavior: "smooth" });
-                        }}
-                        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-panel-border border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
-                      </button>
-                      <button
-                        onClick={() => {
-                          const el = document.getElementById("loc-scroll");
-                          if (el) el.scrollBy({ left: 320, behavior: "smooth" });
-                        }}
-                        className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-panel-border border border-white/10 flex items-center justify-center text-white hover:bg-[#262550] transition-colors opacity-0 group-hover/carousel:opacity-100"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
-                      </button>
-
-                      <div id="loc-scroll" className="flex gap-5 overflow-x-auto scrollbar-hide pb-2" style={{ scrollbarWidth: "none" }}>
-                        {story.locations.map((loc) => {
-                          const imgState = locationImages[loc.id];
-                          const hasImage = !!imgState?.image;
-                          return (
-                            <div key={loc.id} className="flex-shrink-0 w-[160px] md:w-[220px]">
-                              <div className="group relative aspect-[9/16] bg-panel-border rounded-2xl overflow-hidden">
-                                {hasImage && imgState?.image ? (
-                                  <>
-                                    <img
-                                      src={getImageSrc(imgState.image)}
-                                      alt={loc.name || loc.description}
-                                      className="w-full h-full object-cover"
-                                    />
-                                    <div
-                                      className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                                      onClick={() => setEditingVisualLocId(loc.id)}
-                                    >
-                                      <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
-                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
-                                          <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
-                                        </svg>
-                                      </div>
-                                    </div>
-                                  </>
-                                ) : imgState?.isGenerating ? (
-                                  <div className="w-full h-full flex flex-col items-center justify-center">
-                                    <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                    </svg>
-                                    <span className="text-[#ADADAD] text-xs">Generating...</span>
-                                  </div>
+                            <div className="mt-2">
+                              <p className="text-white text-sm font-medium truncate">{char.name}</p>
+                              <p className="text-[#ADADAD] text-[11px]">{isProtag ? "Lead" : char.role === "antagonist" ? "Antagonist" : "Supporting"}</p>
+                              {hasImage && (() => {
+                                const isSaved = char.origin === "story" || storyLibraryChars.some(c => c.name.toLowerCase() === char.name.toLowerCase());
+                                const isSaving = savingToLibKeys.has(`character:${char.id}`);
+                                return isSaved ? (
+                                  <span className="text-[10px] text-emerald-400 mt-0.5 flex items-center gap-1">
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>
+                                    In Library
+                                  </span>
                                 ) : (
-                                  <div
-                                    className="w-full h-full flex items-end justify-start p-4 cursor-pointer hover:bg-[#262550]/30 transition-colors"
-                                    onClick={() => setEditingVisualLocId(loc.id)}
-                                  >
-                                    <button className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium rounded-full transition-colors">
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2z" /></svg>
-                                      Generate Location
-                                    </button>
+                                  <button onClick={(e) => { e.stopPropagation(); handleSaveToLibrary("character", char.id); }} disabled={isSaving}
+                                    className={`mt-0.5 text-[10px] flex items-center gap-1 transition-colors ${isSaving ? "text-[#ADADAD] cursor-wait" : "text-[#B8B6FC] hover:text-white"}`}>
+                                    {isSaving ? <svg className="animate-spin h-[10px] w-[10px]" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                                    : <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></svg>}
+                                    {isSaving ? "Saving..." : "Save to Library"}
+                                  </button>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* ─── Locations ─── */}
+                    <h3 className="text-sm font-semibold text-white/50 uppercase tracking-wider mb-4">Locations</h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                      {story.locations.map((loc) => {
+                        const imgState = locationImages[loc.id];
+                        const hasImage = !!imgState?.image;
+                        const hasFailed = !!imgState?.error && !imgState?.isGenerating;
+                        return (
+                          <div key={loc.id} className="flex flex-col">
+                            <div className={`group relative aspect-[9/16] rounded-2xl overflow-hidden transition-all ${
+                              hasFailed ? "border-2 border-red-500/40 bg-panel-border" :
+                              hasImage ? "bg-panel-border" :
+                              "border-2 border-dashed border-white/20 bg-panel-border"
+                            }`}>
+                              {hasImage && (
+                                <div className="absolute top-2 right-2 z-10 w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
+                                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><path d="M5 13l4 4L19 7" /></svg>
+                                </div>
+                              )}
+
+                              {hasImage && imgState?.image ? (
+                                <>
+                                  <img src={getImageSrc(imgState.image)} alt={loc.name || loc.description} className="w-full h-full object-cover" />
+                                  <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" onClick={() => setEditingVisualLocId(loc.id)}>
+                                    <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
+                                    </div>
                                   </div>
-                                )}
-                                {imgState?.error && (
-                                  <div className="absolute bottom-0 left-0 right-0 bg-red-500/80 px-2 py-1">
-                                    <span className="text-white text-[10px]">{imgState.error}</span>
+                                </>
+                              ) : imgState?.isGenerating ? (
+                                <div className="w-full h-full flex flex-col items-center justify-center">
+                                  <svg className="animate-spin h-7 w-7 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                  </svg>
+                                  <span className="text-[#ADADAD] text-xs">Generating...</span>
+                                </div>
+                              ) : hasFailed ? (
+                                <div className="w-full h-full flex flex-col items-center justify-center p-3">
+                                  <span className="text-red-400 text-xs mb-2 text-center line-clamp-2">{imgState?.error}</span>
+                                  <button onClick={() => generateSingleLoc(loc.id)} className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs rounded-lg transition-colors">Retry ~$0.02</button>
+                                </div>
+                              ) : (
+                                <div className="w-full h-full flex flex-col items-center justify-center p-3 cursor-pointer hover:bg-white/5 transition-colors" onClick={() => generateSingleLoc(loc.id)}>
+                                  <div className="w-10 h-10 rounded-full border-2 border-dashed border-white/20 flex items-center justify-center mb-2">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40"><path d="M12 5v14M5 12h14" /></svg>
                                   </div>
-                                )}
+                                  <span className="text-white/40 text-xs">Generate ~$0.02</span>
+                                </div>
+                              )}
                               </div>
                               <div className="mt-3">
                                 <p className="text-white text-sm font-medium truncate">{loc.name || "Location"}</p>
@@ -5000,53 +4246,69 @@ export default function CreateEpisodePage() {
                           );
                         })}
                       </div>
-                    </div>
 
-                    <div className="mt-10 flex items-center justify-between">
+                    {/* Lookbook footer navigation */}
+                    <div className="mt-10 flex items-center justify-end">
                       <button
                         onClick={() => {
-                          setVisualsTab("characters");
-                          saveNow({ visualsTab: "characters" });
-                        }}
-                        className="text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
-                      >
-                        &larr; Back to Your Characters
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (Object.keys(sceneImages).length === 0) {
-                            // Auto-gen storyboard: descriptions → then all scene images
-                            _autoGenReset();
-                            autoGenActiveRef.current = "storyboard";
-                            autoGenPhaseRef.current = "descs";
-                            setAutoGenProgress({ total: 0, completed: 0, retrying: 0 });
-                            setIsGeneratingSceneDescs(true);
-                            // Store payload for retry
-                            const descPayload = { story };
-                            autoGenPayloadsRef.current.set("scene_descriptions:", { jobType: "scene_descriptions", backendPath: "/story/generate-scene-descriptions", payload: descPayload });
-                            clearProcessedJob("scene_descriptions");
-                            submitJob("scene_descriptions", "/story/generate-scene-descriptions", descPayload, { generationId: generationIdRef.current! }).catch(() => {
-                              scheduleAutoRetry("scene_descriptions", "");
-                            });
-                          } else {
-                            // Scene descriptions already exist — just navigate
-                            setVisualsTab("scenes");
-                            saveNow({ visualsTab: "scenes" });
+                          setVisualsTab("scenes");
+                          saveNow({ visualsTab: "scenes" });
+                          // Auto-trigger scene descriptions if storyboard is empty
+                          if (Object.keys(sceneImages).length === 0 && !isGeneratingSceneDescs) {
+                            fetchSceneDescriptions();
                           }
                         }}
-                        disabled={!story?.locations.every(l => locationImages[l.id]?.image)}
+                        disabled={!(story?.characters.every(c => characterImages[c.id]?.image) && story?.locations.every(l => locationImages[l.id]?.image))}
                         className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Approve &amp; Continue
                       </button>
                     </div>
                   </div>
-                )}
+                  );
+                })()}
 
-                {/* ─── Scenes Tab ─── */}
+                {/* ─── Scenes Tab (Storyboard) ─── */}
                 {visualsTab === "scenes" && (
                   <div>
-                    <h2 className="text-2xl font-bold text-white mb-6">Your Episode Storyboard</h2>
+                    {/* Header: Title + View Toggle + Counter */}
+                    {(() => {
+                      const allScenes = Object.values(sceneImages);
+                      const readyCount = allScenes.filter(s => !!s.image).length;
+                      const total = allScenes.length;
+                      const hasAnyInProgress = allScenes.some(s => s.isGenerating || s.isQueued);
+                      const needsGeneration = total > 0 && readyCount < total && !hasAnyInProgress;
+                      return (
+                        <div className="flex items-center justify-between mb-6">
+                          <div>
+                            <h2 className="text-2xl font-bold text-white">
+                              Storyboard
+                            </h2>
+                            {total > 0 && (
+                              <p className="text-sm text-[#ADADAD] mt-1">{readyCount} of {total} scenes ready</p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            {needsGeneration && (
+                              <button
+                                onClick={generateAllSceneImages}
+                                className="px-5 py-2 text-sm font-medium bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-xl hover:opacity-90 transition-opacity"
+                              >
+                                Generate All Images
+                              </button>
+                            )}
+                            {total > 0 && (
+                              <button
+                                onClick={() => setStoryboardViewMode(storyboardViewMode === "grid" ? "scene" : "grid")}
+                                className="px-4 py-2 text-sm text-[#B8B6FC] border border-[#B8B6FC]/30 rounded-xl hover:bg-[#B8B6FC]/10 transition-colors"
+                              >
+                                Switch: {storyboardViewMode === "grid" ? "Scene" : "Grid"} View
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Loading scene descriptions */}
                     {isGeneratingSceneDescs && Object.keys(sceneImages).length === 0 && (
@@ -5072,139 +4334,367 @@ export default function CreateEpisodePage() {
                       </div>
                     )}
 
-                    {/* Generate All / Generate Remaining button */}
-                    {(() => {
-                      const allScenes = Object.values(sceneImages);
-                      const needGen = allScenes.filter(s => !s.image && !s.isGenerating);
-                      if (allScenes.length === 0 || needGen.length === 0) return null;
-                      const label = needGen.length === allScenes.length
-                        ? "Generate All Scene Images"
-                        : `Generate Remaining (${needGen.length})`;
+                    {/* Empty state */}
+                    {!isGeneratingSceneDescs && !sceneDescError && Object.keys(sceneImages).length === 0 && (
+                      <div className="flex flex-col items-center justify-center py-16 gap-4">
+                        <p className="text-[#ADADAD] text-sm text-center">No scene descriptions yet.</p>
+                        <button
+                          onClick={fetchSceneDescriptions}
+                          className="px-5 py-2.5 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 transition-opacity"
+                        >
+                          Generate Storyboard ~$0.05
+                        </button>
+                      </div>
+                    )}
+
+                    {/* ════════ GRID VIEW ════════ */}
+                    {storyboardViewMode === "grid" && Object.keys(sceneImages).length > 0 && (
+                      <>
+                        <p className="text-xs text-[#ADADAD]/70 text-left mb-5">
+                          Each image becomes the first frame of its scene&apos;s video. Click any card to view details and edit.
+                        </p>
+
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                          {Object.values(sceneImages)
+                            .sort((a, b) => a.sceneNumber - b.sceneNumber)
+                            .map((scene) => {
+                              const isApproved = approvedScenes.has(scene.sceneNumber);
+                              const elapsed = sceneGenElapsed[scene.sceneNumber];
+                              return (
+                                <button
+                                  key={scene.sceneNumber}
+                                  onClick={() => {
+                                    setSelectedStoryboardScene(scene.sceneNumber);
+                                    setStoryboardViewMode("scene");
+                                  }}
+                                  className={`text-left bg-[#13131A] rounded-2xl overflow-hidden flex flex-col transition-all hover:ring-1 hover:ring-[#B8B6FC]/40 ${
+                                    scene.error ? "ring-1 ring-red-500/40" : ""
+                                  }`}
+                                >
+                                  {/* Image area */}
+                                  <div className="aspect-[9/16] bg-[#0A0A0F] relative">
+                                    {/* Scene number badge */}
+                                    <div className="absolute top-2 left-2 z-10 px-2 py-0.5 rounded-full bg-black/60 text-[10px] font-bold text-white/70">
+                                      {scene.sceneNumber}
+                                    </div>
+
+                                    {scene.isQueued ? (
+                                      <div className="w-full h-full flex flex-col items-center justify-center">
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/30 mb-2"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+                                        <span className="text-white/30 text-xs">Queued</span>
+                                      </div>
+                                    ) : scene.isGenerating ? (
+                                      <div className="w-full h-full flex flex-col items-center justify-center">
+                                        <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mb-2" />
+                                        <span className="text-[#ADADAD] text-xs">{elapsed != null ? `${elapsed}s...` : "Generating..."}</span>
+                                      </div>
+                                    ) : scene.image ? (
+                                      <>
+                                        <img src={getImageSrc(scene.image)} alt={`Scene ${scene.sceneNumber}`} className="w-full h-full object-cover" />
+                                        {/* Approve checkmark */}
+                                        {isApproved && (
+                                          <div className="absolute top-2 right-2 z-10 w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><path d="M5 13l4 4L19 7" /></svg>
+                                          </div>
+                                        )}
+                                      </>
+                                    ) : scene.error ? (
+                                      <div className="w-full h-full flex flex-col items-center justify-center p-3">
+                                        <div className="w-6 h-6 rounded-full bg-red-500/20 flex items-center justify-center mb-2">
+                                          <span className="text-red-400 text-xs font-bold">!</span>
+                                        </div>
+                                        <span className="text-red-400 text-xs text-center line-clamp-2">{scene.error}</span>
+                                      </div>
+                                    ) : (
+                                      <div className="w-full h-full flex flex-col items-center justify-center p-3">
+                                        <div className="w-10 h-10 rounded-full border-2 border-dashed border-white/15 flex items-center justify-center mb-2">
+                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/30"><path d="M12 5v14M5 12h14" /></svg>
+                                        </div>
+                                        <span className="text-white/20 text-[10px]">No image</span>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Card label */}
+                                  <div className="p-3">
+                                    <h4 className="text-white text-xs font-semibold truncate">
+                                      Scene {scene.sceneNumber} &mdash; {scene.title}
+                                    </h4>
+                                    <p className="text-[#ADADAD] text-[10px] mt-0.5">{scene.visualDescription}</p>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                        </div>
+                      </>
+                    )}
+
+                    {/* ════════ SCENE VIEW ════════ */}
+                    {storyboardViewMode === "scene" && Object.keys(sceneImages).length > 0 && (() => {
+                      const sortedScenes = Object.values(sceneImages).sort((a, b) => a.sceneNumber - b.sceneNumber);
+                      const sceneIdx = sortedScenes.findIndex(s => s.sceneNumber === selectedStoryboardScene);
+                      const currentScene = sortedScenes[sceneIdx >= 0 ? sceneIdx : 0];
+                      if (!currentScene) return null;
+                      const canGoPrev = sceneIdx > 0;
+                      const canGoNext = sceneIdx < sortedScenes.length - 1;
+
+                      // Get scene metadata from story
+                      const storyScenes = story ? getScenes(story) : [];
+                      const storyScene = storyScenes.find(s => s.scene_number === currentScene.sceneNumber);
+                      const locationName = storyScene && story ? (story.locations.find(l => l.id === storyScene.setting_id)?.name || "") : "";
+                      const charsOnScreen = storyScene?.characters_on_screen || [];
+
+                      // Resolve character/location images for display (match by name OR id)
+                      const charImagesForScene = charsOnScreen.map(cName => {
+                        const lower = cName.toLowerCase();
+                        const char = story?.characters.find(c =>
+                          c.name.toLowerCase() === lower || c.id.toLowerCase() === lower
+                        );
+                        const img = char ? characterImages[char.id]?.image : null;
+                        return { name: char?.name || cName, img };
+                      });
+                      const locObj = storyScene && story ? story.locations.find(l => l.id === storyScene.setting_id) : null;
+                      const locImg = locObj ? locationImages[locObj.id]?.image : null;
+
                       return (
-                        <div className="text-center mb-6">
-                          <button
-                            onClick={generateAllSceneImages}
-                            className="px-8 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-semibold hover:opacity-90 transition-opacity"
-                          >
-                            {label}
-                          </button>
+                        <div className="max-w-2xl mx-auto">
+                          {/* Prev / Next navigation */}
+                          <div className="flex items-center justify-center gap-6 mb-6">
+                            <button
+                              onClick={() => { if (canGoPrev) { setSelectedStoryboardScene(sortedScenes[sceneIdx - 1].sceneNumber); setEditingDesc(false); setEditImageOpen(false); } }}
+                              disabled={!canGoPrev}
+                              className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center text-white/50 hover:text-white hover:border-white/30 disabled:text-white/10 disabled:border-white/5 disabled:cursor-not-allowed transition-all"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>
+                            </button>
+                            <div className="text-center">
+                              <span className="text-white/40 text-xs font-medium tracking-wider uppercase">Scene</span>
+                              <span className="text-white text-sm font-semibold ml-1.5">{currentScene.sceneNumber}</span>
+                              <span className="text-white/30 text-xs ml-1">/ {sortedScenes.length}</span>
+                            </div>
+                            <button
+                              onClick={() => { if (canGoNext) { setSelectedStoryboardScene(sortedScenes[sceneIdx + 1].sceneNumber); setEditingDesc(false); setEditImageOpen(false); } }}
+                              disabled={!canGoNext}
+                              className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center text-white/50 hover:text-white hover:border-white/30 disabled:text-white/10 disabled:border-white/5 disabled:cursor-not-allowed transition-all"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
+                            </button>
+                          </div>
+
+                          {/* Large centered storyboard image */}
+                          <div className="flex justify-center mb-6">
+                            <div className="w-full max-w-[380px] aspect-[9/16] relative overflow-hidden rounded-2xl bg-[#0A0A0F] shadow-2xl shadow-black/40">
+                              {currentScene.isQueued ? (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/30 mb-3"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+                                  <p className="text-white/40 text-sm">Queued</p>
+                                  <p className="text-white/20 text-xs mt-1">Waiting for slot...</p>
+                                </div>
+                              ) : currentScene.isGenerating ? (
+                                <>
+                                  {currentScene.image && (
+                                    <img src={getImageSrc(currentScene.image)} className="absolute inset-0 w-full h-full object-cover blur-sm opacity-30" alt="" />
+                                  )}
+                                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                    <div className="w-10 h-10 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mb-3" />
+                                    <p className="text-white/60 text-sm">Generating...</p>
+                                    {sceneGenElapsed[currentScene.sceneNumber] != null && (
+                                      <p className="text-white/30 text-xs mt-1">{sceneGenElapsed[currentScene.sceneNumber]}s</p>
+                                    )}
+                                  </div>
+                                </>
+                              ) : currentScene.image ? (
+                                <img src={getImageSrc(currentScene.image)} alt={`Scene ${currentScene.sceneNumber}`} className="w-full h-full object-cover" />
+                              ) : currentScene.error ? (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center p-6">
+                                  <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mb-3">
+                                    <svg className="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                  </div>
+                                  <p className="text-red-400 text-sm font-medium mb-1">Generation Failed</p>
+                                  <p className="text-white/30 text-xs text-center">{currentScene.error}</p>
+                                </div>
+                              ) : (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                  <div className="w-14 h-14 rounded-full border-2 border-dashed border-white/10 flex items-center justify-center mb-3">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/20"><path d="M12 5v14M5 12h14" /></svg>
+                                  </div>
+                                  <p className="text-white/20 text-sm">No image</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Scene title + Edit desc button */}
+                          <div className="flex items-start justify-between mb-3">
+                            <h3 className="text-white text-lg font-semibold">
+                              {currentScene.title}
+                            </h3>
+                            {!currentScene.isGenerating && (
+                              <button
+                                onClick={() => setEditingDesc(!editingDesc)}
+                                className="ml-3 mt-0.5 p-1.5 rounded-lg text-white/30 hover:text-white/70 hover:bg-white/5 transition-all"
+                                title="Edit description"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="opacity-70"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Description */}
+                          {editingDesc ? (
+                            <>
+                              <textarea
+                                value={currentScene.visualDescription}
+                                onChange={(e) => setSceneImages(prev => ({
+                                  ...prev,
+                                  [currentScene.sceneNumber]: { ...prev[currentScene.sceneNumber], visualDescription: e.target.value },
+                                }))}
+                                rows={3}
+                                className="w-full bg-[#0A0A0F] text-[#ADADAD] text-sm leading-relaxed rounded-xl px-4 py-3 mb-3 placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]/50 border border-white/10 resize-none"
+                              />
+                              <div className="flex items-center gap-3 mb-4">
+                                <button
+                                  onClick={() => {
+                                    fetchSceneDescriptions();
+                                  }}
+                                  disabled={isGeneratingSceneDescs}
+                                  className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 disabled:text-emerald-400/40 text-xs font-medium transition-colors"
+                                >
+                                  {isGeneratingSceneDescs ? (
+                                    <div className="w-3.5 h-3.5 border border-emerald-400/40 border-t-transparent rounded-full animate-spin" />
+                                  ) : (
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6M23 20v-6h-6" /><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" /></svg>
+                                  )}
+                                  {isGeneratingSceneDescs ? "Regenerating..." : "Regenerate with AI"}
+                                </button>
+                                <button
+                                  onClick={() => setEditingDesc(false)}
+                                  className="flex items-center gap-1.5 text-[#B8B6FC] hover:text-[#B8B6FC]/80 text-xs font-medium transition-colors"
+                                >
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 13l4 4L19 7" /></svg>
+                                  Use this description
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-[#ADADAD] text-sm leading-relaxed mb-2">
+                                &ldquo;{currentScene.visualDescription}&rdquo;
+                              </p>
+                              <div className="mb-2" />
+                            </>
+                          )}
+
+                          {/* Characters + Location — clean labeled text with inline avatars */}
+                          <div className="flex flex-col gap-1.5 mb-5 text-sm">
+                            {charImagesForScene.length > 0 && (
+                              <div className="flex items-center gap-2">
+                                <span className="text-white/30">Characters:</span>
+                                <div className="flex items-center gap-2">
+                                  {charImagesForScene.map(({ name, img }) => (
+                                    <span key={name} className="flex items-center gap-1.5">
+                                      {img && <img src={getImageSrc(img)} alt={name} className="w-5 h-5 rounded-full object-cover" />}
+                                      <span className="text-white/70">{name}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {locObj && (
+                              <div className="flex items-center gap-2">
+                                <span className="text-white/30">Location:</span>
+                                <span className="flex items-center gap-1.5">
+                                  {locImg && <img src={getImageSrc(locImg)} alt={locationName} className="w-5 h-5 rounded-full object-cover" />}
+                                  <span className="text-white/70">{locationName}</span>
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Edit image feedback — shown when Edit Image is clicked */}
+                          {editImageOpen && currentScene.image && !currentScene.isGenerating && (
+                            <input
+                              type="text"
+                              value={currentScene.feedback}
+                              onChange={(e) => setSceneImages(prev => ({
+                                ...prev,
+                                [currentScene.sceneNumber]: { ...prev[currentScene.sceneNumber], feedback: e.target.value },
+                              }))}
+                              placeholder="Make the lighting warmer, add more shadows..."
+                              autoFocus
+                              className="w-full bg-[#0A0A0F] text-white text-sm rounded-xl px-4 py-2.5 mb-4 placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]/50 border border-white/10"
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && currentScene.feedback.trim()) {
+                                  refineSceneImage(currentScene.sceneNumber);
+                                  setEditImageOpen(false);
+                                }
+                              }}
+                            />
+                          )}
+
+                          {/* Action buttons */}
+                          <div className="flex gap-2.5 mb-5">
+                            {!currentScene.isGenerating && !currentScene.isQueued && (
+                              <button
+                                onClick={() => regenerateSceneImage(currentScene.sceneNumber)}
+                                className={`h-10 px-5 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+                                  currentScene.image
+                                    ? "bg-white/5 text-white/70 hover:bg-white/10 hover:text-white border border-white/10"
+                                    : "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white hover:opacity-90"
+                                }`}
+                              >
+                                {currentScene.image ? (
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6M23 20v-6h-6" /><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" /></svg>
+                                ) : (
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></svg>
+                                )}
+                                {currentScene.image ? "Regenerate Image" : "Generate Image"}
+                              </button>
+                            )}
+                            {currentScene.image && !currentScene.isGenerating && (
+                              <button
+                                onClick={() => {
+                                  if (!editImageOpen) {
+                                    setEditImageOpen(true);
+                                  } else {
+                                    if (currentScene.feedback.trim()) {
+                                      refineSceneImage(currentScene.sceneNumber);
+                                      setEditImageOpen(false);
+                                    }
+                                  }
+                                }}
+                                disabled={editImageOpen && !currentScene.feedback.trim()}
+                                className="h-10 px-5 rounded-xl text-sm font-medium bg-white/5 text-white/70 hover:bg-white/10 hover:text-white border border-white/10 transition-all disabled:opacity-25 disabled:cursor-not-allowed flex items-center gap-2"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
+                                Edit Image
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Filmstrip */}
+                          {renderFilmstrip({
+                            scenes: sortedScenes.map(s => ({ scene_number: s.sceneNumber })),
+                            currentScene: selectedStoryboardScene,
+                            onSelect: (n) => { setSelectedStoryboardScene(n); setEditingDesc(false); setEditImageOpen(false); },
+                            getStatus: (n) => sceneImages[n]?.isQueued ? "queued"
+                              : sceneImages[n]?.isGenerating ? "generating"
+                              : sceneImages[n]?.error ? "failed"
+                              : sceneImages[n]?.image ? "completed"
+                              : "empty",
+                            getThumbnail: (n) => sceneImages[n]?.image ? getImageSrc(sceneImages[n].image!) : null,
+                          })}
                         </div>
                       );
                     })()}
 
-                    {/* Storyboard tip */}
-                    {Object.keys(sceneImages).length > 0 && (
-                      <p className="text-xs text-[#ADADAD]/70 text-left mb-5">
-                        Tip: Keep an eye out for visual glitches like morphing hands, impossible physics, or melting objects. Regenerate any scene that looks off before filming.
-                      </p>
-                    )}
-
-                    {/* Scene grid (4x2) */}
-                    {Object.keys(sceneImages).length > 0 && (
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-                        {Object.values(sceneImages)
-                          .sort((a, b) => a.sceneNumber - b.sceneNumber)
-                          .map((scene) => (
-                            <div key={scene.sceneNumber} className="bg-panel-border rounded-2xl overflow-hidden">
-                              <div className="aspect-[9/16] bg-[#0A0A0F] relative">
-                                {scene.isGenerating ? (
-                                  <div className="w-full h-full flex flex-col items-center justify-center">
-                                    <svg className="animate-spin h-6 w-6 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                    </svg>
-                                    <span className="text-[#ADADAD] text-[10px]">Generating...</span>
-                                  </div>
-                                ) : scene.image ? (
-                                  <img
-                                    src={getImageSrc(scene.image)}
-                                    alt={`Scene ${scene.sceneNumber}`}
-                                    className="w-full h-full object-cover"
-                                  />
-                                ) : (
-                                  <div className="w-full h-full flex flex-col items-center justify-center p-3 gap-2">
-                                    {scene.error ? (
-                                      <span className="text-red-400 text-[10px] text-center">{scene.error}</span>
-                                    ) : (
-                                      <span className="text-white/20 text-xs">No image</span>
-                                    )}
-                                    <button
-                                      onClick={() => regenerateSceneImage(scene.sceneNumber)}
-                                      className="px-3 py-1.5 bg-[#B8B6FC]/20 text-[#B8B6FC] text-[10px] font-medium rounded-lg border border-[#B8B6FC]/30 hover:bg-[#B8B6FC]/30 transition-colors"
-                                    >
-                                      {scene.error ? "Regenerate" : "Generate"}
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="p-3">
-                                <h4 className="text-white text-xs font-semibold mb-1">
-                                  Scene {scene.sceneNumber} Shot &mdash; {scene.title}
-                                </h4>
-                                <p className={`text-[#ADADAD] text-[10px] ${expandedSceneDescs.has(scene.sceneNumber) ? "" : "line-clamp-3"}`}>{scene.visualDescription}</p>
-                                {scene.visualDescription && scene.visualDescription.length > 120 && (
-                                  <button
-                                    onClick={() => setExpandedSceneDescs(prev => {
-                                      const next = new Set(prev);
-                                      if (next.has(scene.sceneNumber)) next.delete(scene.sceneNumber);
-                                      else next.add(scene.sceneNumber);
-                                      return next;
-                                    })}
-                                    className="text-[#B8B6FC] text-[10px] mb-2 hover:underline"
-                                  >
-                                    {expandedSceneDescs.has(scene.sceneNumber) ? "Show less" : "Read more"}
-                                  </button>
-                                )}
-                                {(!scene.visualDescription || scene.visualDescription.length <= 120) && <div className="mb-2" />}
-                                {scene.image && !scene.isGenerating && (
-                                  <div className="space-y-2">
-                                    <input
-                                      type="text"
-                                      value={scene.feedback}
-                                      onChange={(e) => setSceneImages(prev => ({
-                                        ...prev,
-                                        [scene.sceneNumber]: { ...prev[scene.sceneNumber], feedback: e.target.value },
-                                      }))}
-                                      placeholder="Your feedback to refine this scene shot"
-                                      className="w-full bg-[#0A0A0F] text-white text-[10px] rounded-lg px-2 py-1.5 placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                                    />
-                                    <div className="flex gap-2">
-                                      <button
-                                        onClick={() => refineSceneImage(scene.sceneNumber)}
-                                        disabled={!scene.feedback.trim()}
-                                        className="flex-1 py-1.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-medium rounded-lg border border-emerald-500/30 hover:bg-emerald-500/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                                      >
-                                        Refine This Shot
-                                      </button>
-                                      <button
-                                        onClick={() => regenerateSceneImage(scene.sceneNumber)}
-                                        className="flex-1 py-1.5 bg-[#B8B6FC] text-black text-[10px] font-medium rounded-lg hover:opacity-90 transition-opacity"
-                                      >
-                                        Regenerate
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                      </div>
-                    )}
-
-                    <div className="mt-10 flex items-center justify-between">
-                      <button
-                        onClick={() => {
-                          setVisualsTab("locations");
-                          saveNow({ visualsTab: "locations" });
-                        }}
-                        className="text-sm text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
-                      >
-                        &larr; Back to Your Locations
-                      </button>
+                    {/* Footer navigation */}
+                    <div className="mt-10 flex items-center justify-end">
                       <button
                         onClick={() => {
                           if (clipsActive) {
-                            // Clip data already exists — just navigate back
                             setDisplayedStage(3);
                             saveNow({ displayedStage: 3 });
                           } else {
@@ -5214,12 +4704,11 @@ export default function CreateEpisodePage() {
                         disabled={!Object.values(sceneImages).every(s => s.image)}
                         className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        {clipsActive ? "Back to Video" : "Approve & Continue"}
+                        {clipsActive ? "Back to Video" : "Approve All & Continue"}
                       </button>
                     </div>
                   </div>
                 )}
-              </>)}
             </div>
           </>
         )}
@@ -5259,6 +4748,7 @@ export default function CreateEpisodePage() {
             characterId={editingVisualCharId}
             generatingError={characterImages[editingVisualCharId]?.error || null}
             onGenerationStarted={() => {
+              clearProcessedJob("character_image", editingVisualCharId);
               setCharacterImages((prev) => ({
                 ...prev,
                 [editingVisualCharId]: {
@@ -5301,6 +4791,7 @@ export default function CreateEpisodePage() {
             locationId={editingVisualLocId}
             generatingError={locationImages[editingVisualLocId]?.error || null}
             onGenerationStarted={() => {
+              clearProcessedJob("location_image", editingVisualLocId);
               setLocationImages((prev) => ({
                 ...prev,
                 [editingVisualLocId]: {
@@ -5315,10 +4806,16 @@ export default function CreateEpisodePage() {
         {/* Section 3: Create Your Video (3-Pane Clips UI) */}
         {displayedStage === 3 && story && (() => {
           const scenes = getScenes(story);
-          const currentScene = scenes.find((s) => s.scene_number === selectedClipScene) || scenes[0];
+          const sceneIdx = scenes.findIndex((s) => s.scene_number === selectedClipScene);
+          const currentScene = scenes[sceneIdx >= 0 ? sceneIdx : 0];
           const currentClip = clipStates[selectedClipScene];
           const locationName = story.locations.find((l) => l.id === currentScene?.setting_id)?.name || currentScene?.setting_id || "";
           const storyboardImg = sceneImages[selectedClipScene]?.image;
+          const completedCount = scenes.filter((s) => clipStates[s.scene_number]?.status === "completed").length;
+          const totalDuration = completedCount * 8;
+          const maxDuration = scenes.length * 8;
+          const canGoPrev = sceneIdx > 0;
+          const canGoNext = sceneIdx < scenes.length - 1;
 
           return (
             <div>
@@ -5330,451 +4827,315 @@ export default function CreateEpisodePage() {
                 &larr; Back to Visuals
               </button>
 
-              {autoGenProgress && autoGenActiveRef.current === "clips" ? (
-                <GenerationLoader
-                  total={autoGenProgress.total}
-                  completed={autoGenProgress.completed}
-                  retrying={autoGenProgress.retrying}
-                  tips={AUTO_GEN_TIPS.clips}
-                  phase={_autoGenPhaseText()}
-                />
-              ) : (<>
-                {/* Video tip */}
-                <p className="text-xs text-[#ADADAD]/70 text-center mb-4">
-                  Tip: Some clips may need regenerating to ensure consistency before they're ready for the final edit.
-                </p>
-
-                <div className="flex flex-col md:flex-row gap-0 bg-panel rounded-2xl md:rounded-3xl outline outline-1 outline-panel-border overflow-hidden md:h-[calc(100vh-220px)] md:min-h-[500px]">
-
-                  {/* === MOBILE SCENE STRIP (horizontal, shown only on mobile) === */}
-                  <div className="md:hidden flex gap-2 overflow-x-auto scrollbar-hide px-3 py-3 bg-[#0A0A0F] border-b border-white/5">
-                    {scenes.map((scene) => {
-                      const clip = clipStates[scene.scene_number];
-                      const isSelected = selectedClipScene === scene.scene_number;
-                      const sbImg = sceneImages[scene.scene_number]?.image;
-                      return (
-                        <button
-                          key={scene.scene_number}
-                          onClick={() => setSelectedClipScene(scene.scene_number)}
-                          className={`relative flex-shrink-0 w-12 rounded-lg overflow-hidden transition-all ${isSelected ? "ring-2 ring-[#B8B6FC] ring-offset-1 ring-offset-[#0A0A0F]"
-                            : clip?.status === "generating" ? "ring-1 ring-[#9C99FF] animate-pulse"
-                              : "ring-1 ring-white/10"
-                            }`}
-                        >
-                          <div className="aspect-[9/16] bg-panel-border">
-                            {sbImg ? (
-                              <img
-                                src={getImageSrc(sbImg)}
-                                alt={`Scene ${scene.scene_number}`}
-                                className="w-full h-full object-cover"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-white/20 text-xs font-bold">{scene.scene_number}</div>
-                            )}
-                          </div>
-                          {clip?.status === "completed" && (
-                            <div className="absolute top-0.5 right-0.5 w-3 h-3 rounded-full bg-emerald-500" />
-                          )}
-                          {clip?.status === "failed" && (
-                            <div className="absolute top-0.5 right-0.5 w-3 h-3 rounded-full bg-red-500" />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* === MOBILE VIDEO PREVIEW (shown only on mobile, above script) === */}
-                  <div className="md:hidden flex flex-col items-center bg-black p-4">
-                    <div className="w-full max-w-[280px] aspect-[9/16] relative overflow-hidden rounded-xl">
-                      {currentClip?.status === "completed" && currentClip.videoUrl ? (
-                        <video
-                          key={currentClip.videoUrl}
-                          controls
-                          playsInline
-                          className="absolute inset-0 w-full h-full object-cover"
-                          src={resolveVideoUrl(currentClip.videoUrl)}
-                        />
-                      ) : currentClip?.status === "generating" ? (
-                        <>
-                          {(() => {
-                            const sbImg = sceneImages[selectedClipScene]?.image; return sbImg ? (
-                              <img src={getImageSrc(sbImg)} className="absolute inset-0 w-full h-full object-cover blur-sm" />
-                            ) : null;
-                          })()}
-                          <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center gap-2">
-                            <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
-                            <p className="text-white/60 text-xs">Generating...</p>
-                          </div>
-                        </>
-                      ) : (
-                        (() => {
-                          const sbImg = sceneImages[selectedClipScene]?.image; return sbImg ? (
-                            <img src={getImageSrc(sbImg)} className="absolute inset-0 w-full h-full object-cover" />
-                          ) : (
-                            <div className="absolute inset-0 flex items-center justify-center bg-panel-border">
-                              <p className="text-white/30 text-sm">No storyboard</p>
-                            </div>
-                          );
-                        })()
-                      )}
-                    </div>
-                  </div>
-
-                  {/* === LEFT PANE: Script + Generate (max 50% on desktop) === */}
-                  <div className="flex-1 min-w-0 p-4 md:p-5 md:overflow-y-auto border-b md:border-b-0 md:border-r border-white/5 md:max-w-[50%]">
-                    {currentScene && (
-                      <>
-                        {/* Scene heading */}
-                        {currentScene.scene_heading && (
-                          <p className="text-white/50 text-xs font-mono mb-3 tracking-wider">{currentScene.scene_heading}</p>
-                        )}
-
-                        {/* Location + Scene number + Edit icon */}
-                        <div className="flex items-center gap-2 mb-3">
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-white/50">{locationName}</span>
-                          <span className="text-white/30 text-xs">Scene {currentScene.scene_number}</span>
-                          <button
-                            onClick={() => {
-                              const idx = scenes.findIndex((s) => s.scene_number === selectedClipScene);
-                              if (idx >= 0) {
-                                setEditingSceneIndex(idx);
-                                setEditSceneDraft({ ...currentScene });
-                              }
-                            }}
-                            className="ml-auto w-7 h-7 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors"
-                            title="Edit dialogue"
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="#B8B6FC">
-                              <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
-                            </svg>
-                          </button>
-                        </div>
-
-                        {/* Action */}
-                        {currentScene.action && (
-                          <div className="text-white/70 text-sm italic mb-3 leading-relaxed space-y-0.5">
-                            {splitActionLines(currentScene.action).map((line, li) => (
-                              <p key={li}>{line}</p>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Dialogue — inline editable lines */}
-                        {currentScene.dialogue && (
-                          <div className="mb-4 space-y-1">
-                            {(() => {
-                              const isEditing = editingSceneIndex !== null && editSceneDraft && editingSceneIndex === scenes.findIndex((s) => s.scene_number === selectedClipScene);
-                              const dialogueLines = currentScene.dialogue.split("\n").filter(Boolean);
-                              return dialogueLines.map((line, li) => {
-                                const colonIdx = line.indexOf(":");
-                                const charName = colonIdx > 0 ? line.slice(0, colonIdx).trim() : "";
-                                const lineText = colonIdx > 0 ? line.slice(colonIdx + 1).trim() : line.trim();
-                                return (
-                                  <div key={li} className="text-[#ADADAD] text-sm">
-                                    {charName && <span className="text-white font-medium">{charName}: </span>}
-                                    {isEditing ? (
-                                      <input
-                                        value={(() => {
-                                          const draftLines = (editSceneDraft.dialogue || "").split("\n").filter(Boolean);
-                                          const dl = draftLines[li];
-                                          if (!dl) return lineText;
-                                          const ci = dl.indexOf(":");
-                                          return ci > 0 ? dl.slice(ci + 1).trim() : dl.trim();
-                                        })()}
-                                        onChange={(e) => {
-                                          const draftLines = (editSceneDraft.dialogue || "").split("\n").filter(Boolean);
-                                          // Rebuild this line preserving the character name
-                                          const dl = draftLines[li] || line;
-                                          const ci = dl.indexOf(":");
-                                          const cn = ci > 0 ? dl.slice(0, ci).trim() : "";
-                                          draftLines[li] = cn ? `${cn}: ${e.target.value}` : e.target.value;
-                                          setEditSceneDraft({ ...editSceneDraft, dialogue: draftLines.join("\n") });
-                                        }}
-                                        className="inline-block bg-[#262626] text-[#ADADAD] text-sm rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] w-[calc(100%-100px)]"
-                                      />
-                                    ) : (
-                                      <>&ldquo;{lineText}&rdquo;</>
-                                    )}
-                                  </div>
-                                );
-                              });
-                            })()}
-                          </div>
-                        )}
-
-                        {/* Characters in this scene */}
-                        {(currentScene.characters_on_screen || []).length > 0 && (
-                          <div className="mb-4 pt-3 border-t border-white/5">
-                            <p className="text-[10px] text-white/40 uppercase tracking-wider mb-2">Characters in Scene</p>
-                            <div className="flex flex-wrap gap-2">
-                              {currentScene.characters_on_screen.map((charId) => {
-                                const char = story.characters.find((c) => c.id === charId);
-                                const charImg = characterImages[charId]?.image;
-                                return (
-                                  <div key={charId} className="flex items-center gap-1.5">
-                                    {charImg ? (
-                                      <img
-                                        src={getImageSrc(charImg)}
-                                        alt={char?.name}
-                                        className="w-8 h-11 rounded object-cover"
-                                      />
-                                    ) : (
-                                      <div className="w-8 h-11 rounded bg-white/10 flex items-center justify-center text-[8px] text-white/30">?</div>
-                                    )}
-                                    <span className="text-white/60 text-xs">{char?.name || charId}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-
-                        {/* Edit mode — dialogue lines only (storyboards already generated) */}
-                        {editingSceneIndex !== null && editSceneDraft && editingSceneIndex === scenes.findIndex((s) => s.scene_number === selectedClipScene) && (
-                          <div className="flex gap-2 mb-4">
-                            <button
-                              onClick={() => saveSceneEdit(editingSceneIndex, editSceneDraft)}
-                              className="px-3 py-1.5 bg-[#B8B6FC] text-black text-xs font-medium rounded-lg hover:opacity-90"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={() => { setEditingSceneIndex(null); setEditSceneDraft(null); }}
-                              className="px-3 py-1.5 bg-[#262626] text-[#ADADAD] text-xs rounded-lg hover:text-white"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Generate / Regenerate button */}
-                        <button
-                          onClick={() => generateClip(selectedClipScene)}
-                          disabled={currentClip?.status === "generating"}
-                          className="w-full py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                        >
-                          {currentClip?.status === "generating" ? (
-                            <>
-                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                              Generating...
-                            </>
-                          ) : currentClip?.status === "completed" ? (
-                            "Regenerate Scene"
-                          ) : currentClip?.status === "failed" ? (
-                            "Retry Scene"
-                          ) : (
-                            "Generate Scene"
-                          )}
-                        </button>
-                      </>
-                    )}
-                  </div>
-
-                  {/* === MIDDLE PANE: Scene Navigation (80px, desktop only) === */}
-                  <div className="hidden md:block w-20 flex-shrink-0 py-3 px-1.5 overflow-y-auto scrollbar-hide bg-[#0A0A0F] space-y-2">
-                    {scenes.map((scene) => {
-                      const clip = clipStates[scene.scene_number];
-                      const isSelected = selectedClipScene === scene.scene_number;
-                      const sbImg = sceneImages[scene.scene_number]?.image;
-                      const isGenerating = clip?.status === "generating";
-                      const isCompleted = clip?.status === "completed";
-                      const isFailed = clip?.status === "failed";
-
-                      return (
-                        <button
-                          key={scene.scene_number}
-                          onClick={() => setSelectedClipScene(scene.scene_number)}
-                          className={`relative w-full rounded-lg overflow-hidden transition-all ${isSelected
-                            ? "ring-2 ring-[#B8B6FC] ring-offset-1 ring-offset-[#0A0A0F]"
-                            : isGenerating
-                              ? "ring-1 ring-[#9C99FF] animate-pulse"
-                              : "ring-1 ring-white/10 hover:ring-white/30"
-                            }`}
-                        >
-                          {/* Thumbnail (9:16) */}
-                          <div className="aspect-[9/16] bg-panel-border">
-                            {sbImg ? (
-                              <img
-                                src={getImageSrc(sbImg)}
-                                alt={`Scene ${scene.scene_number}`}
-                                className="w-full h-full object-cover"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-white/20 text-lg font-bold">
-                                {scene.scene_number}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Scene number overlay */}
-                          <div className="absolute top-1 left-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center text-white text-[9px] font-bold">
-                            {scene.scene_number}
-                          </div>
-
-                          {/* Status badge */}
-                          {isCompleted && (
-                            <div className="absolute top-1 right-1 w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center">
-                              <svg width="8" height="8" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="3">
-                                <path d="M5 13l4 4L19 7" />
-                              </svg>
-                            </div>
-                          )}
-                          {isFailed && (
-                            <div className="absolute top-1 right-1 w-4 h-4 rounded-full bg-red-500" />
-                          )}
-                          {isGenerating && (
-                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                              <div className="w-5 h-5 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* === RIGHT PANE: Video Preview (centered 9:16 portrait) — desktop only === */}
-                  <div className="hidden md:flex flex-1 min-w-0 items-stretch justify-center bg-black">
-                    {/* 9:16 portrait container — full height, width derived from aspect ratio */}
-                    <div className="h-full aspect-[9/16] flex flex-col">
-                      <div className="flex-1 relative overflow-hidden">
-                        {currentClip?.status === "completed" && currentClip.videoUrl ? (
-                          /* Completed: video player */
-                          <video
-                            key={`clip-${selectedClipScene}-${currentClip.videoUrl}`}
-                            src={resolveVideoUrl(currentClip.videoUrl)}
-                            controls
-                            playsInline
-                            className="absolute inset-0 w-full h-full object-cover"
-                          />
-                        ) : currentClip?.status === "generating" ? (
-                          /* Generating: blurred storyboard + spinner */
-                          <>
-                            {storyboardImg && (
-                              <img
-                                src={getImageSrc(storyboardImg)}
-                                className="absolute inset-0 w-full h-full object-cover blur-sm opacity-40"
-                              />
-                            )}
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <div className="text-center">
-                                <div className="w-10 h-10 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-                                <p className="text-white/60 text-sm">Generating clip...</p>
-                                <p className="text-white/30 text-xs mt-1">~1-2 minutes</p>
-                              </div>
-                            </div>
-                          </>
-                        ) : currentClip?.status === "failed" ? (
-                          /* Failed: error message */
-                          <div className="absolute inset-0 flex items-center justify-center p-4">
-                            <div className="text-center">
-                              <div className="text-red-400 mb-2">
-                                <svg className="w-10 h-10 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                              </div>
-                              <p className="text-red-400 text-sm font-medium mb-1">Generation Failed</p>
-                              <p className="text-white/40 text-xs">{currentClip.error || "Unknown error"}</p>
-                            </div>
-                          </div>
-                        ) : (
-                          /* Idle: storyboard fills pane */
-                          <>
-                            {storyboardImg ? (
-                              <img
-                                src={getImageSrc(storyboardImg)}
-                                className="absolute inset-0 w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div className="absolute inset-0 flex items-center justify-center">
-                                <p className="text-white/30 text-sm">No storyboard image</p>
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-
-                    </div>{/* close aspect-ratio inner */}
-                  </div>{/* close right pane */}
+              {/* ─── Film Timeline ─── */}
+              <div className="mb-4 rounded-2xl bg-white/[0.02] p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm text-[#ADADAD]">{completedCount} of {scenes.length} clips ready &middot; {totalDuration}s / {maxDuration}s</p>
                 </div>
 
-                {/* Bottom bar: Preview Film / Save to Drafts / Publish */}
-                {allClipsCompleted && (
-                  <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
+                {/* Timeline filmstrip (shared component) */}
+                {renderFilmstrip({
+                  scenes,
+                  currentScene: selectedClipScene,
+                  onSelect: setSelectedClipScene,
+                  getStatus: (n) => clipStates[n]?.status === "completed" ? "completed"
+                    : clipStates[n]?.status === "generating" ? "generating"
+                    : clipStates[n]?.status === "failed" ? "failed"
+                    : sceneImages[n]?.image ? "ready" : "empty",
+                  getThumbnail: (n) => sceneImages[n]?.image ? getImageSrc(sceneImages[n].image!) : null,
+                  isFilm: true,
+                })}
+
+                {/* Progress bar */}
+                <div className="mt-3 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-[#9C99FF] to-emerald-500 rounded-full transition-all duration-500" style={{ width: `${scenes.length > 0 ? (completedCount / scenes.length) * 100 : 0}%` }} />
+                </div>
+              </div>
+
+              <div className="bg-panel rounded-3xl outline outline-1 outline-panel-border p-8">
+
+              {/* Scene View navigation + Video + Details — constrained like storyboard */}
+              <div className="max-w-2xl mx-auto">
+              {/* Prev / Next navigation — matches storyboard scene view */}
+              <div className="flex items-center justify-center gap-6 mb-6">
+                <button
+                  onClick={() => { if (canGoPrev) setSelectedClipScene(scenes[sceneIdx - 1].scene_number); }}
+                  disabled={!canGoPrev}
+                  className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center text-white/50 hover:text-white hover:border-white/30 disabled:text-white/10 disabled:border-white/5 disabled:cursor-not-allowed transition-all"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>
+                </button>
+                <div className="text-center">
+                  <span className="text-white/40 text-xs font-medium tracking-wider uppercase">Scene</span>
+                  <span className="text-white text-sm font-semibold ml-1.5">{currentScene?.scene_number || 1}</span>
+                  <span className="text-white/30 text-xs ml-1">/ {scenes.length}</span>
+                </div>
+                <button
+                  onClick={() => { if (canGoNext) setSelectedClipScene(scenes[sceneIdx + 1].scene_number); }}
+                  disabled={!canGoNext}
+                  className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center text-white/50 hover:text-white hover:border-white/30 disabled:text-white/10 disabled:border-white/5 disabled:cursor-not-allowed transition-all"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
+                </button>
+              </div>
+
+              {/* Large centered video player — matches storyboard style */}
+              <div className="flex justify-center mb-6">
+                <div className="w-full max-w-[380px] aspect-[9/16] relative overflow-hidden rounded-2xl bg-[#0A0A0F] shadow-2xl shadow-black/40">
+                    {currentClip?.status === "completed" && currentClip.videoUrl ? (
+                      <video
+                        key={`clip-${selectedClipScene}-${currentClip.videoUrl}`}
+                        src={resolveVideoUrl(currentClip.videoUrl)}
+                        controls
+                        playsInline
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
+                    ) : currentClip?.status === "generating" ? (
+                      <>
+                        {storyboardImg && (
+                          <img src={getImageSrc(storyboardImg)} className="absolute inset-0 w-full h-full object-cover blur-sm opacity-40" />
+                        )}
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="text-center">
+                            <div className="w-10 h-10 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                            <p className="text-white/60 text-sm">Generating clip...</p>
+                            <p className="text-white/30 text-xs mt-1">~1-2 minutes</p>
+                          </div>
+                        </div>
+                      </>
+                    ) : currentClip?.status === "failed" ? (
+                      <div className="absolute inset-0 flex items-center justify-center p-4">
+                        <div className="text-center">
+                          <svg className="w-10 h-10 mx-auto text-red-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <p className="text-red-400 text-sm font-medium mb-1">Generation Failed</p>
+                          <p className="text-white/40 text-xs">{currentClip.error || "Unknown error"}</p>
+                        </div>
+                      </div>
+                    ) : storyboardImg ? (
+                      <img src={getImageSrc(storyboardImg)} className="absolute inset-0 w-full h-full object-cover" />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center bg-panel-border">
+                        <p className="text-white/30 text-sm">No storyboard image</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+              {/* Scene details + generate button */}
+              {currentScene && (
+                <div>
+                    {/* Scene title — matches storyboard */}
+                    <h3 className="text-white text-lg font-semibold mb-3">
+                      {sceneImages[selectedClipScene]?.title || currentScene.title}
+                    </h3>
+
+                    {/* Action */}
+                    {currentScene.action && (
+                      <div className="text-white/70 text-sm italic mb-3 leading-relaxed space-y-0.5">
+                        {splitActionLines(currentScene.action).map((line, li) => (
+                          <p key={li}>{line}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Dialogue — inline editable */}
+                    {currentScene.dialogue && (
+                      <div className="mb-4 space-y-1">
+                        {(() => {
+                          const isEditing = editingSceneIndex !== null && editSceneDraft && editingSceneIndex === scenes.findIndex((s) => s.scene_number === selectedClipScene);
+                          const dialogueLines = currentScene.dialogue.split("\n").filter(Boolean);
+                          return dialogueLines.map((line, li) => {
+                            const colonIdx = line.indexOf(":");
+                            const charName = colonIdx > 0 ? line.slice(0, colonIdx).trim() : "";
+                            const lineText = colonIdx > 0 ? line.slice(colonIdx + 1).trim() : line.trim();
+                            return (
+                              <div key={li} className="text-[#ADADAD] text-sm">
+                                {charName && <span className="text-white font-medium">{charName}: </span>}
+                                {isEditing ? (
+                                  <input
+                                    value={(() => {
+                                      const draftLines = (editSceneDraft.dialogue || "").split("\n").filter(Boolean);
+                                      const dl = draftLines[li];
+                                      if (!dl) return lineText;
+                                      const ci = dl.indexOf(":");
+                                      return ci > 0 ? dl.slice(ci + 1).trim() : dl.trim();
+                                    })()}
+                                    onChange={(e) => {
+                                      const draftLines = (editSceneDraft.dialogue || "").split("\n").filter(Boolean);
+                                      const dl = draftLines[li] || line;
+                                      const ci = dl.indexOf(":");
+                                      const cn = ci > 0 ? dl.slice(0, ci).trim() : "";
+                                      draftLines[li] = cn ? `${cn}: ${e.target.value}` : e.target.value;
+                                      setEditSceneDraft({ ...editSceneDraft, dialogue: draftLines.join("\n") });
+                                    }}
+                                    className="inline-block bg-[#262626] text-[#ADADAD] text-sm rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] w-[calc(100%-100px)]"
+                                  />
+                                ) : (
+                                  <>&ldquo;{lineText}&rdquo;</>
+                                )}
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
+                    )}
+
+                    {/* Edit mode save/cancel */}
+                    {editingSceneIndex !== null && editSceneDraft && editingSceneIndex === scenes.findIndex((s) => s.scene_number === selectedClipScene) ? (
+                      <div className="flex gap-2 mb-4">
+                        <button onClick={() => saveSceneEdit(editingSceneIndex, editSceneDraft)} className="px-3 py-1.5 bg-[#B8B6FC] text-black text-xs font-medium rounded-lg hover:opacity-90">Save</button>
+                        <button onClick={() => { setEditingSceneIndex(null); setEditSceneDraft(null); }} className="px-3 py-1.5 bg-[#262626] text-[#ADADAD] text-xs rounded-lg hover:text-white">Cancel</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          const idx = scenes.findIndex((s) => s.scene_number === selectedClipScene);
+                          if (idx >= 0) { setEditingSceneIndex(idx); setEditSceneDraft({ ...currentScene }); }
+                        }}
+                        className="text-[#B8B6FC] text-xs hover:underline mb-4 inline-block"
+                      >
+                        Edit dialogue
+                      </button>
+                    )}
+
+                    {/* Characters + Location — labeled text with inline avatars (matches storyboard) */}
+                    {(() => {
+                      const charsOnScreen = currentScene.characters_on_screen || [];
+                      const charImagesForClip = charsOnScreen.map(cName => {
+                        const lower = cName.toLowerCase();
+                        const char = story.characters.find(c =>
+                          c.name.toLowerCase() === lower || c.id.toLowerCase() === lower
+                        );
+                        const img = char ? characterImages[char.id]?.image : null;
+                        return { name: char?.name || cName, img };
+                      });
+                      const locObj2 = story.locations.find(l => l.id === currentScene.setting_id);
+                      const locImg2 = locObj2 ? locationImages[locObj2.id]?.image : null;
+                      return (
+                        <div className="flex flex-col gap-1.5 mb-5 text-sm">
+                          {charImagesForClip.length > 0 && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-white/30">Characters:</span>
+                              <div className="flex items-center gap-2">
+                                {charImagesForClip.map(({ name, img }) => (
+                                  <span key={name} className="flex items-center gap-1.5">
+                                    {img && <img src={getImageSrc(img)} alt={name} className="w-5 h-5 rounded-full object-cover" />}
+                                    <span className="text-white/70">{name}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {locObj2 && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-white/30">Location:</span>
+                              <span className="flex items-center gap-1.5">
+                                {locImg2 && <img src={getImageSrc(locImg2)} alt={locationName} className="w-5 h-5 rounded-full object-cover" />}
+                                <span className="text-white/70">{locationName}</span>
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Generate / Regenerate Clip button */}
+                    <button
+                      onClick={() => generateClip(selectedClipScene)}
+                      disabled={currentClip?.status === "generating"}
+                      className="w-full py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {currentClip?.status === "generating" ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          Generating...
+                        </>
+                      ) : currentClip?.status === "completed" ? (
+                        "Regenerate Clip ~$0.18"
+                      ) : currentClip?.status === "failed" ? (
+                        "Retry Clip ~$0.18"
+                      ) : (
+                        "Generate Clip ~$0.18"
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>{/* close max-w-2xl mx-auto */}
+
+              {/* Bottom actions */}
+              <div className="mt-8 border-t border-white/5 pt-6 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  {completedCount > 0 && (
                     <button
                       onClick={previewFilm}
                       disabled={assembleIntent !== null}
-                      className="px-6 py-3 bg-panel-border text-white rounded-xl font-medium hover:bg-[#262626] transition-colors disabled:opacity-50 flex items-center gap-2"
+                      className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
                       {assembleIntent === "preview" ? (
                         <>
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          <div className="w-3.5 h-3.5 border-2 border-white/50 border-t-transparent rounded-full animate-spin" />
                           Assembling...
                         </>
                       ) : (
                         <>
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
-                            <path d="M8 5v14l11-7z" />
-                          </svg>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
                           Preview Film
                         </>
                       )}
                     </button>
-                    <button
-                      onClick={() => { handleSaveDraft(); }}
-                      disabled={draftSaveStatus === "saving"}
-                      className={`px-6 py-3 rounded-xl font-medium transition-all duration-300 ${draftSaveStatus === "saved"
-                        ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                        : "bg-[#262626] text-white hover:bg-[#333]"
-                        }`}
-                    >
-                      {draftSaveStatus === "saved" ? (
-                        <span className="flex items-center gap-2">
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                          </svg>
-                          Saved
-                        </span>
-                      ) : draftSaveStatus === "saving" ? "Saving..." : "Save to Drafts"}
-                    </button>
-                    {publishedEpisodeId ? (
-                      <button
-                        onClick={() => setShowUnpublishConfirm(true)}
-                        className="px-6 py-3 bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl font-medium hover:bg-red-500/30 transition-colors"
-                      >
-                        Unpublish
-                      </button>
-                    ) : (
-                      <button
-                        onClick={async () => {
-                          if (!assembledVideoUrl) {
-                            await assembleClips("publishing");
-                            return;
-                          }
-                          // Already assembled — publish now
-                          if (associatedStoryIdRef.current) {
-                            try {
-                              await upsertEpisode(associatedStoryIdRef.current, {
-                                name: episodeNameRef.current || "Untitled Episode",
-                                media_url: assembledVideoUrl,
-                                status: "published",
-                              });
-                              saveNow({}, "published");
-                              window.location.href = `/create/${associatedStoryIdRef.current}`;
-                            } catch (err) { console.error("Publish failed:", err); }
-                          }
-                        }}
-                        disabled={assembleIntent !== null}
-                        className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50"
-                      >
-                        {assembleIntent === "publishing" ? "Publishing..." : "Publish"}
-                      </button>
-                    )}
-                  </div>
+                  )}
+                  <button
+                    onClick={() => { handleSaveDraft(); }}
+                    disabled={draftSaveStatus === "saving"}
+                    className={`text-sm transition-colors ${draftSaveStatus === "saved"
+                      ? "text-emerald-400"
+                      : "text-white/50 hover:text-white"
+                      } disabled:opacity-40 disabled:cursor-not-allowed`}
+                  >
+                    {draftSaveStatus === "saved" ? (
+                      <span className="flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                        Saved
+                      </span>
+                    ) : draftSaveStatus === "saving" ? "Saving..." : "Save to Drafts"}
+                  </button>
+                </div>
+                {publishedEpisodeId ? (
+                  <button
+                    onClick={() => setShowUnpublishConfirm(true)}
+                    className="px-4 py-2 text-sm font-medium text-red-400 border border-red-500/30 rounded-xl hover:bg-red-500/10 transition-colors"
+                  >
+                    Unpublish
+                  </button>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      if (!assembledVideoUrl) {
+                        await assembleClips("publishing");
+                        return;
+                      }
+                      if (associatedStoryIdRef.current) {
+                        try {
+                          await upsertEpisode(associatedStoryIdRef.current, {
+                            name: episodeNameRef.current || "Untitled Episode",
+                            media_url: assembledVideoUrl,
+                            status: "published",
+                          });
+                          saveNow({}, "published");
+                          window.location.href = `/create/${associatedStoryIdRef.current}`;
+                        } catch (err) { console.error("Publish failed:", err); }
+                      }
+                    }}
+                    disabled={assembleIntent !== null || !allClipsCompleted}
+                    className="px-5 py-2 text-sm font-medium bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+                  >
+                    {assembleIntent === "publishing" ? "Publishing..." : "Publish"}
+                  </button>
                 )}
-              </>)}
+              </div>
+              </div>
             </div>
           );
         })()}
