@@ -9,6 +9,7 @@ interface CreateEpisodeModalProps {
   onClose: () => void;
   onSave: (episode: Omit<Episode, "id">) => void;
   nextEpisodeNumber: number;
+  existingEpisodeNumbers?: number[];
 }
 
 export default function CreateEpisodeModal({
@@ -16,11 +17,13 @@ export default function CreateEpisodeModal({
   onClose,
   onSave,
   nextEpisodeNumber,
+  existingEpisodeNumbers = [],
 }: CreateEpisodeModalProps) {
   const [episodeName, setEpisodeName] = useState("");
-  const [episodeNum, setEpisodeNum] = useState(nextEpisodeNumber);
+  const [episodeNum, setEpisodeNum] = useState<number | "">(nextEpisodeNumber);
   const [isFree, setIsFree] = useState(true); // Beta: all episodes free
   const [mounted, setMounted] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setMounted(true);
@@ -44,17 +47,25 @@ export default function CreateEpisodeModal({
   }, [isOpen]);
 
   const handleSubmit = () => {
-    if (!episodeName.trim()) {
-      alert("Episode name is required");
-      return;
+    const errors: Record<string, string> = {};
+
+    if (episodeNum === "" || episodeNum < 1) {
+      errors.number = "Episode number must be at least 1";
+    } else if (existingEpisodeNumbers.includes(episodeNum)) {
+      errors.number = `Episode ${episodeNum} already exists`;
     }
-    if (!episodeNum || episodeNum < 1) {
-      alert("Episode number must be at least 1");
+
+    if (!episodeName.trim()) {
+      errors.name = "Episode name is required";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
       return;
     }
 
     onSave({
-      number: episodeNum,
+      number: episodeNum as number,
       name: episodeName,
       isFree,
       status: "draft",
@@ -63,12 +74,14 @@ export default function CreateEpisodeModal({
     setEpisodeName("");
     setEpisodeNum(nextEpisodeNumber);
     setIsFree(true);
+    setFieldErrors({});
   };
 
   const handleClose = () => {
     setEpisodeName("");
     setEpisodeNum(nextEpisodeNumber);
     setIsFree(true);
+    setFieldErrors({});
     onClose();
   };
 
@@ -99,9 +112,19 @@ export default function CreateEpisodeModal({
             type="number"
             min="1"
             value={episodeNum}
-            onChange={(e) => setEpisodeNum(Math.max(1, parseInt(e.target.value) || 1))}
-            className="w-24 h-14 bg-[#262626] rounded-2xl px-4 text-white text-center text-lg font-bold focus:outline-none focus:ring-2 focus:ring-[#B8B6FC]"
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val === "") { setEpisodeNum(""); return; }
+              const num = parseInt(val);
+              if (!isNaN(num) && num > 0) setEpisodeNum(num);
+              setFieldErrors(prev => { const { number: _, ...rest } = prev; return rest; });
+            }}
+            onBlur={() => { if (episodeNum === "") setEpisodeNum(nextEpisodeNumber); }}
+            className={`w-24 h-14 bg-[#262626] rounded-2xl px-4 text-white text-center text-lg font-bold focus:outline-none focus:ring-2 ${fieldErrors.number ? "ring-2 ring-red-500 focus:ring-red-500" : "focus:ring-[#B8B6FC]"}`}
           />
+          {fieldErrors.number && (
+            <p className="text-red-400 text-xs mt-2">{fieldErrors.number}</p>
+          )}
         </div>
 
         {/* Episode Name */}
@@ -110,10 +133,16 @@ export default function CreateEpisodeModal({
           <input
             type="text"
             value={episodeName}
-            onChange={(e) => setEpisodeName(e.target.value)}
-            className="w-full h-14 bg-[#262626] rounded-2xl px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC]"
+            onChange={(e) => {
+              setEpisodeName(e.target.value);
+              setFieldErrors(prev => { const { name: _, ...rest } = prev; return rest; });
+            }}
+            className={`w-full h-14 bg-[#262626] rounded-2xl px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 ${fieldErrors.name ? "ring-2 ring-red-500 focus:ring-red-500" : "focus:ring-[#B8B6FC]"}`}
             placeholder="Enter episode name"
           />
+          {fieldErrors.name && (
+            <p className="text-red-400 text-xs mt-2">{fieldErrors.name}</p>
+          )}
         </div>
 
         {/* Beta: all episodes are free — checkbox hidden */}

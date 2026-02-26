@@ -874,7 +874,8 @@ export default function StoryManagementPage() {
           });
           router.push(`/create-episode?${params.toString()}`);
         }}
-        nextEpisodeNumber={story.episodes.length + 1}
+        nextEpisodeNumber={story.episodes.length > 0 ? Math.max(...story.episodes.map(e => e.number)) + 1 : 1}
+        existingEpisodeNumbers={story.episodes.map(e => e.number)}
       />
 
       <EditStoryModal

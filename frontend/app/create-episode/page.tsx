@@ -4275,6 +4275,7 @@ export default function CreateEpisodePage() {
                     const total = allScenes.length;
                     const hasAnyInProgress = allScenes.some(s => s.isGenerating || s.isQueued);
                     const needsGeneration = total > 0 && readyCount < total && !hasAnyInProgress;
+                    const allVisualsReady = story ? story.characters.every(c => !!characterImages[c.id]?.image) && story.locations.every(l => !!locationImages[l.id]?.image) : false;
                     return (
                       <div className="flex items-center justify-between mb-6">
                         <div>
@@ -4289,7 +4290,9 @@ export default function CreateEpisodePage() {
                           {needsGeneration && (
                             <button
                               onClick={generateAllSceneImages}
-                              className="px-5 py-2 text-sm font-medium bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-xl hover:opacity-90 transition-opacity"
+                              disabled={!allVisualsReady}
+                              title={!allVisualsReady ? "All characters and locations need images first" : undefined}
+                              className={`px-5 py-2 text-sm font-medium text-white rounded-xl transition-opacity ${allVisualsReady ? "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:opacity-90" : "bg-white/10 opacity-50 cursor-not-allowed"}`}
                             >
                               Generate All Images
                             </button>
@@ -4332,17 +4335,47 @@ export default function CreateEpisodePage() {
                   )}
 
                   {/* Empty state */}
-                  {!isGeneratingSceneDescs && !sceneDescError && Object.keys(sceneImages).length === 0 && (
-                    <div className="flex flex-col items-center justify-center py-16 gap-4">
-                      <p className="text-[#ADADAD] text-sm text-center">No scene descriptions yet.</p>
-                      <button
-                        onClick={fetchSceneDescriptions}
-                        className="px-5 py-2.5 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 transition-opacity"
-                      >
-                        Generate Storyboard ~$0.05
-                      </button>
-                    </div>
-                  )}
+                  {!isGeneratingSceneDescs && !sceneDescError && Object.keys(sceneImages).length === 0 && (() => {
+                    const missingCharImages = story ? story.characters.filter(c => !characterImages[c.id]?.image) : [];
+                    const missingLocImages = story ? story.locations.filter(l => !locationImages[l.id]?.image) : [];
+                    const allVisualsReady = missingCharImages.length === 0 && missingLocImages.length === 0;
+                    return (
+                      <div className="flex flex-col items-center justify-center py-16 gap-4">
+                        {allVisualsReady ? (
+                          <>
+                            <p className="text-[#ADADAD] text-sm text-center">No scene descriptions yet.</p>
+                            <button
+                              onClick={fetchSceneDescriptions}
+                              className="px-5 py-2.5 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 transition-opacity"
+                            >
+                              Generate Storyboard ~$0.05
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#9C99FF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="10" />
+                              <path d="M12 8v4M12 16h.01" />
+                            </svg>
+                            <p className="text-white text-sm font-medium text-center">All characters and locations need images first</p>
+                            <p className="text-[#ADADAD] text-xs text-center max-w-sm">
+                              Go back to the Lookbook tab and generate images for
+                              {missingCharImages.length > 0 && ` ${missingCharImages.length} character${missingCharImages.length > 1 ? "s" : ""}`}
+                              {missingCharImages.length > 0 && missingLocImages.length > 0 && " and"}
+                              {missingLocImages.length > 0 && ` ${missingLocImages.length} location${missingLocImages.length > 1 ? "s" : ""}`}
+                              {" "}before generating the storyboard.
+                            </p>
+                            <button
+                              onClick={() => setVisualsTab("lookbook")}
+                              className="px-5 py-2.5 border border-[#B8B6FC]/40 text-[#B8B6FC] rounded-xl font-medium text-sm hover:bg-[#B8B6FC]/10 transition-colors"
+                            >
+                              Go to Lookbook
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* ════════ GRID VIEW ════════ */}
                   {storyboardViewMode === "grid" && Object.keys(sceneImages).length > 0 && (
@@ -4368,7 +4401,7 @@ export default function CreateEpisodePage() {
                                   }`}
                               >
                                 {/* Image area */}
-                                <div className="aspect-[9/16] bg-[#0A0A0F] relative">
+                                <div className="aspect-[3/4] bg-[#0A0A0F] relative">
                                   {/* Scene number badge */}
                                   <div className="absolute top-2 left-2 z-10 px-2 py-0.5 rounded-full bg-black/60 text-[10px] font-bold text-white/70">
                                     {scene.sceneNumber}

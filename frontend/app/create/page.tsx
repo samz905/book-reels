@@ -508,8 +508,12 @@ export default function CreatePage() {
           });
           router.push(`/create-episode?${params.toString()}`);
         }}
-        nextEpisodeNumber={
-          (stories.find(s => s.id === selectedStoryIdForEpisode)?.episodes.length || 0) + 1
+        nextEpisodeNumber={(() => {
+          const eps = stories.find(s => s.id === selectedStoryIdForEpisode)?.episodes || [];
+          return eps.length > 0 ? Math.max(...eps.map(e => e.number)) + 1 : 1;
+        })()}
+        existingEpisodeNumbers={
+          stories.find(s => s.id === selectedStoryIdForEpisode)?.episodes.map(e => e.number) || []
         }
       />
     </div>
