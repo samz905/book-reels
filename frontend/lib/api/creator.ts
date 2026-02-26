@@ -81,7 +81,7 @@ export function mapDbStoryToFrontend(
     viewCount: dbStory.view_count,
     description: dbStory.description,
     cover: dbStory.cover_url || "",
-    episodes: publishedEpisodes.map(mapDbEpisodeToFrontend),
+    episodes: allEpisodes.map(mapDbEpisodeToFrontend),
     likes: dbStory.likes,
     genre: dbStory.genres,
     status: dbStory.status,
@@ -346,14 +346,19 @@ export async function getCreatorStats(userId: string): Promise<CreatorStats> {
   };
 }
 
-// Helper to generate random username
+// Generate username from full name: "Samarth Zalte" → "samarth_zalte"
+export function generateUsernameFromName(fullName: string): string {
+  const base = fullName
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_]/g, "");
+  return base || "creator";
+}
+
+// Kept for backward compat — callers should use generateUsernameFromName
 export function generateRandomUsername(): string {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let suffix = "";
-  for (let i = 0; i < 6; i++) {
-    suffix += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return `creator-${suffix}`;
+  return generateUsernameFromName("creator_" + Math.random().toString(36).slice(2, 8));
 }
 
 // ============ Character & Location Mappers ============

@@ -84,6 +84,7 @@ export default function Home() {
 
   // Story detail popup
   const [selectedStory, setSelectedStory] = useState<Story | null>(null);
+  const [descExpanded, setDescExpanded] = useState(false);
   const [storyEpisodes, setStoryEpisodes] = useState<Episode[]>([]);
   const [episodesLoading, setEpisodesLoading] = useState(false);
 
@@ -145,6 +146,7 @@ export default function Home() {
   // Handle story card click — fetch episodes and show popup
   const handleStoryClick = useCallback(async (story: Story) => {
     setSelectedStory(story);
+    setDescExpanded(false);
     setStoryEpisodes([]);
     setEpisodesLoading(true);
     try {
@@ -191,7 +193,7 @@ export default function Home() {
 
         <Header />
 
-        <main className="relative z-10 px-4 md:px-6">
+        <main className="relative z-10 px-4 md:px-6 pb-16">
           {/* Hero Section */}
           <section className="text-center py-20 md:py-28 max-w-[800px] mx-auto">
             <div className="absolute w-[227px] h-[170px] left-1/2 -translate-x-1/2 top-[140px] bg-[rgba(156,153,255,0.55)] blur-[95px] pointer-events-none" />
@@ -210,7 +212,7 @@ export default function Home() {
               </span>
             </h1>
             <p className="relative text-white/70 text-base sm:text-lg lg:text-[19.5px] leading-relaxed lg:leading-7 max-w-[676px] mx-auto mb-10">
-              Find stories that move you. Let yours be seen too.
+              Find stories that move you. Share one that moves others.
             </p>
             <Link
               href="/login"
@@ -225,7 +227,7 @@ export default function Home() {
           </section>
         </main>
 
-        <Footer />
+        {/* <Footer /> */}
       </div>
     );
   }
@@ -240,7 +242,7 @@ export default function Home() {
 
       <Header />
 
-      <main className="relative z-10 px-4 md:px-6">
+      <main className="relative z-10 px-4 md:px-6 pb-16">
         {/* Hero Section */}
         <section className="text-center py-12 max-w-[1200px] mx-auto relative">
           {/* Hero glow effect */}
@@ -260,14 +262,14 @@ export default function Home() {
             </span>
           </h1>
           <p className="relative text-white text-base sm:text-lg lg:text-[19.5px] leading-relaxed lg:leading-7 max-w-[676px] mx-auto mb-8">
-            Find stories that move you. Let yours be seen too.
+            Find stories that move you. Share one that moves others.
           </p>
           <Link
             href="/create"
             className="relative inline-block text-[#F8FAFC] font-bold text-[17.9px] leading-7 px-8 py-3.5 rounded-[14px] hover:opacity-90 transition-opacity cursor-pointer"
             style={{ background: 'linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)' }}
           >
-            Start Creating
+            Create Your Story
           </Link>
         </section>
 
@@ -306,7 +308,7 @@ export default function Home() {
         </section>
       </main>
 
-      <Footer />
+      {/* <Footer /> */}
 
       {/* Story detail popup with episodes */}
       {selectedStory && (
@@ -325,8 +327,20 @@ export default function Home() {
               </div>
               <div className="flex-1 min-w-0">
                 <h2 className="text-white text-xl font-bold mb-2">{selectedStory.title}</h2>
-                <p className="text-white/60 text-sm line-clamp-3 mb-3">{selectedStory.description}</p>
-                <div className="flex items-center gap-2">
+                <p className={`text-white/60 text-sm mb-1 ${!descExpanded ? "line-clamp-3" : ""}`}>{selectedStory.description}</p>
+                {selectedStory.description && selectedStory.description.length > 150 && (
+                  <button
+                    onClick={() => setDescExpanded(!descExpanded)}
+                    className="text-[#9C99FF] text-xs font-medium mb-3 hover:text-[#B8B6FC] transition-colors"
+                  >
+                    {descExpanded ? "Show less" : "Read more"}
+                  </button>
+                )}
+                <Link
+                  href={`/creator/${selectedStory.creatorUsername}`}
+                  className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <Image
                     src={selectedStory.creatorAvatar}
                     alt={selectedStory.creatorName}
@@ -334,8 +348,8 @@ export default function Home() {
                     height={20}
                     className="rounded-full"
                   />
-                  <span className="text-white/70 text-sm">{selectedStory.creatorName}</span>
-                </div>
+                  <span className="text-white/70 text-sm hover:text-white transition-colors">{selectedStory.creatorName}</span>
+                </Link>
               </div>
               {/* Close button */}
               <button
@@ -355,7 +369,7 @@ export default function Home() {
                   <div className="w-6 h-6 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
                 </div>
               ) : storyEpisodes.length > 0 ? (
-                <EpisodeList episodes={storyEpisodes} freeCount={4} />
+                <EpisodeList episodes={storyEpisodes} creatorUsername={selectedStory.creatorUsername} />
               ) : (
                 <p className="text-white/40 text-sm text-center py-8">No episodes published yet.</p>
               )}

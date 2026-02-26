@@ -47,6 +47,10 @@ export default function SubscriptionCard({
     if (isSaving) return;
 
     const numPrice = parseFloat(price) || 0;
+    if (enabled && numPrice < 5.0) {
+      setError("Price must be at least $5.00");
+      return;
+    }
     setIsSaving(true);
     setError(null);
 
@@ -75,7 +79,7 @@ export default function SubscriptionCard({
     setIsEditing(true);
   };
 
-  const minPrice = enabled ? 4.99 : 0;
+  const minPrice = 5.0;
 
   return (
     <div className="bg-panel rounded-xl p-6">

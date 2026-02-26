@@ -18,6 +18,7 @@ export default function CreateEpisodeModal({
   nextEpisodeNumber,
 }: CreateEpisodeModalProps) {
   const [episodeName, setEpisodeName] = useState("");
+  const [episodeNum, setEpisodeNum] = useState(nextEpisodeNumber);
   const [isFree, setIsFree] = useState(true); // Beta: all episodes free
   const [mounted, setMounted] = useState(false);
 
@@ -25,6 +26,11 @@ export default function CreateEpisodeModal({
     setMounted(true);
     return () => setMounted(false);
   }, []);
+
+  // Sync default when prop changes
+  useEffect(() => {
+    setEpisodeNum(nextEpisodeNumber);
+  }, [nextEpisodeNumber]);
 
   useEffect(() => {
     if (isOpen) {
@@ -42,20 +48,26 @@ export default function CreateEpisodeModal({
       alert("Episode name is required");
       return;
     }
+    if (!episodeNum || episodeNum < 1) {
+      alert("Episode number must be at least 1");
+      return;
+    }
 
     onSave({
-      number: nextEpisodeNumber,
+      number: episodeNum,
       name: episodeName,
       isFree,
       status: "draft",
     });
 
     setEpisodeName("");
+    setEpisodeNum(nextEpisodeNumber);
     setIsFree(true);
   };
 
   const handleClose = () => {
     setEpisodeName("");
+    setEpisodeNum(nextEpisodeNumber);
     setIsFree(true);
     onClose();
   };
@@ -82,11 +94,14 @@ export default function CreateEpisodeModal({
 
         {/* Episode Number */}
         <div className="mb-6">
-          <div className="flex items-baseline gap-3">
-            <span className="text-white text-base">Episode Number:</span>
-            <span className="text-[#B8B6FC] text-2xl font-bold">{nextEpisodeNumber}</span>
-          </div>
-          <p className="text-white/40 text-xs mt-1">Automatically assigned as the next episode in sequence</p>
+          <label className="block text-white text-base mb-3">Episode Number</label>
+          <input
+            type="number"
+            min="1"
+            value={episodeNum}
+            onChange={(e) => setEpisodeNum(Math.max(1, parseInt(e.target.value) || 1))}
+            className="w-24 h-14 bg-[#262626] rounded-2xl px-4 text-white text-center text-lg font-bold focus:outline-none focus:ring-2 focus:ring-[#B8B6FC]"
+          />
         </div>
 
         {/* Episode Name */}

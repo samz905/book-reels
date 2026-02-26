@@ -31,9 +31,12 @@ export default function ProfileEditModal({
     return () => setMounted(false);
   }, []);
 
+  const bioWordCount = bio.trim().split(/\s+/).filter(Boolean).length;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (isSaving) return;
+    if (bioWordCount > 200) return;
 
     onSave({
       ...profile,
@@ -204,15 +207,23 @@ export default function ProfileEditModal({
           </div>
 
           <div>
-            <label className="block text-white/70 text-sm mb-2">Bio</label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-white/70 text-sm">Bio</label>
+              <span className={`text-sm ${bio.trim().split(/\s+/).filter(Boolean).length > 200 ? "text-red-400" : "text-white/40"}`}>
+                {bio.trim() ? bio.trim().split(/\s+/).filter(Boolean).length : 0}/200 words
+              </span>
+            </div>
             <textarea
               value={bio}
               onChange={(e) => setBio(e.target.value)}
               disabled={isSaving}
               rows={4}
-              className="w-full bg-card-bg-2 border border-border rounded-lg px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-purple resize-none disabled:opacity-50"
+              className={`w-full bg-card-bg-2 border rounded-lg px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 resize-none disabled:opacity-50 ${bio.trim().split(/\s+/).filter(Boolean).length > 200 ? "border-red-500 ring-2 ring-red-500 focus:ring-red-500" : "border-border focus:ring-purple"}`}
               placeholder="Tell us about yourself..."
             />
+            {bio.trim().split(/\s+/).filter(Boolean).length > 200 && (
+              <p className="text-red-400 text-sm mt-1">Bio exceeds 200 words. Please shorten it to save.</p>
+            )}
           </div>
 
           {/* Action buttons */}
@@ -227,7 +238,7 @@ export default function ProfileEditModal({
             </button>
             <button
               type="submit"
-              disabled={isSaving}
+              disabled={isSaving || bioWordCount > 200}
               className="px-6 py-2 rounded-lg font-semibold text-white disabled:opacity-50 flex items-center gap-2"
               style={{
                 background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",

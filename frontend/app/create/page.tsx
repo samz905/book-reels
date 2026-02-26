@@ -32,7 +32,7 @@ import {
   createEpisode,
   createEbook,
   updateEbook,
-  generateRandomUsername,
+  generateUsernameFromName,
   mapDbProfileToFrontend,
 } from "@/lib/api/creator";
 import {
@@ -75,18 +75,18 @@ export default function CreatePage() {
     }
     // Profile doesn't exist — create one
     const createNewProfile = async () => {
-      const randomUsername = generateRandomUsername();
       const userName =
         user.user_metadata?.full_name ||
         user.user_metadata?.name ||
         user.email?.split("@")[0] ||
         "New Creator";
+      const username = generateUsernameFromName(userName);
       const userAvatar =
         user.user_metadata?.avatar_url ||
         user.user_metadata?.picture ||
         null;
       await createProfile(user.id, {
-        username: randomUsername,
+        username,
         name: userName,
         bio: "",
         avatar_url: userAvatar,
@@ -309,7 +309,7 @@ export default function CreatePage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
+        <main className="relative z-10 px-4 md:px-6 py-8 pb-16 max-w-7xl mx-auto">
           <div className="animate-pulse space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
               <div className="bg-panel rounded-xl p-6 h-48" />
@@ -321,7 +321,7 @@ export default function CreatePage() {
             </div>
           </div>
         </main>
-        <Footer />
+        {/* <Footer /> */}
       </div>
     );
   }
@@ -341,7 +341,7 @@ export default function CreatePage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
+        <main className="relative z-10 px-4 md:px-6 py-8 pb-16 max-w-7xl mx-auto">
           <div className="bg-panel rounded-xl p-8 text-center">
             <h2 className="text-red-400 text-xl font-semibold mb-4">
               Error loading dashboard
@@ -355,7 +355,7 @@ export default function CreatePage() {
             </button>
           </div>
         </main>
-        <Footer />
+        {/* <Footer /> */}
       </div>
     );
   }
@@ -374,7 +374,7 @@ export default function CreatePage() {
     <div className="min-h-screen bg-black relative overflow-clip">
       <Header />
 
-      <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
+      <main className="relative z-10 px-4 md:px-6 py-8 pb-16 max-w-7xl mx-auto">
         {error && (
           <div className="mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200">
             {error}
@@ -460,7 +460,7 @@ export default function CreatePage() {
 
       </main>
 
-      <Footer />
+      {/* <Footer /> */}
 
       <CreateStoryModal
         isOpen={showCreateStoryModal}

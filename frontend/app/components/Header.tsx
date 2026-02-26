@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
+import { useProfile } from "@/lib/hooks/queries";
 import posthog from "posthog-js";
 
 export default function Header() {
@@ -44,6 +45,10 @@ export default function Header() {
 
   // Get user display name from metadata
   const displayName = user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email?.split("@")[0] || "User";
+
+  // Fetch profile for username (used in "View Public Profile" link)
+  const { data: profile } = useProfile(user?.id);
+  const profileUsername = profile?.username;
 
   return (
     <header className="sticky top-0 z-30 bg-[#010101]">
@@ -184,16 +189,6 @@ export default function Header() {
                     {isApproved && (
                       <div className="py-1">
                         <Link
-                          href="/account"
-                          onClick={() => setShowDropdown(false)}
-                          className="flex items-center gap-3 px-4 py-2.5 text-white hover:bg-menu-bg transition-colors"
-                        >
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
-                          </svg>
-                          Account
-                        </Link>
-                        <Link
                           href="/create"
                           onClick={() => setShowDropdown(false)}
                           className="flex items-center gap-3 px-4 py-2.5 text-white hover:bg-menu-bg transition-colors"
@@ -212,6 +207,30 @@ export default function Header() {
                             <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                           </svg>
                           My Drafts
+                        </Link>
+                        {profileUsername && (
+                          <Link
+                            href={`/creator/${profileUsername}`}
+                            onClick={() => setShowDropdown(false)}
+                            className="flex items-center gap-3 px-4 py-2.5 text-white hover:bg-menu-bg transition-colors"
+                          >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                              <polyline points="15 3 21 3 21 9" />
+                              <line x1="10" y1="14" x2="21" y2="3" />
+                            </svg>
+                            View Public Profile
+                          </Link>
+                        )}
+                        <Link
+                          href="/account"
+                          onClick={() => setShowDropdown(false)}
+                          className="flex items-center gap-3 px-4 py-2.5 text-white hover:bg-menu-bg transition-colors"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                          </svg>
+                          Account
                         </Link>
                       </div>
                     )}
@@ -325,6 +344,16 @@ export default function Header() {
                       </svg>
                       My Drafts
                     </Link>
+                    {profileUsername && (
+                      <Link href={`/creator/${profileUsername}`} className="px-3 py-2.5 text-white font-semibold rounded-lg hover:bg-white/5 transition-colors flex items-center gap-3">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                        View Public Profile
+                      </Link>
+                    )}
                   </>
                 )}
               </>

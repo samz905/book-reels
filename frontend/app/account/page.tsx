@@ -104,7 +104,7 @@ export default function AccountPage() {
     <div className="min-h-screen bg-black relative overflow-clip">
       <Header />
 
-      <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto space-y-6 md:space-y-8">
+      <main className="relative z-10 px-4 md:px-6 py-8 pb-16 max-w-7xl mx-auto space-y-6 md:space-y-8">
         {/* Personal Information */}
         <PersonalInfoCard
           name={userName}
@@ -186,7 +186,7 @@ export default function AccountPage() {
         </div>
       </main>
 
-      <Footer />
+      {/* <Footer /> */}
 
       {/* Delete Account Modal */}
       <DeleteAccountModal

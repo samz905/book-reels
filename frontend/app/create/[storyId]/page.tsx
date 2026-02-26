@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
@@ -21,8 +21,11 @@ import {
   useStoryDetail,
   useStoryCharacters,
   useStoryLocations,
+  useStoryGenerations,
   queryKeys,
+  StoryGeneration,
 } from "@/lib/hooks/queries";
+import { deleteGeneration } from "@/lib/supabase/ai-generations";
 import {
   Story,
   Ebook,
@@ -43,6 +46,159 @@ import {
 } from "@/lib/api/creator";
 import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 
+// ─── Draft Generation helpers ───────────────────────────────
+
+const DRAFT_STEPS = ["Script", "Visuals", "Filming", "Ready"] as const;
+
+function getDraftStepIndex(status: string): number {
+  switch (status) {
+    case "drafting": return 0;
+    case "visuals": case "moodboard": case "key_moments": return 1;
+    case "preflight": case "filming": return 2;
+    case "ready": return 3;
+    default: return -1;
+  }
+}
+
+function getDraftStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    drafting: "Script", visuals: "Visuals", moodboard: "Moodboard",
+    key_moments: "Key Moments", preflight: "Pre-flight", filming: "Filming",
+    ready: "Ready", failed: "Failed", interrupted: "Interrupted",
+  };
+  return labels[status] || status;
+}
+
+const draftStyleLabels: Record<string, string> = {
+  cinematic: "Cinematic", anime: "Anime", animated: "Animated",
+  pixar: "Pixar", "3d_animated": "Pixar", "2d_animated": "Animated", "2d_anime": "Anime",
+};
+
+function DraftProgressDots({ status }: { status: string }) {
+  const step = getDraftStepIndex(status);
+  const isFailed = step === -1;
+  return (
+    <div className="flex items-center gap-0.5">
+      {DRAFT_STEPS.map((label, i) => (
+        <div key={label} className="flex items-center">
+          <div
+            className={`w-[6px] h-[6px] rounded-full transition-colors ${
+              isFailed ? "bg-red-400/50" : i <= step ? "bg-[#9C99FF]" : "bg-white/10"
+            }`}
+            title={label}
+          />
+          {i < DRAFT_STEPS.length - 1 && (
+            <div className={`w-2 h-[1px] ${
+              isFailed ? "bg-red-400/20" : i < step ? "bg-[#9C99FF]/50" : "bg-white/5"
+            }`} />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DraftGenerationCard({
+  draft,
+  onClick,
+  onDelete,
+}: {
+  draft: StoryGeneration;
+  onClick: () => void;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const step = getDraftStepIndex(draft.status);
+  const isFailed = step === -1;
+  const updatedDate = new Date(draft.updated_at).toLocaleDateString(undefined, {
+    month: "short", day: "numeric",
+  });
+  const styleLabel = draftStyleLabels[draft.style] || draft.style;
+
+  return (
+    <div className="relative bg-panel border border-panel-border rounded-xl text-left hover:border-[#9C99FF]/40 transition-all group">
+      {confirmDelete && (
+        <div className="absolute inset-0 z-10 bg-black/80 rounded-xl flex flex-col items-center justify-center gap-2 p-3">
+          <p className="text-white text-xs text-center">Delete this draft?</p>
+          <div className="flex gap-2">
+            <button
+              onClick={async (e) => { e.stopPropagation(); setDeleting(true); await onDelete(draft.id); }}
+              disabled={deleting}
+              className="px-3 py-1.5 bg-red-500/20 text-red-400 text-xs rounded-lg border border-red-500/30 hover:bg-red-500/30 disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {deleting && (
+                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+              )}
+              {deleting ? "Deleting..." : "Delete"}
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
+              disabled={deleting}
+              className="px-3 py-1.5 bg-white/5 text-white/60 text-xs rounded-lg border border-white/10 hover:bg-white/10 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <button onClick={onClick} className="w-full p-4 text-left">
+        <div className="flex items-start gap-3">
+          {/* Thumbnail */}
+          {draft.first_storyboard_url ? (
+            <div className="w-9 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-panel-border my-auto">
+              <img src={draft.first_storyboard_url} alt="" className="w-full h-full object-cover" />
+            </div>
+          ) : draft.thumbnail_base64 ? (
+            <div className="w-9 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-panel-border my-auto">
+              <img src={`data:image/jpeg;base64,${draft.thumbnail_base64}`} alt="" className="w-full h-full object-cover" />
+            </div>
+          ) : (
+            <div className="w-9 h-16 rounded-lg bg-panel-border flex items-center justify-center flex-shrink-0 my-auto">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            </div>
+          )}
+
+          <div className="flex-1 min-w-0">
+            <h3 className="text-white font-medium text-sm truncate group-hover:text-[#B8B6FC] transition-colors">
+              {draft.title || "Untitled"}
+            </h3>
+            <div className="flex items-center gap-2 mt-2">
+              <DraftProgressDots status={draft.status} />
+              <span className={`text-[10px] font-medium ${isFailed ? "text-red-400" : "text-white/40"}`}>
+                {getDraftStatusLabel(draft.status)}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              {styleLabel && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-white/30">{styleLabel}</span>
+              )}
+              <span className="text-[10px] text-white/20">{updatedDate}</span>
+            </div>
+          </div>
+        </div>
+      </button>
+
+      {/* Delete button (hover) */}
+      <button
+        onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
+        className="absolute top-2 right-2 w-7 h-7 rounded-full bg-white/5 flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500/20 transition-all"
+        title="Delete draft"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 export default function StoryManagementPage() {
   const params = useParams();
   const router = useRouter();
@@ -54,6 +210,7 @@ export default function StoryManagementPage() {
   const { data: story, isLoading: storyLoading, error: storyError } = useStoryDetail(storyId);
   const { data: characters = [] } = useStoryCharacters(storyId);
   const { data: locations = [] } = useStoryLocations(storyId);
+  const { data: storyGenerations = [] } = useStoryGenerations(storyId);
 
   const isLoading = authLoading || storyLoading;
   const error = storyError ? storyError.message : null;
@@ -80,6 +237,22 @@ export default function StoryManagementPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [showStatusConfirm, setShowStatusConfirm] = useState(false);
   const [isTogglingStatus, setIsTogglingStatus] = useState(false);
+
+  // ============ Draft Generation Handlers ============
+
+  const handleDraftClick = useCallback((id: string) => {
+    router.push(`/create-episode?g=${id}`);
+  }, [router]);
+
+  const handleDraftDelete = useCallback(async (id: string) => {
+    try {
+      await deleteGeneration(id);
+      queryClient.invalidateQueries({ queryKey: queryKeys.storyGenerations(storyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.generations() });
+    } catch (err) {
+      console.error("Failed to delete draft:", err);
+    }
+  }, [queryClient, storyId]);
 
   // ============ Story Handlers ============
 
@@ -293,14 +466,14 @@ export default function StoryManagementPage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
+        <main className="relative z-10 px-4 md:px-6 py-8 pb-16 max-w-7xl mx-auto">
           <div className="animate-pulse space-y-6">
             <div className="h-6 w-48 bg-[#1A1E2F] rounded" />
             <div className="bg-panel rounded-xl p-6 h-[340px]" />
             <div className="bg-panel rounded-xl p-6 h-[200px]" />
           </div>
         </main>
-        <Footer />
+        {/* <Footer /> */}
       </div>
     );
   }
@@ -309,7 +482,7 @@ export default function StoryManagementPage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
+        <main className="relative z-10 px-4 md:px-6 py-8 pb-16 max-w-7xl mx-auto">
           <div className="bg-panel rounded-xl p-8 text-center">
             <h2 className="text-white text-xl font-semibold mb-4">
               Sign in to manage your story
@@ -323,7 +496,7 @@ export default function StoryManagementPage() {
             </button>
           </div>
         </main>
-        <Footer />
+        {/* <Footer /> */}
       </div>
     );
   }
@@ -332,7 +505,7 @@ export default function StoryManagementPage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
+        <main className="relative z-10 px-4 md:px-6 py-8 pb-16 max-w-7xl mx-auto">
           <div className="bg-panel rounded-xl p-8 text-center">
             <h2 className="text-red-400 text-xl font-semibold mb-4">
               {error || "Story not found"}
@@ -345,18 +518,18 @@ export default function StoryManagementPage() {
             </button>
           </div>
         </main>
-        <Footer />
+        {/* <Footer /> */}
       </div>
     );
   }
 
-  const freeCount = 4;
+  const freeCount = 2;
 
   return (
     <div className="min-h-screen bg-black relative overflow-clip">
       <Header />
 
-      <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
+      <main className="relative z-10 px-4 md:px-6 py-8 pb-16 max-w-7xl mx-auto">
         {/* Back link */}
         <button
           onClick={() => router.push("/create")}
@@ -459,7 +632,7 @@ export default function StoryManagementPage() {
                 </div>
                 <span className="text-[#ADADAD]">|</span>
                 <span className="text-[#ADADAD] text-sm tracking-tight">
-                  Episode 1-{freeCount} Free
+                  Episodes 1-{freeCount} Free
                 </span>
               </div>
 
@@ -510,10 +683,46 @@ export default function StoryManagementPage() {
               </button>
 
               {showEpisodes && (
-                <EpisodeList episodes={story.episodes.filter(e => e.status === "published")} freeCount={freeCount} editable />
+                <EpisodeList episodes={story.episodes.filter(e => e.status === "published")} editable />
               )}
 
             </div>
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-[#2C2C43] my-6" />
+
+          {/* Drafts (ai_generations for this story) */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <h3 className="text-white text-lg font-bold">Drafts</h3>
+                {storyGenerations.length > 0 && (
+                  <span className="text-white/30 text-sm">{storyGenerations.length}</span>
+                )}
+              </div>
+            </div>
+
+            {storyGenerations.length === 0 ? (
+              <div className="bg-panel border border-panel-border rounded-xl p-8 text-center">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mx-auto mb-3">
+                  <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <p className="text-white/40 text-sm">No drafts yet</p>
+                <p className="text-white/20 text-xs mt-1">Create an episode to get started</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                {storyGenerations.map((draft) => (
+                  <DraftGenerationCard
+                    key={draft.id}
+                    draft={draft}
+                    onClick={() => handleDraftClick(draft.id)}
+                    onDelete={handleDraftDelete}
+                  />
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Divider */}
@@ -649,7 +858,7 @@ export default function StoryManagementPage() {
         </div>
       </main>
 
-      <Footer />
+      {/* <Footer /> */}
 
       {/* Modals */}
       <CreateEpisodeModal
@@ -689,15 +898,15 @@ export default function StoryManagementPage() {
         editingEbook={
           editingEbook
             ? {
-                id: editingEbook.id,
-                title: editingEbook.title,
-                description: editingEbook.description,
-                cover: editingEbook.cover,
-                fileUrl: editingEbook.fileUrl,
-                price: editingEbook.price,
-                isbn: editingEbook.isbn,
-                storyId: story.id,
-              }
+              id: editingEbook.id,
+              title: editingEbook.title,
+              description: editingEbook.description,
+              cover: editingEbook.cover,
+              fileUrl: editingEbook.fileUrl,
+              price: editingEbook.price,
+              isbn: editingEbook.isbn,
+              storyId: story.id,
+            }
             : undefined
         }
       />
@@ -747,7 +956,7 @@ export default function StoryManagementPage() {
             </h3>
             <p className="text-white/60 text-sm mb-6">
               {story.status === "draft"
-                ? "This story and its published episodes will be visible to everyone."
+                ? "This story and its published episodes and ebooks will be visible to everyone."
                 : "This story will be hidden from viewers. You can re-publish it later."}
             </p>
             <div className="flex justify-end gap-3">
@@ -772,11 +981,10 @@ export default function StoryManagementPage() {
                     setIsTogglingStatus(false);
                   }
                 }}
-                className={`px-4 py-2 text-sm rounded-lg border transition-colors disabled:opacity-50 ${
-                  story.status === "draft"
-                    ? "bg-[#1ED760]/20 text-[#1ED760] border-[#1ED760]/30 hover:bg-[#1ED760]/30"
-                    : "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
-                }`}
+                className={`px-4 py-2 text-sm rounded-lg border transition-colors disabled:opacity-50 ${story.status === "draft"
+                  ? "bg-[#1ED760]/20 text-[#1ED760] border-[#1ED760]/30 hover:bg-[#1ED760]/30"
+                  : "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
+                  }`}
               >
                 {isTogglingStatus ? "Updating..." : story.status === "draft" ? "Publish" : "Unpublish"}
               </button>

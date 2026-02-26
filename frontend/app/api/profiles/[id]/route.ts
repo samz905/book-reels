@@ -115,7 +115,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       .from("profiles")
       .insert({
         id,
-        username: updateData.username || `user-${id.slice(0, 8)}`,
+        username: updateData.username || (updateData.name ? updateData.name.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "") : `user_${id.slice(0, 8)}`),
         name: updateData.name || "New User",
         bio: updateData.bio || "",
         avatar_url: updateData.avatar_url || null,

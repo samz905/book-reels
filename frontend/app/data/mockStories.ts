@@ -12,6 +12,7 @@ export const CATEGORIES = [
   "SLICE OF LIFE",
   "SUPERHERO",
   "HISTORICAL",
+  "ADVENTURE",
   "OTHER",
 ] as const;
 

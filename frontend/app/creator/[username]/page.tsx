@@ -80,38 +80,38 @@ function transformCreatorData(api: ApiCreatorResponse): PublicCreatorProfile {
   const transformedStories: PublicStory[] = stories.map((story) => {
     const publishedEps = (story.episodes || []).filter(e => e.status === "published");
     return {
-    id: story.id,
-    title: story.title,
-    type: story.type,
-    episodeCount: publishedEps.length,
-    viewCount: story.view_count,
-    description: story.description || "",
-    cover: story.cover_url || "https://picsum.photos/seed/default/300/450",
-    likes: story.likes,
-    genre: story.genres,
-    episodes: publishedEps.map((ep): Episode => ({
-      id: ep.id,
-      number: ep.number,
-      name: ep.name,
-      isFree: ep.is_free,
-      status: ep.status as "published",
-      mediaUrl: ep.media_url || null,
-    })),
-    ebooks: (story.ebooks || []).map((eb): Ebook => ({
-      id: eb.id,
-      title: eb.title,
-      description: eb.description || "",
-      cover: eb.cover_url || "https://picsum.photos/seed/default/100/160",
-      price: Number(eb.price),
-    })),
-  };
+      id: story.id,
+      title: story.title,
+      type: story.type,
+      episodeCount: publishedEps.length,
+      viewCount: story.view_count,
+      description: story.description || "",
+      cover: story.cover_url || "https://picsum.photos/seed/default/300/450",
+      likes: story.likes,
+      genre: story.genres,
+      episodes: publishedEps.map((ep): Episode => ({
+        id: ep.id,
+        number: ep.number,
+        name: ep.name,
+        isFree: ep.is_free,
+        status: ep.status as "published",
+        mediaUrl: ep.media_url || null,
+      })),
+      ebooks: (story.ebooks || []).map((eb): Ebook => ({
+        id: eb.id,
+        title: eb.title,
+        description: eb.description || "",
+        cover: eb.cover_url || "https://picsum.photos/seed/default/100/160",
+        price: Number(eb.price),
+      })),
+    };
   });
 
   return {
     profile,
     subscription: {
       monthlyPrice: settings?.monthly_price || 9.99,
-      description: `Unlock all episodes, ${stories.length} stories, all ebooks`,
+      description: `Unlock all episodes (5+) across all stories`,
     },
     stories: transformedStories,
   };
@@ -161,16 +161,16 @@ export default function PublicCreatorProfilePage() {
     return (
       <div className="min-h-screen bg-black relative overflow-clip">
         <Header />
-        <div className="sticky top-[64px] z-20 px-4 md:px-6 py-6 max-w-7xl mx-auto">
+        <div className="px-4 md:px-6 py-6 max-w-7xl mx-auto">
           <ProfileHeaderSkeleton />
         </div>
-        <main className="px-4 md:px-6 pb-8 max-w-7xl mx-auto relative z-10">
+        <main className="px-4 md:px-6 pb-16 max-w-7xl mx-auto relative z-10">
           <div className="space-y-6">
             <PublicStorySkeleton />
             <PublicStorySkeleton />
           </div>
         </main>
-        <Footer />
+        {/* <Footer /> */}
       </div>
     );
   }
@@ -190,7 +190,7 @@ export default function PublicCreatorProfilePage() {
             Try Again
           </button>
         </main>
-        <Footer />
+        {/* <Footer /> */}
       </div>
     );
   }
@@ -209,7 +209,7 @@ export default function PublicCreatorProfilePage() {
             removed.
           </p>
         </main>
-        <Footer />
+        {/* <Footer /> */}
       </div>
     );
   }
@@ -218,8 +218,8 @@ export default function PublicCreatorProfilePage() {
     <div className="min-h-screen bg-black relative overflow-clip">
       <Header />
 
-      {/* Sticky Profile Header */}
-      <div className="sticky top-[64px] z-20 px-4 md:px-6 py-6 max-w-7xl mx-auto">
+      {/* Profile Header */}
+      <div className="px-4 md:px-6 py-6 max-w-7xl mx-auto">
         <PublicProfileHeader
           profile={creator.profile}
           subscriptionPrice={creator.subscription.monthlyPrice}
@@ -228,7 +228,7 @@ export default function PublicCreatorProfilePage() {
       </div>
 
       {/* Stories List */}
-      <main className="px-4 md:px-6 pb-8 max-w-7xl mx-auto relative z-10">
+      <main className="px-4 md:px-6 pb-16 max-w-7xl mx-auto relative z-10">
         <div className="space-y-6">
           {creator.stories.length > 0 ? (
             creator.stories.map((story) => (
@@ -242,7 +242,7 @@ export default function PublicCreatorProfilePage() {
         </div>
       </main>
 
-      <Footer />
+      {/* <Footer /> */}
     </div>
   );
 }

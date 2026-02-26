@@ -98,7 +98,7 @@ export default function CharacterLocationPicker({
 
   return (
     <div className={`mb-6 ${disabled ? "opacity-60 pointer-events-none" : ""}`}>
-      <h3 className="text-white text-sm font-medium mb-1">Cast & Setting</h3>
+      <h3 className="text-white text-sm font-medium mb-1">Cast & Location</h3>
       <p className="text-[#ADADAD] text-xs mb-3">(optional) Pick from your story library</p>
 
       {/* Characters section */}
@@ -134,15 +134,13 @@ export default function CharacterLocationPicker({
                       key={char.id}
                       onClick={() => !isSelected && addCharacter(char)}
                       disabled={isSelected || selectedCharacters.length >= MAX_CHARACTERS}
-                      className={`flex-shrink-0 w-[90px] rounded-xl overflow-hidden border transition-all ${
-                        isSelected
+                      className={`flex-shrink-0 w-[90px] rounded-xl overflow-hidden border transition-all ${isSelected
                           ? "border-[#B8B6FC] opacity-50 cursor-default"
                           : "border-[#262626] hover:border-[#444] cursor-pointer"
-                      } ${
-                        !isSelected && selectedCharacters.length >= MAX_CHARACTERS
+                        } ${!isSelected && selectedCharacters.length >= MAX_CHARACTERS
                           ? "opacity-40 cursor-not-allowed"
                           : ""
-                      }`}
+                        }`}
                     >
                       <div className="w-[90px] h-[120px] bg-[#262626] relative">
                         {(char.imageUrl || char.imageBase64) ? (
@@ -263,11 +261,10 @@ export default function CharacterLocationPicker({
                     <button
                       key={loc.id}
                       onClick={() => toggleLocation(loc)}
-                      className={`flex-shrink-0 w-[90px] rounded-xl overflow-hidden border transition-all cursor-pointer ${
-                        isSelected
+                      className={`flex-shrink-0 w-[90px] rounded-xl overflow-hidden border transition-all cursor-pointer ${isSelected
                           ? "border-green-500 ring-1 ring-green-500/30"
                           : "border-[#262626] hover:border-[#444]"
-                      }`}
+                        }`}
                     >
                       <div className="w-[90px] h-[60px] bg-[#262626] relative">
                         {(loc.imageUrl || loc.imageBase64) ? (

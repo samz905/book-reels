@@ -25,6 +25,7 @@ export const queryKeys = {
   storyLocations: (storyId: string) => ["story-locations", storyId] as const,
   creatorSettings: () => ["creator-settings"] as const,
   generations: () => ["generations"] as const,
+  storyGenerations: (storyId: string) => ["story-generations", storyId] as const,
 };
 
 // ============================================================
@@ -105,6 +106,66 @@ export function useStoryLocations(storyId: string | undefined) {
 export interface GenerationWithStory extends AIGenerationSummary {
   stories: { id: string; title: string; cover_url: string | null } | null;
   first_storyboard_url?: string | null;
+}
+
+// ============================================================
+// Story-scoped Generations — used by /create/[storyId]
+// ============================================================
+
+export interface StoryGeneration {
+  id: string;
+  title: string;
+  style: string;
+  status: string;
+  film_id: string | null;
+  thumbnail_base64: string | null;
+  created_at: string;
+  updated_at: string;
+  first_storyboard_url?: string | null;
+}
+
+export function useStoryGenerations(storyId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.storyGenerations(storyId!),
+    queryFn: async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("ai_generations")
+        .select(
+          `id, title, style, status, film_id,
+           thumbnail_base64, created_at, updated_at`
+        )
+        .eq("story_id", storyId!)
+        .neq("status", "published")
+        .order("updated_at", { ascending: false });
+
+      if (error) throw error;
+      const generations = (data || []) as StoryGeneration[];
+
+      if (generations.length > 0) {
+        const genIds = generations.map((g) => g.id);
+        const { data: storyboards } = await supabase
+          .from("episode_storyboards")
+          .select("generation_id, image_url")
+          .in("generation_id", genIds)
+          .eq("scene_number", 1)
+          .eq("status", "completed");
+        if (storyboards) {
+          const urlMap = new Map<string, string>();
+          for (const sb of storyboards) {
+            if (sb.image_url) urlMap.set(sb.generation_id, sb.image_url);
+          }
+          for (const gen of generations) {
+            gen.first_storyboard_url = urlMap.get(gen.id) || null;
+          }
+        }
+      }
+
+      return generations;
+    },
+    enabled: !!storyId,
+    staleTime: 15_000,
+  });
 }
 
 export function useGenerationsWithStories() {

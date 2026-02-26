@@ -86,6 +86,9 @@ export default function CreateStoryModal({
       alert("Description is required");
       return;
     }
+    if (description.trim().split(/\s+/).filter(Boolean).length > 200) {
+      return;
+    }
 
     onSave({
       title: storyName,
@@ -236,13 +239,21 @@ export default function CreateStoryModal({
 
         {/* Story Description */}
         <div className="mb-6">
-          <label className="block text-white text-base mb-3">Story Description</label>
+          <div className="flex items-center justify-between mb-3">
+            <label className="block text-white text-base">Story Description</label>
+            <span className={`text-sm ${description.trim().split(/\s+/).filter(Boolean).length > 200 ? "text-red-400" : "text-white/40"}`}>
+              {description.trim() ? description.trim().split(/\s+/).filter(Boolean).length : 0}/200 words
+            </span>
+          </div>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="w-full h-[148px] bg-[#262626] rounded-2xl px-4 py-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none"
+            className={`w-full h-[148px] bg-[#262626] rounded-2xl px-4 py-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 resize-none ${description.trim().split(/\s+/).filter(Boolean).length > 200 ? "ring-2 ring-red-500 focus:ring-red-500" : "focus:ring-[#B8B6FC]"}`}
             placeholder=""
           />
+          {description.trim().split(/\s+/).filter(Boolean).length > 200 && (
+            <p className="text-red-400 text-sm mt-1">Description exceeds 200 words. Please shorten it to save.</p>
+          )}
         </div>
 
         {/* Action buttons */}
@@ -258,7 +269,7 @@ export default function CreateStoryModal({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={isSaving}
+            disabled={isSaving || description.trim().split(/\s+/).filter(Boolean).length > 200}
             className="px-6 py-3 bg-[#262550] border border-[#B8B6FC] rounded-lg text-[#B8B6FC] text-sm font-semibold hover:bg-[#363580] transition-colors disabled:opacity-50 flex items-center gap-2"
           >
             {isSaving && (

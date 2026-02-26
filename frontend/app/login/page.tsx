@@ -105,7 +105,7 @@ export default function LoginPage() {
 
       <Header />
 
-      <main className="relative z-10 flex items-center justify-center px-4 md:px-6 py-12">
+      <main className="relative z-10 flex items-center justify-center px-4 md:px-6 py-12 pb-16">
         <div className="w-full max-w-[400px] bg-card-bg-1 rounded-2xl p-6 md:p-8">
           {/* Toggle tabs */}
           <div className="flex mb-8 bg-card-bg-2 rounded-lg p-1">
@@ -300,7 +300,7 @@ export default function LoginPage() {
         </div>
       </main>
 
-      <Footer />
+      {/* <Footer /> */}
     </div>
   );
 }

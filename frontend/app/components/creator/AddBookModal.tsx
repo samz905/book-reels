@@ -26,6 +26,7 @@ interface AddBookModalProps {
   onSave: (data: {
     storyId: string;
     title: string;
+    description?: string;
     fileUrl: string;
     coverUrl?: string;
     price: number;
@@ -33,6 +34,7 @@ interface AddBookModalProps {
   }) => Promise<void>;
   onUpdate?: (ebookId: string, data: {
     title: string;
+    description?: string;
     coverUrl?: string;
     price: number;
     isbn?: string;
@@ -56,6 +58,7 @@ export default function AddBookModal({
   const isEditMode = !!editingEbook;
 
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [selectedStoryId, setSelectedStoryId] = useState<string>(preselectedStoryId || "");
   const [isStoryDropdownOpen, setIsStoryDropdownOpen] = useState(false);
   const [cover, setCover] = useState<string | null>(null);
@@ -67,6 +70,8 @@ export default function AddBookModal({
   const [mounted, setMounted] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [priceError, setPriceError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const coverInputRef = useRef<HTMLInputElement>(null);
   const epubInputRef = useRef<HTMLInputElement>(null);
@@ -80,6 +85,7 @@ export default function AddBookModal({
   useEffect(() => {
     if (editingEbook) {
       setTitle(editingEbook.title);
+      setDescription(editingEbook.description || "");
       setSelectedStoryId(editingEbook.storyId);
       setCover(editingEbook.cover || null);
       setPrice(editingEbook.price.toString());
@@ -120,6 +126,7 @@ export default function AddBookModal({
     }
 
     setCoverFile(file);
+    setFieldErrors(prev => { const { cover: _, ...rest } = prev; return rest; });
     const reader = new FileReader();
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
@@ -141,6 +148,7 @@ export default function AddBookModal({
       setEpubFile(file);
       setEpubFileName(file.name);
       setUploadError(null);
+      setFieldErrors(prev => { const { epub: _, ...rest } = prev; return rest; });
     } catch (err) {
       if (err instanceof UploadError) {
         setUploadError(err.message);
@@ -155,25 +163,28 @@ export default function AddBookModal({
   const handleSubmit = async () => {
     if (isSaving || isUploading) return;
 
-    // Validation
-    if (!selectedStoryId) {
-      alert("Please select a story");
+    // Validate all fields at once
+    const errors: Record<string, string> = {};
+    if (!cover) errors.cover = "Cover photo is required";
+    if (!title.trim()) errors.title = "Book title is required";
+    if (!description.trim()) errors.description = "Description is required";
+    if (!selectedStoryId) errors.story = "Please select a story";
+    if (!isEditMode && !epubFile) errors.epub = "Please upload an EPUB file";
+    if (!price) {
+      errors.price = "Price is required";
+    } else {
+      const num = parseFloat(price);
+      if (isNaN(num) || num < 4.99) errors.price = "Price must be at least $4.99";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      if (errors.price) setPriceError(errors.price);
       return;
     }
-    if (!title.trim()) {
-      alert("Book title is required");
-      return;
-    }
-    // Only require EPUB for new books, not edits
-    if (!isEditMode && !epubFile) {
-      alert("Please upload an EPUB file");
-      return;
-    }
+    setFieldErrors({});
+    setPriceError(null);
     const priceNum = parseFloat(price);
-    if (isNaN(priceNum) || priceNum < 4.99) {
-      alert("Price must be at least $4.99");
-      return;
-    }
 
     setIsUploading(true);
     setUploadError(null);
@@ -188,12 +199,14 @@ export default function AddBookModal({
 
         await onUpdate(editingEbook.id, {
           title: title.trim(),
+          description: description.trim(),
           coverUrl: coverUrl || editingEbook.cover,
           price: priceNum,
           isbn: isbn.trim() || undefined,
         });
 
         resetForm();
+        onClose();
       } else {
         // Create mode - new ebook
         const epubResult = await uploadEpubFile(epubFile!, selectedStoryId);
@@ -206,6 +219,7 @@ export default function AddBookModal({
         await onSave({
           storyId: selectedStoryId,
           title: title.trim(),
+          description: description.trim() || undefined,
           fileUrl: epubResult.path,
           coverUrl,
           price: priceNum,
@@ -227,6 +241,7 @@ export default function AddBookModal({
 
   const resetForm = () => {
     setTitle("");
+    setDescription("");
     setSelectedStoryId(preselectedStoryId || "");
     setCover(null);
     setCoverFile(null);
@@ -235,6 +250,8 @@ export default function AddBookModal({
     setPrice("");
     setIsbn("");
     setUploadError(null);
+    setPriceError(null);
+    setFieldErrors({});
   };
 
   const handleClose = () => {
@@ -286,9 +303,10 @@ export default function AddBookModal({
         />
 
         {/* Cover upload section */}
-        <div className="flex gap-6 mb-6">
+        <div className="mb-6">
+          <div className="flex gap-6">
           {/* Cover preview */}
-          <div className="w-[125px] h-[217px] bg-[#262626] rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden">
+          <div className={`w-[125px] h-[217px] bg-[#262626] rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden ${fieldErrors.cover ? "ring-2 ring-red-500" : ""}`}>
             {cover ? (
               <img src={cover} alt="Cover" className="w-full h-full object-cover" />
             ) : (
@@ -318,6 +336,8 @@ export default function AddBookModal({
               Add a clear JPG or PNG (1600×2400 px recommended) — this will represent your book across the platform.
             </p>
           </div>
+          </div>
+          {fieldErrors.cover && <p className="text-red-400 text-xs mt-1">{fieldErrors.cover}</p>}
         </div>
 
         {/* Book Title */}
@@ -326,11 +346,26 @@ export default function AddBookModal({
           <input
             type="text"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => { setTitle(e.target.value); setFieldErrors(prev => { const { title: _, ...rest } = prev; return rest; }); }}
             disabled={isSaving || isUploading}
-            className="w-full h-14 bg-[#262626] rounded-2xl px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] disabled:opacity-50"
+            className={`w-full h-14 bg-[#262626] rounded-2xl px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 disabled:opacity-50 ${fieldErrors.title ? "ring-2 ring-red-500 focus:ring-red-500" : "focus:ring-[#B8B6FC]"}`}
             placeholder=""
           />
+          {fieldErrors.title && <p className="text-red-400 text-xs mt-1">{fieldErrors.title}</p>}
+        </div>
+
+        {/* Description */}
+        <div className="mb-6">
+          <label className="block text-white text-base mb-3">Description</label>
+          <textarea
+            value={description}
+            onChange={(e) => { setDescription(e.target.value); setFieldErrors(prev => { const { description: _, ...rest } = prev; return rest; }); }}
+            disabled={isSaving || isUploading}
+            rows={4}
+            className={`w-full bg-[#262626] rounded-2xl px-4 py-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 resize-none disabled:opacity-50 ${fieldErrors.description ? "ring-2 ring-red-500 focus:ring-red-500" : "focus:ring-[#B8B6FC]"}`}
+            placeholder="Describe your ebook..."
+          />
+          {fieldErrors.description && <p className="text-red-400 text-xs mt-1">{fieldErrors.description}</p>}
         </div>
 
         {/* Select Story */}
@@ -341,9 +376,8 @@ export default function AddBookModal({
               type="button"
               onClick={() => !isSaving && !isUploading && setIsStoryDropdownOpen(!isStoryDropdownOpen)}
               disabled={isSaving || isUploading}
-              className={`w-full h-14 bg-[#262626] rounded-2xl px-4 text-left text-white flex items-center justify-between disabled:opacity-50 ${
-                isStoryDropdownOpen ? "ring-2 ring-[#B8B6FC]" : ""
-              }`}
+              className={`w-full h-14 bg-[#262626] rounded-2xl px-4 text-left text-white flex items-center justify-between disabled:opacity-50 ${fieldErrors.story ? "ring-2 ring-red-500" : isStoryDropdownOpen ? "ring-2 ring-[#B8B6FC]" : ""
+                }`}
             >
               <span className={selectedStory ? "text-white" : "text-white/40"}>
                 {selectedStory?.title || ""}
@@ -372,10 +406,10 @@ export default function AddBookModal({
                       onClick={() => {
                         setSelectedStoryId(story.id);
                         setIsStoryDropdownOpen(false);
+                        setFieldErrors(prev => { const { story: _, ...rest } = prev; return rest; });
                       }}
-                      className={`w-full px-4 py-2 text-left hover:bg-[#363636] transition-colors ${
-                        selectedStoryId === story.id ? "text-[#B8B6FC]" : "text-white"
-                      }`}
+                      className={`w-full px-4 py-2 text-left hover:bg-[#363636] transition-colors ${selectedStoryId === story.id ? "text-[#B8B6FC]" : "text-white"
+                        }`}
                     >
                       {story.title}
                     </button>
@@ -384,6 +418,7 @@ export default function AddBookModal({
               </div>
             )}
           </div>
+          {fieldErrors.story && <p className="text-red-400 text-xs mt-1">{fieldErrors.story}</p>}
         </div>
 
         {/* Book Manuscript and Price row */}
@@ -393,26 +428,25 @@ export default function AddBookModal({
             <div className="flex items-center gap-2 mb-3">
               <label className="text-white text-base">Book Manuscript</label>
               <span className="text-white/40 text-sm">
-                {isEditMode ? "(Optional - replace existing)" : "Format: epub"}
+                Format: epub
               </span>
             </div>
             <button
               type="button"
               onClick={handleEpubUpload}
               disabled={isSaving || isUploading}
-              className={`w-full h-14 bg-[#262626] rounded-2xl px-4 text-left flex items-center justify-between disabled:opacity-50 ${
-                uploadError ? "ring-2 ring-red-500" : epubFile ? "ring-2 ring-green-500" : ""
-              }`}
+              className={`w-full h-14 bg-[#262626] rounded-2xl px-4 text-left flex items-center justify-between disabled:opacity-50 ${uploadError || fieldErrors.epub ? "ring-2 ring-red-500" : epubFile ? "ring-2 ring-green-500" : ""
+                }`}
             >
               <span className={epubFileName ? "text-white truncate pr-2" : "text-white/40"}>
                 {epubFileName || ""}
               </span>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="#ADADAD" className="flex-shrink-0">
-                <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6z"/>
+                <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6z" />
               </svg>
             </button>
-            {uploadError && (
-              <p className="text-red-400 text-xs mt-1">{uploadError}</p>
+            {(uploadError || fieldErrors.epub) && (
+              <p className="text-red-400 text-xs mt-1">{uploadError || fieldErrors.epub}</p>
             )}
           </div>
 
@@ -429,12 +463,24 @@ export default function AddBookModal({
                 step="0.01"
                 min="4.99"
                 value={price}
-                onChange={(e) => setPrice(e.target.value)}
+                onChange={(e) => {
+                  setPrice(e.target.value);
+                  setFieldErrors(prev => { const { price: _, ...rest } = prev; return rest; });
+                  const num = parseFloat(e.target.value);
+                  if (e.target.value && !isNaN(num) && num < 4.99) {
+                    setPriceError("Price must be at least $4.99");
+                  } else {
+                    setPriceError(null);
+                  }
+                }}
                 disabled={isSaving || isUploading}
-                className="w-full h-14 bg-[#262626] rounded-2xl px-4 pl-8 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] disabled:opacity-50"
+                className={`w-full h-14 bg-[#262626] rounded-2xl px-4 pl-8 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 disabled:opacity-50 ${priceError ? "ring-2 ring-red-500 focus:ring-red-500" : "focus:ring-[#B8B6FC]"}`}
                 placeholder=""
               />
             </div>
+            {priceError && (
+              <p className="text-red-400 text-xs mt-1">{priceError}</p>
+            )}
           </div>
         </div>
 

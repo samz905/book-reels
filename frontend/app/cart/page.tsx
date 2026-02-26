@@ -68,12 +68,12 @@ export default function CartPage() {
     return (
       <div className="min-h-screen bg-black">
         <Header />
-        <main className="px-4 md:px-6 py-8 max-w-7xl mx-auto">
+        <main className="px-4 md:px-6 py-8 pb-16 max-w-7xl mx-auto">
           <div className="flex items-center justify-center py-20">
             <div className="w-8 h-8 border-2 border-[#B8B6FC] border-t-transparent rounded-full animate-spin" />
           </div>
         </main>
-        <Footer />
+        {/* <Footer /> */}
       </div>
     );
   }
@@ -87,7 +87,7 @@ export default function CartPage() {
     <div className="min-h-screen bg-black">
       <Header />
 
-      <main className="px-4 md:px-6 py-8 max-w-7xl mx-auto">
+      <main className="px-4 md:px-6 py-8 pb-16 max-w-7xl mx-auto">
         {/* Tabs */}
         <div className="flex items-center gap-5 mb-6">
           <button
@@ -146,7 +146,7 @@ export default function CartPage() {
         )}
       </main>
 
-      <Footer />
+      {/* <Footer /> */}
 
       {/* Success Modal */}
       <PurchaseSuccessModal

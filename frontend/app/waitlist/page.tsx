@@ -71,18 +71,24 @@ export default function WaitlistPage() {
 
           {/* Heading */}
           <h1 className="text-3xl md:text-4xl font-bold text-white mb-4">
-            You&apos;re on the list!
+            You&apos;re on the list, {displayName}! 🎉
           </h1>
 
           {/* Subtext */}
           <p className="text-white/60 text-lg mb-3 leading-relaxed">
-            Thanks for requesting early access, <span className="text-white font-medium">{displayName}</span>.
-            We&apos;re rolling out access in small batches to ensure the best experience.
+            We&apos;re so excited you asked for early access.
           </p>
 
-          <p className="text-white/40 text-sm mb-10">
-            We&apos;ll send a notification to <span className="text-white/60">{user.email}</span> when
-            your account is ready.
+          <p className="text-white/60 text-base mb-3 leading-relaxed">
+            We&apos;re inviting creators in thoughtfully, one group at a time, to make sure everyone gets the best possible experience.
+          </p>
+
+          <p className="text-white/60 text-base mb-3 leading-relaxed">
+            As soon as your account is ready, we&apos;ll send a note to <span className="text-white font-medium">{user.email}</span>.
+          </p>
+
+          <p className="text-white/60 text-base mb-10 leading-relaxed">
+            Can&apos;t wait to welcome you in.
           </p>
 
           {/* Actions */}
@@ -97,7 +103,7 @@ export default function WaitlistPage() {
         </div>
       </main>
 
-      <Footer />
+      {/* <Footer /> */}
     </div>
   );
 }

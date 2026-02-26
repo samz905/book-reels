@@ -80,8 +80,8 @@ export default function CreatorStoryCard({
     ebooksScrollRef.current.scrollBy({ left: 380, behavior: "smooth" });
   };
 
-  // Calculate free episode count (first 4 are free per design)
-  const freeCount = 4;
+  // Free episode count for display label
+  const freeCount = 2;
 
   // Handler for adding book
   const handleAddBook = async (bookData: {
@@ -175,9 +175,9 @@ export default function CreatorStoryCard({
               Unpublish
             </button>
           )}
-          {/* Edit button - navigates to story management page */}
+          {/* Edit button - opens edit story popup */}
           <button
-            onClick={() => router.push(`/create/${story.id}`)}
+            onClick={() => setShowEditModal(true)}
             className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="#E8EAED">
@@ -201,8 +201,13 @@ export default function CreatorStoryCard({
 
         {/* Story info */}
         <div className="flex-1 min-w-0">
-          {/* Title - 24px bold */}
-          <h3 className="text-white text-2xl font-bold mb-3">{story.title}</h3>
+          {/* Title - 24px bold, clickable to story details */}
+          <h3
+            className="text-white text-2xl font-bold mb-3 cursor-pointer hover:text-white/80 transition-colors"
+            onClick={() => router.push(`/create/${story.id}`)}
+          >
+            {story.title}
+          </h3>
 
           {/* Tags row: Type | Episodes | Free episodes */}
           <div className="flex items-center gap-2 mb-4">
@@ -221,7 +226,7 @@ export default function CreatorStoryCard({
 
             {/* Free episodes */}
             <span className="text-[#ADADAD] text-sm tracking-tight">
-              Episode 1-{freeCount} Free
+              Episodes 1-{freeCount} Free
             </span>
           </div>
 
@@ -250,7 +255,7 @@ export default function CreatorStoryCard({
             </div>
             <div className="flex items-center gap-1">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M5.85 8.98333L8.91667 6.95C9.01667 6.88333 9.06667 6.78889 9.06667 6.66667C9.06667 6.54444 9.01667 6.45 8.91667 6.38333L5.85 4.35C5.73889 4.27222 5.625 4.26389 5.50833 4.325C5.39167 4.38611 5.33333 4.48333 5.33333 4.61667V8.71667C5.33333 8.85 5.39167 8.94722 5.50833 9.00833C5.625 9.06944 5.73889 9.06111 5.85 8.98333ZM6.66667 13.3333C5.74444 13.3333 4.87778 13.1583 4.06667 12.8083C3.25556 12.4583 2.55 11.9833 1.95 11.3833C1.35 10.7833 0.875 10.0778 0.525 9.26667C0.175 8.45555 0 7.58889 0 6.66667C0 6.31111 0.0277778 5.95556 0.0833333 5.6C0.138889 5.24444 0.222222 4.89444 0.333333 4.55C0.388889 4.37222 0.502778 4.25278 0.675 4.19167C0.847222 4.13056 1.01111 4.14444 1.16667 4.23333C1.33333 4.32222 1.45278 4.45278 1.525 4.625C1.59722 4.79722 1.60556 4.97778 1.55 5.16667C1.48333 5.41111 1.43056 5.65833 1.39167 5.90833C1.35278 6.15833 1.33333 6.41111 1.33333 6.66667C1.33333 8.15555 1.85 9.41667 2.88333 10.45C3.91667 11.4833 5.17778 12 6.66667 12C8.15555 12 9.41667 11.4833 10.45 10.45C11.4833 9.41667 12 8.15555 12 6.66667C12 5.17778 11.4833 3.91667 10.45 2.88333C9.41667 1.85 8.15555 1.33333 6.66667 1.33333C6.4 1.33333 6.13611 1.35278 5.875 1.39167C5.61389 1.43056 5.35556 1.48889 5.1 1.56667C4.91111 1.62222 4.73333 1.61667 4.56667 1.55C4.4 1.48333 4.27778 1.36667 4.2 1.2C4.12222 1.03333 4.11944 0.863889 4.19167 0.691667C4.26389 0.519444 4.38889 0.405556 4.56667 0.35C4.9 0.227778 5.24444 0.138889 5.6 0.0833333C5.95556 0.0277778 6.31111 0 6.66667 0C7.58889 0 8.45555 0.175 9.26667 0.525C10.0778 0.875 10.7833 1.35 11.3833 1.95C11.9833 2.55 12.4583 3.25556 12.8083 4.06667C13.1583 4.87778 13.3333 5.74444 13.3333 6.66667C13.3333 7.58889 13.1583 8.45555 12.8083 9.26667C12.4583 10.0778 11.9833 10.7833 11.3833 11.3833C10.7833 11.9833 10.0778 12.4583 9.26667 12.8083C8.45555 13.1583 7.58889 13.3333 6.66667 13.3333ZM2.33333 3.33333C2.05556 3.33333 1.81944 3.23611 1.625 3.04167C1.43056 2.84722 1.33333 2.61111 1.33333 2.33333C1.33333 2.05556 1.43056 1.81944 1.625 1.625C1.81944 1.43056 2.05556 1.33333 2.33333 1.33333C2.61111 1.33333 2.84722 1.43056 3.04167 1.625C3.23611 1.81944 3.33333 2.05556 3.33333 2.33333C3.33333 2.61111 3.23611 2.84722 3.04167 3.04167C2.84722 3.23611 2.61111 3.33333 2.33333 3.33333ZM2.66667 6.66667C2.66667 5.55556 3.05556 4.61111 3.83333 3.83333C4.61111 3.05556 5.55556 2.66667 6.66667 2.66667C7.77778 2.66667 8.72222 3.05556 9.5 3.83333C10.2778 4.61111 10.6667 5.55556 10.6667 6.66667C10.6667 7.77778 10.2778 8.72222 9.5 9.5C8.72222 10.2778 7.77778 10.6667 6.66667 10.6667C5.55556 10.6667 4.61111 10.2778 3.83333 9.5C3.05556 8.72222 2.66667 7.77778 2.66667 6.66667Z" fill="#ADADAD"/>
+                <path d="M5.85 8.98333L8.91667 6.95C9.01667 6.88333 9.06667 6.78889 9.06667 6.66667C9.06667 6.54444 9.01667 6.45 8.91667 6.38333L5.85 4.35C5.73889 4.27222 5.625 4.26389 5.50833 4.325C5.39167 4.38611 5.33333 4.48333 5.33333 4.61667V8.71667C5.33333 8.85 5.39167 8.94722 5.50833 9.00833C5.625 9.06944 5.73889 9.06111 5.85 8.98333ZM6.66667 13.3333C5.74444 13.3333 4.87778 13.1583 4.06667 12.8083C3.25556 12.4583 2.55 11.9833 1.95 11.3833C1.35 10.7833 0.875 10.0778 0.525 9.26667C0.175 8.45555 0 7.58889 0 6.66667C0 6.31111 0.0277778 5.95556 0.0833333 5.6C0.138889 5.24444 0.222222 4.89444 0.333333 4.55C0.388889 4.37222 0.502778 4.25278 0.675 4.19167C0.847222 4.13056 1.01111 4.14444 1.16667 4.23333C1.33333 4.32222 1.45278 4.45278 1.525 4.625C1.59722 4.79722 1.60556 4.97778 1.55 5.16667C1.48333 5.41111 1.43056 5.65833 1.39167 5.90833C1.35278 6.15833 1.33333 6.41111 1.33333 6.66667C1.33333 8.15555 1.85 9.41667 2.88333 10.45C3.91667 11.4833 5.17778 12 6.66667 12C8.15555 12 9.41667 11.4833 10.45 10.45C11.4833 9.41667 12 8.15555 12 6.66667C12 5.17778 11.4833 3.91667 10.45 2.88333C9.41667 1.85 8.15555 1.33333 6.66667 1.33333C6.4 1.33333 6.13611 1.35278 5.875 1.39167C5.61389 1.43056 5.35556 1.48889 5.1 1.56667C4.91111 1.62222 4.73333 1.61667 4.56667 1.55C4.4 1.48333 4.27778 1.36667 4.2 1.2C4.12222 1.03333 4.11944 0.863889 4.19167 0.691667C4.26389 0.519444 4.38889 0.405556 4.56667 0.35C4.9 0.227778 5.24444 0.138889 5.6 0.0833333C5.95556 0.0277778 6.31111 0 6.66667 0C7.58889 0 8.45555 0.175 9.26667 0.525C10.0778 0.875 10.7833 1.35 11.3833 1.95C11.9833 2.55 12.4583 3.25556 12.8083 4.06667C13.1583 4.87778 13.3333 5.74444 13.3333 6.66667C13.3333 7.58889 13.1583 8.45555 12.8083 9.26667C12.4583 10.0778 11.9833 10.7833 11.3833 11.3833C10.7833 11.9833 10.0778 12.4583 9.26667 12.8083C8.45555 13.1583 7.58889 13.3333 6.66667 13.3333ZM2.33333 3.33333C2.05556 3.33333 1.81944 3.23611 1.625 3.04167C1.43056 2.84722 1.33333 2.61111 1.33333 2.33333C1.33333 2.05556 1.43056 1.81944 1.625 1.625C1.81944 1.43056 2.05556 1.33333 2.33333 1.33333C2.61111 1.33333 2.84722 1.43056 3.04167 1.625C3.23611 1.81944 3.33333 2.05556 3.33333 2.33333C3.33333 2.61111 3.23611 2.84722 3.04167 3.04167C2.84722 3.23611 2.61111 3.33333 2.33333 3.33333ZM2.66667 6.66667C2.66667 5.55556 3.05556 4.61111 3.83333 3.83333C4.61111 3.05556 5.55556 2.66667 6.66667 2.66667C7.77778 2.66667 8.72222 3.05556 9.5 3.83333C10.2778 4.61111 10.6667 5.55556 10.6667 6.66667C10.6667 7.77778 10.2778 8.72222 9.5 9.5C8.72222 10.2778 7.77778 10.6667 6.66667 10.6667C5.55556 10.6667 4.61111 10.2778 3.83333 9.5C3.05556 8.72222 2.66667 7.77778 2.66667 6.66667Z" fill="#ADADAD" />
               </svg>
               <span className="text-[#ADADAD] text-sm tracking-tight">
                 {formatViewCount(story.viewCount)} Plays
@@ -277,7 +282,7 @@ export default function CreatorStoryCard({
 
           {/* Episode list (collapsible) */}
           {showEpisodes && (
-            <EpisodeList episodes={story.episodes.filter(e => e.status === "published")} freeCount={freeCount} editable />
+            <EpisodeList episodes={story.episodes.filter(e => e.status === "published")} editable />
           )}
 
         </div>
@@ -299,9 +304,8 @@ export default function CreatorStoryCard({
           <div className="flex items-center gap-4">
             <button
               onClick={scrollLeftHandler}
-              className={`transition-colors ${
-                canScrollLeft ? "text-white" : "text-[#ADADAD]"
-              }`}
+              className={`transition-colors ${canScrollLeft ? "text-white" : "text-[#ADADAD]"
+                }`}
               disabled={!canScrollLeft}
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
@@ -310,9 +314,8 @@ export default function CreatorStoryCard({
             </button>
             <button
               onClick={scrollRightHandler}
-              className={`transition-colors ${
-                canScrollRight ? "text-white" : "text-[#ADADAD]"
-              }`}
+              className={`transition-colors ${canScrollRight ? "text-white" : "text-[#ADADAD]"
+                }`}
               disabled={!canScrollRight}
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
@@ -349,7 +352,7 @@ export default function CreatorStoryCard({
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-[#ADADAD]">
                           <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/>
+                            <path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z" />
                           </svg>
                         </div>
                       )}
@@ -459,7 +462,7 @@ export default function CreatorStoryCard({
             </h3>
             <p className="text-white/60 text-sm mb-6">
               {story.status === "draft"
-                ? "This story and its published episodes will be visible to everyone."
+                ? "This story and its published episodes and ebooks will be visible to everyone."
                 : "This story will be hidden from viewers. You can re-publish it later."}
             </p>
             <div className="flex justify-end gap-3">
@@ -483,11 +486,10 @@ export default function CreatorStoryCard({
                     setIsTogglingStatus(false);
                   }
                 }}
-                className={`px-4 py-2 text-sm rounded-lg border transition-colors disabled:opacity-50 ${
-                  story.status === "draft"
-                    ? "bg-[#1ED760]/20 text-[#1ED760] border-[#1ED760]/30 hover:bg-[#1ED760]/30"
-                    : "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
-                }`}
+                className={`px-4 py-2 text-sm rounded-lg border transition-colors disabled:opacity-50 ${story.status === "draft"
+                  ? "bg-[#1ED760]/20 text-[#1ED760] border-[#1ED760]/30 hover:bg-[#1ED760]/30"
+                  : "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
+                  }`}
               >
                 {isTogglingStatus ? "Updating..." : story.status === "draft" ? "Publish" : "Unpublish"}
               </button>

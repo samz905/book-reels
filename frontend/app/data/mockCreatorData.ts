@@ -107,16 +107,20 @@ export const VISUAL_STYLES = [
 ];
 
 export const GENRES = [
-  "Fantasy",
   "Romance",
-  "Action",
   "Drama",
-  "Thriller",
-  "Mystery",
+  "Fantasy",
   "Horror",
   "Sci-Fi",
   "Comedy",
+  "Thriller",
+  "Action",
+  "Mystery",
+  "Slice of Life",
+  "Superhero",
+  "Historical",
   "Adventure",
+  "Other",
 ];
 
 // Empty state defaults

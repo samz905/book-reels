@@ -79,7 +79,7 @@ export default function PublicProfileHeader({
             <p className="text-[#ADADAD] text-sm leading-[19px] tracking-tight mt-1 sm:mt-2">
               @{profile.username}
             </p>
-            <p className="text-white text-sm leading-[19px] tracking-tight mt-3 sm:mt-4 line-clamp-2 max-w-[875px]">
+            <p className="text-white text-sm leading-[19px] tracking-tight mt-3 sm:mt-4 max-w-[875px]">
               {profile.bio}
             </p>
           </div>

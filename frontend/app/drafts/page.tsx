@@ -426,7 +426,7 @@ export default function DraftsPage() {
     <div className="min-h-screen bg-black relative overflow-clip">
       <Header />
 
-      <main className="relative z-10 px-4 md:px-6 py-8 max-w-7xl mx-auto">
+      <main className="relative z-10 px-4 md:px-6 py-8 pb-16 max-w-7xl mx-auto">
         {/* Top bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
@@ -612,7 +612,7 @@ export default function DraftsPage() {
         )}
       </main>
 
-      <Footer />
+      {/* <Footer /> */}
 
       <StoryPickerModal
         isOpen={showStoryPicker}

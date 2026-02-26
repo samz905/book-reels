@@ -76,7 +76,26 @@ export async function GET(request: NextRequest) {
       return errorResponse(error.message, 500);
     }
 
-    return jsonResponse(paginatedResponse(stories || [], count || 0, { page, limit, offset }));
+    // For public listing (not creator's own), filter out stories without published episodes
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let filteredStories: any[] = stories || [];
+    if (!creatorId) {
+      const storyIds = filteredStories.map((s) => s.id);
+      if (storyIds.length > 0) {
+        const { data: episodeCounts } = await supabase
+          .from("episodes")
+          .select("story_id")
+          .in("story_id", storyIds)
+          .eq("status", "published");
+
+        const storiesWithEpisodes = new Set(
+          (episodeCounts || []).map((e: { story_id: string }) => e.story_id)
+        );
+        filteredStories = filteredStories.filter((s) => storiesWithEpisodes.has(s.id));
+      }
+    }
+
+    return jsonResponse(paginatedResponse(filteredStories, count || 0, { page, limit, offset }));
   } catch (err) {
     return errorResponse(err instanceof Error ? err.message : "Unknown error", 500);
   }
