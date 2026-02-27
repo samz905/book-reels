@@ -3265,6 +3265,70 @@ export default function CreateEpisodePage() {
     </div>
   );
 
+  // Vertical Filmstrip (Scene View + Film — new two-column layout)
+  const renderVerticalFilmstrip = (opts: {
+    scenes: { scene_number: number }[];
+    currentScene: number;
+    onSelect: (n: number) => void;
+    getStatus: (n: number) => FilmstripStatus;
+    getThumbnail: (n: number) => string | null;
+    isFilm?: boolean;
+  }) => (
+    <div className="flex lg:flex-col gap-1.5 overflow-x-auto lg:overflow-x-visible lg:overflow-y-auto scrollbar-hide lg:w-16 flex-shrink-0 p-0.5">
+      {opts.scenes.map((scene) => {
+        const status = opts.getStatus(scene.scene_number);
+        const thumb = opts.getThumbnail(scene.scene_number);
+        const isSelected = opts.currentScene === scene.scene_number;
+        return (
+          <button
+            key={scene.scene_number}
+            onClick={() => opts.onSelect(scene.scene_number)}
+            className={`relative rounded-lg overflow-hidden transition-all flex-shrink-0 w-12 lg:w-full ${isSelected ? "ring-2 ring-[#B8B6FC] ring-offset-1 ring-offset-[#0A0A0F]"
+                : status === "generating" ? "ring-1 ring-[#9C99FF]/60"
+                  : status === "queued" ? "ring-1 ring-white/20"
+                    : "ring-1 ring-white/10 hover:ring-white/30"
+              }`}
+          >
+            <div className="aspect-[9/16] bg-[#13131A]">
+              {thumb ? (
+                <img src={thumb} alt={`Scene ${scene.scene_number}`} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-white/20 text-[10px] font-bold">
+                  {scene.scene_number}
+                </div>
+              )}
+            </div>
+            {status === "approved" && (
+              <div className="absolute top-0.5 right-0.5 w-3 h-3 rounded-full bg-emerald-500 flex items-center justify-center">
+                <svg width="6" height="6" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><path d="M5 13l4 4L19 7" /></svg>
+              </div>
+            )}
+            {opts.isFilm && status === "completed" && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z" /></svg>
+              </div>
+            )}
+            {status === "queued" && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" className="opacity-40"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+              </div>
+            )}
+            {status === "generating" && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                <div className="w-3 h-3 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+            {status === "failed" && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                <div className="w-3 h-3 rounded-full bg-red-500/80 flex items-center justify-center text-white text-[7px] font-bold">!</div>
+              </div>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   // ============================================================
   // Render
   // ============================================================
@@ -4012,22 +4076,6 @@ export default function CreateEpisodePage() {
         {/* Section 2: Build Your Visuals */}
         {displayedStage === 2 && story && (
           <>
-            {/* Back navigation */}
-            {visualsTab === "lookbook" ? (
-              <button
-                onClick={() => { setDisplayedStage(1); saveNow({ displayedStage: 1 }); }}
-                className="text-sm text-[#ADADAD] hover:text-white transition-colors mb-4"
-              >
-                &larr; Back to Create Your Script
-              </button>
-            ) : (
-              <button
-                onClick={() => { setVisualsTab("lookbook"); saveNow({ visualsTab: "lookbook" }); }}
-                className="text-sm text-[#ADADAD] hover:text-white transition-colors mb-4"
-              >
-                &larr; Back to Lookbook
-              </button>
-            )}
             {/* Sub-tab breadcrumb navigation */}
             <div className="flex items-center gap-2 mb-6">
               {(["lookbook", "scenes"] as VisualsTab[]).map((tab, idx) => {
@@ -4057,7 +4105,7 @@ export default function CreateEpisodePage() {
               })}
             </div>
 
-            <div className="bg-panel rounded-3xl outline outline-1 outline-panel-border p-8">
+            <div>
               {/* ─── Lookbook ─── */}
               {visualsTab === "lookbook" && (() => {
                 const protChar = story.characters.find(c => c.role === "protagonist") || story.characters[0];
@@ -4066,7 +4114,7 @@ export default function CreateEpisodePage() {
                 const needsGenCount = story.characters.filter(c => !characterImages[c.id]?.image).length + story.locations.filter(l => !locationImages[l.id]?.image).length;
 
                 return (
-                  <div>
+                  <div className="bg-panel rounded-3xl outline outline-1 outline-panel-border p-6 md:p-8">
                     {/* Header with Generate All */}
                     <div className="flex items-center justify-between mb-6">
                       <h2 className="text-2xl font-bold text-white">Your Cast & World</h2>
@@ -4245,7 +4293,13 @@ export default function CreateEpisodePage() {
                     </div>
 
                     {/* Lookbook footer navigation */}
-                    <div className="mt-10 flex items-center justify-end">
+                    <div className="mt-10 flex items-center justify-between">
+                      <button
+                        onClick={() => { setDisplayedStage(1); saveNow({ displayedStage: 1 }); }}
+                        className="text-sm text-[#B8B6FC] hover:text-[#B8B6FC]/80 transition-colors flex items-center gap-1"
+                      >
+                        &larr; Back to Create Your Script
+                      </button>
                       <button
                         onClick={() => {
                           setVisualsTab("scenes");
@@ -4379,7 +4433,7 @@ export default function CreateEpisodePage() {
 
                   {/* ════════ GRID VIEW ════════ */}
                   {storyboardViewMode === "grid" && Object.keys(sceneImages).length > 0 && (
-                    <>
+                    <div className="bg-panel rounded-3xl outline outline-1 outline-panel-border p-6 md:p-8">
                       <p className="text-xs text-[#ADADAD]/70 text-left mb-5">
                         Each image becomes the first frame of its scene&apos;s video. Click any card to view details and edit.
                       </p>
@@ -4455,17 +4509,15 @@ export default function CreateEpisodePage() {
                             );
                           })}
                       </div>
-                    </>
+                    </div>
                   )}
 
-                  {/* ════════ SCENE VIEW ════════ */}
+                  {/* ════════ SCENE VIEW (two-column layout) ════════ */}
                   {storyboardViewMode === "scene" && Object.keys(sceneImages).length > 0 && (() => {
                     const sortedScenes = Object.values(sceneImages).sort((a, b) => a.sceneNumber - b.sceneNumber);
                     const sceneIdx = sortedScenes.findIndex(s => s.sceneNumber === selectedStoryboardScene);
                     const currentScene = sortedScenes[sceneIdx >= 0 ? sceneIdx : 0];
                     if (!currentScene) return null;
-                    const canGoPrev = sceneIdx > 0;
-                    const canGoNext = sceneIdx < sortedScenes.length - 1;
 
                     // Get scene metadata from story
                     const storyScenes = story ? getScenes(story) : [];
@@ -4473,7 +4525,6 @@ export default function CreateEpisodePage() {
                     const locationName = storyScene && story ? (story.locations.find(l => l.id === storyScene.setting_id)?.name || "") : "";
                     const charsOnScreen = storyScene?.characters_on_screen || [];
 
-                    // Resolve character/location images for display (match by name OR id)
                     const charImagesForScene = charsOnScreen.map(cName => {
                       const lower = cName.toLowerCase();
                       const char = story?.characters.find(c =>
@@ -4486,255 +4537,211 @@ export default function CreateEpisodePage() {
                     const locImg = locObj ? locationImages[locObj.id]?.image : null;
 
                     return (
-                      <div className="max-w-2xl mx-auto">
-                        {/* Prev / Next navigation */}
-                        <div className="flex items-center justify-center gap-6 mb-6">
-                          <button
-                            onClick={() => { if (canGoPrev) { setSelectedStoryboardScene(sortedScenes[sceneIdx - 1].sceneNumber); setEditingDesc(false); setEditImageOpen(false); } }}
-                            disabled={!canGoPrev}
-                            className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center text-white/50 hover:text-white hover:border-white/30 disabled:text-white/10 disabled:border-white/5 disabled:cursor-not-allowed transition-all"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>
-                          </button>
-                          <div className="text-center">
-                            <span className="text-white/40 text-xs font-medium tracking-wider uppercase">Scene</span>
-                            <span className="text-white text-sm font-semibold ml-1.5">{currentScene.sceneNumber}</span>
-                            <span className="text-white/30 text-xs ml-1">/ {sortedScenes.length}</span>
-                          </div>
-                          <button
-                            onClick={() => { if (canGoNext) { setSelectedStoryboardScene(sortedScenes[sceneIdx + 1].sceneNumber); setEditingDesc(false); setEditImageOpen(false); } }}
-                            disabled={!canGoNext}
-                            className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center text-white/50 hover:text-white hover:border-white/30 disabled:text-white/10 disabled:border-white/5 disabled:cursor-not-allowed transition-all"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
-                          </button>
-                        </div>
+                      <>
+                        <div className="flex flex-col lg:flex-row gap-6 lg:gap-8">
+                          {/* ── LEFT COLUMN: Details ── */}
+                          <div className="w-full lg:w-1/2 flex flex-col bg-panel rounded-2xl lg:rounded-3xl outline outline-1 outline-panel-border p-4 md:p-6">
+                            <h2 className="text-2xl font-bold text-white mb-5">Storyboard</h2>
 
-                        {/* Large centered storyboard image */}
-                        <div className="flex justify-center mb-6">
-                          <div className="w-full max-w-[380px] aspect-[9/16] relative overflow-hidden rounded-2xl bg-[#0A0A0F] shadow-2xl shadow-black/40">
-                            {currentScene.isQueued ? (
-                              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/30 mb-3"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
-                                <p className="text-white/40 text-sm">Queued</p>
-                                <p className="text-white/20 text-xs mt-1">Waiting for slot...</p>
-                              </div>
-                            ) : currentScene.isGenerating ? (
+                            {/* Scene title + edit icon */}
+                            <div className="flex items-start justify-between mb-3">
+                              <h3 className="text-white text-lg font-semibold">{currentScene.title}</h3>
+                              {!currentScene.isGenerating && (
+                                <button onClick={() => setEditingDesc(!editingDesc)} className="ml-3 mt-0.5 p-1.5 rounded-lg text-white/30 hover:text-white/70 hover:bg-white/5 transition-all" title="Edit description">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="opacity-70"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Description */}
+                            {editingDesc ? (
                               <>
-                                {currentScene.image && (
-                                  <img src={getImageSrc(currentScene.image)} className="absolute inset-0 w-full h-full object-cover blur-sm opacity-30" alt="" />
-                                )}
-                                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                  <div className="w-10 h-10 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mb-3" />
-                                  <p className="text-white/60 text-sm">Generating...</p>
-                                  {sceneGenElapsed[currentScene.sceneNumber] != null && (
-                                    <p className="text-white/30 text-xs mt-1">{sceneGenElapsed[currentScene.sceneNumber]}s</p>
-                                  )}
+                                <textarea
+                                  value={currentScene.visualDescription}
+                                  onChange={(e) => setSceneImages(prev => ({
+                                    ...prev,
+                                    [currentScene.sceneNumber]: { ...prev[currentScene.sceneNumber], visualDescription: e.target.value },
+                                  }))}
+                                  rows={4}
+                                  className="w-full bg-[#0A0A0F] text-[#ADADAD] text-sm leading-relaxed rounded-xl px-4 py-3 mb-3 placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]/50 border border-white/10 resize-none"
+                                />
+                                <div className="flex items-center gap-3 mb-4">
+                                  <button onClick={() => fetchSceneDescriptions()} disabled={isGeneratingSceneDescs} className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 disabled:text-emerald-400/40 text-xs font-medium transition-colors">
+                                    {isGeneratingSceneDescs ? <div className="w-3.5 h-3.5 border border-emerald-400/40 border-t-transparent rounded-full animate-spin" /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6M23 20v-6h-6" /><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" /></svg>}
+                                    {isGeneratingSceneDescs ? "Regenerating..." : "Regenerate with AI"}
+                                  </button>
+                                  <button onClick={() => setEditingDesc(false)} className="flex items-center gap-1.5 text-[#B8B6FC] hover:text-[#B8B6FC]/80 text-xs font-medium transition-colors">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 13l4 4L19 7" /></svg>
+                                    Use this description
+                                  </button>
                                 </div>
                               </>
-                            ) : currentScene.image ? (
-                              <img src={getImageSrc(currentScene.image)} alt={`Scene ${currentScene.sceneNumber}`} className="w-full h-full object-cover" />
-                            ) : currentScene.error ? (
-                              <div className="absolute inset-0 flex flex-col items-center justify-center p-6">
-                                <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mb-3">
-                                  <svg className="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                  </svg>
-                                </div>
-                                <p className="text-red-400 text-sm font-medium mb-1">Generation Failed</p>
-                                <p className="text-white/30 text-xs text-center">{currentScene.error}</p>
-                              </div>
                             ) : (
-                              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                <div className="w-14 h-14 rounded-full border-2 border-dashed border-white/10 flex items-center justify-center mb-3">
-                                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/20"><path d="M12 5v14M5 12h14" /></svg>
-                                </div>
-                                <p className="text-white/20 text-sm">No image</p>
-                              </div>
+                              <p className="text-[#ADADAD] text-sm leading-relaxed mb-4">
+                                &ldquo;{currentScene.visualDescription}&rdquo;
+                              </p>
                             )}
-                          </div>
-                        </div>
 
-                        {/* Scene title + Edit desc button */}
-                        <div className="flex items-start justify-between mb-3">
-                          <h3 className="text-white text-lg font-semibold">
-                            {currentScene.title}
-                          </h3>
-                          {!currentScene.isGenerating && (
-                            <button
-                              onClick={() => setEditingDesc(!editingDesc)}
-                              className="ml-3 mt-0.5 p-1.5 rounded-lg text-white/30 hover:text-white/70 hover:bg-white/5 transition-all"
-                              title="Edit description"
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="opacity-70"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Description */}
-                        {editingDesc ? (
-                          <>
-                            <textarea
-                              value={currentScene.visualDescription}
-                              onChange={(e) => setSceneImages(prev => ({
-                                ...prev,
-                                [currentScene.sceneNumber]: { ...prev[currentScene.sceneNumber], visualDescription: e.target.value },
-                              }))}
-                              rows={3}
-                              className="w-full bg-[#0A0A0F] text-[#ADADAD] text-sm leading-relaxed rounded-xl px-4 py-3 mb-3 placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]/50 border border-white/10 resize-none"
-                            />
-                            <div className="flex items-center gap-3 mb-4">
-                              <button
-                                onClick={() => {
-                                  fetchSceneDescriptions();
-                                }}
-                                disabled={isGeneratingSceneDescs}
-                                className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 disabled:text-emerald-400/40 text-xs font-medium transition-colors"
-                              >
-                                {isGeneratingSceneDescs ? (
-                                  <div className="w-3.5 h-3.5 border border-emerald-400/40 border-t-transparent rounded-full animate-spin" />
-                                ) : (
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6M23 20v-6h-6" /><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" /></svg>
-                                )}
-                                {isGeneratingSceneDescs ? "Regenerating..." : "Regenerate with AI"}
-                              </button>
-                              <button
-                                onClick={() => setEditingDesc(false)}
-                                className="flex items-center gap-1.5 text-[#B8B6FC] hover:text-[#B8B6FC]/80 text-xs font-medium transition-colors"
-                              >
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 13l4 4L19 7" /></svg>
-                                Use this description
-                              </button>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <p className="text-[#ADADAD] text-sm leading-relaxed mb-2">
-                              &ldquo;{currentScene.visualDescription}&rdquo;
-                            </p>
-                            <div className="mb-2" />
-                          </>
-                        )}
-
-                        {/* Characters + Location — clean labeled text with inline avatars */}
-                        <div className="flex flex-col gap-1.5 mb-5 text-sm">
-                          {charImagesForScene.length > 0 && (
-                            <div className="flex items-center gap-2">
-                              <span className="text-white/30">Characters:</span>
-                              <div className="flex items-center gap-2">
-                                {charImagesForScene.map(({ name, img }) => (
-                                  <span key={name} className="flex items-center gap-1.5">
-                                    {img && <img src={getImageSrc(img)} alt={name} className="w-5 h-5 rounded-full object-cover" />}
-                                    <span className="text-white/70">{name}</span>
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {locObj && (
-                            <div className="flex items-center gap-2">
-                              <span className="text-white/30">Location:</span>
-                              <span className="flex items-center gap-1.5">
-                                {locImg && <img src={getImageSrc(locImg)} alt={locationName} className="w-5 h-5 rounded-full object-cover" />}
-                                <span className="text-white/70">{locationName}</span>
-                              </span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Edit image feedback — shown when Edit Image is clicked */}
-                        {editImageOpen && currentScene.image && !currentScene.isGenerating && (
-                          <input
-                            type="text"
-                            value={currentScene.feedback}
-                            onChange={(e) => setSceneImages(prev => ({
-                              ...prev,
-                              [currentScene.sceneNumber]: { ...prev[currentScene.sceneNumber], feedback: e.target.value },
-                            }))}
-                            placeholder="Make the lighting warmer, add more shadows..."
-                            autoFocus
-                            className="w-full bg-[#0A0A0F] text-white text-sm rounded-xl px-4 py-2.5 mb-4 placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]/50 border border-white/10"
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && currentScene.feedback.trim()) {
-                                refineSceneImage(currentScene.sceneNumber);
-                                setEditImageOpen(false);
-                              }
-                            }}
-                          />
-                        )}
-
-                        {/* Action buttons */}
-                        <div className="flex gap-2.5 mb-5">
-                          {!currentScene.isGenerating && !currentScene.isQueued && (
-                            <button
-                              onClick={() => regenerateSceneImage(currentScene.sceneNumber)}
-                              className={`h-10 px-5 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${currentScene.image
-                                  ? "bg-white/5 text-white/70 hover:bg-white/10 hover:text-white border border-white/10"
-                                  : "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white hover:opacity-90"
-                                }`}
-                            >
-                              {currentScene.image ? (
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6M23 20v-6h-6" /><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" /></svg>
-                              ) : (
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></svg>
+                            {/* Characters + Location */}
+                            <div className="flex flex-col gap-1.5 mb-5 text-sm">
+                              {charImagesForScene.length > 0 && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-white/30">Characters:</span>
+                                  {charImagesForScene.map(({ name, img }) => (
+                                    <span key={name} className="flex items-center gap-1.5">
+                                      {img && <img src={getImageSrc(img)} alt={name} className="w-5 h-5 rounded-full object-cover" />}
+                                      <span className="text-white/70">{name}</span>
+                                    </span>
+                                  ))}
+                                </div>
                               )}
-                              {currentScene.image ? "Regenerate Image" : "Generate Image"}
-                            </button>
-                          )}
-                          {currentScene.image && !currentScene.isGenerating && (
-                            <button
-                              onClick={() => {
-                                if (!editImageOpen) {
-                                  setEditImageOpen(true);
-                                } else {
-                                  if (currentScene.feedback.trim()) {
+                              {locObj && (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-white/30">Location:</span>
+                                  <span className="flex items-center gap-1.5">
+                                    {locImg && <img src={getImageSrc(locImg)} alt={locationName} className="w-5 h-5 rounded-full object-cover" />}
+                                    <span className="text-white/70">{locationName}</span>
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Edit image feedback input */}
+                            {editImageOpen && currentScene.image && !currentScene.isGenerating && (
+                              <input
+                                type="text"
+                                value={currentScene.feedback}
+                                onChange={(e) => setSceneImages(prev => ({
+                                  ...prev,
+                                  [currentScene.sceneNumber]: { ...prev[currentScene.sceneNumber], feedback: e.target.value },
+                                }))}
+                                placeholder="Make the lighting warmer, add more shadows..."
+                                autoFocus
+                                className="w-full bg-[#0A0A0F] text-white text-sm rounded-xl px-4 py-2.5 mb-4 placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]/50 border border-white/10"
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && currentScene.feedback.trim()) {
                                     refineSceneImage(currentScene.sceneNumber);
                                     setEditImageOpen(false);
                                   }
-                                }
-                              }}
-                              disabled={editImageOpen && !currentScene.feedback.trim()}
-                              className="h-10 px-5 rounded-xl text-sm font-medium bg-white/5 text-white/70 hover:bg-white/10 hover:text-white border border-white/10 transition-all disabled:opacity-25 disabled:cursor-not-allowed flex items-center gap-2"
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
-                              Edit Image
-                            </button>
-                          )}
+                                }}
+                              />
+                            )}
+
+                            {/* Action buttons */}
+                            <div className="flex flex-wrap gap-2.5">
+                              {!currentScene.isGenerating && !currentScene.isQueued && (
+                                <button
+                                  onClick={() => regenerateSceneImage(currentScene.sceneNumber)}
+                                  className="h-10 px-5 rounded-xl text-sm font-medium transition-all flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white hover:opacity-90"
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6M23 20v-6h-6" /><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" /></svg>
+                                  {currentScene.image ? "Regenerate Image" : "Generate Image"}
+                                </button>
+                              )}
+                              {currentScene.image && !currentScene.isGenerating && (
+                                <button
+                                  onClick={() => {
+                                    if (!editImageOpen) { setEditImageOpen(true); }
+                                    else if (currentScene.feedback.trim()) { refineSceneImage(currentScene.sceneNumber); setEditImageOpen(false); }
+                                  }}
+                                  disabled={editImageOpen && !currentScene.feedback.trim()}
+                                  className="h-10 px-5 rounded-xl text-sm font-medium bg-white/5 text-white/70 hover:bg-white/10 hover:text-white border border-white/10 transition-all disabled:opacity-25 disabled:cursor-not-allowed flex items-center gap-2"
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
+                                  Edit Image
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* ── RIGHT COLUMN: Media + Vertical Filmstrip ── */}
+                          <div className="w-full lg:w-1/2 flex flex-col bg-panel rounded-2xl lg:rounded-3xl outline outline-1 outline-panel-border p-4 md:p-6">
+                            {/* Scene counter */}
+                            <div className="text-right mb-2">
+                              <span className="text-white/40 text-xs font-medium tracking-wider uppercase">Scene {currentScene.sceneNumber}</span>
+                              <span className="text-white/20 text-xs ml-1">/ {sortedScenes.length}</span>
+                            </div>
+
+                            {/* Image + filmstrip row */}
+                            <div className="flex gap-3 items-stretch">
+                              {/* Main image */}
+                              <div className="flex-1 aspect-[9/16] relative overflow-hidden rounded-2xl bg-[#0A0A0F] shadow-2xl shadow-black/40">
+                                {currentScene.isQueued ? (
+                                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/30 mb-3"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+                                    <p className="text-white/40 text-sm">Queued</p>
+                                    <p className="text-white/20 text-xs mt-1">Waiting for slot...</p>
+                                  </div>
+                                ) : currentScene.isGenerating ? (
+                                  <>
+                                    {currentScene.image && <img src={getImageSrc(currentScene.image)} className="absolute inset-0 w-full h-full object-cover blur-sm opacity-30" alt="" />}
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                      <div className="w-10 h-10 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mb-3" />
+                                      <p className="text-white/60 text-sm">Generating...</p>
+                                      {sceneGenElapsed[currentScene.sceneNumber] != null && <p className="text-white/30 text-xs mt-1">{sceneGenElapsed[currentScene.sceneNumber]}s</p>}
+                                    </div>
+                                  </>
+                                ) : currentScene.image ? (
+                                  <img src={getImageSrc(currentScene.image)} alt={`Scene ${currentScene.sceneNumber}`} className="w-full h-full object-cover" />
+                                ) : currentScene.error ? (
+                                  <div className="absolute inset-0 flex flex-col items-center justify-center p-6">
+                                    <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mb-3">
+                                      <svg className="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                    </div>
+                                    <p className="text-red-400 text-sm font-medium mb-1">Generation Failed</p>
+                                    <p className="text-white/30 text-xs text-center">{currentScene.error}</p>
+                                  </div>
+                                ) : (
+                                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                    <div className="w-14 h-14 rounded-full border-2 border-dashed border-white/10 flex items-center justify-center mb-3">
+                                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/20"><path d="M12 5v14M5 12h14" /></svg>
+                                    </div>
+                                    <p className="text-white/20 text-sm">No image</p>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Vertical filmstrip */}
+                              {renderVerticalFilmstrip({
+                                scenes: sortedScenes.map(s => ({ scene_number: s.sceneNumber })),
+                                currentScene: selectedStoryboardScene,
+                                onSelect: (n) => { setSelectedStoryboardScene(n); setEditingDesc(false); setEditImageOpen(false); },
+                                getStatus: (n) => sceneImages[n]?.isQueued ? "queued"
+                                  : sceneImages[n]?.isGenerating ? "generating"
+                                    : sceneImages[n]?.error ? "failed"
+                                      : sceneImages[n]?.image ? "completed"
+                                        : "empty",
+                                getThumbnail: (n) => sceneImages[n]?.image ? getImageSrc(sceneImages[n].image!) : null,
+                              })}
+                            </div>
+                          </div>
                         </div>
 
-                        {/* Filmstrip */}
-                        {renderFilmstrip({
-                          scenes: sortedScenes.map(s => ({ scene_number: s.sceneNumber })),
-                          currentScene: selectedStoryboardScene,
-                          onSelect: (n) => { setSelectedStoryboardScene(n); setEditingDesc(false); setEditImageOpen(false); },
-                          getStatus: (n) => sceneImages[n]?.isQueued ? "queued"
-                            : sceneImages[n]?.isGenerating ? "generating"
-                              : sceneImages[n]?.error ? "failed"
-                                : sceneImages[n]?.image ? "completed"
-                                  : "empty",
-                          getThumbnail: (n) => sceneImages[n]?.image ? getImageSrc(sceneImages[n].image!) : null,
-                        })}
-                      </div>
+                      </>
                     );
                   })()}
 
-                  {/* Footer navigation */}
-                  <div className="mt-10 flex items-center justify-end">
-                    <button
-                      onClick={() => {
-                        if (clipsActive) {
-                          setDisplayedStage(3);
-                          saveNow({ displayedStage: 3 });
-                        } else {
-                          enterClipsStage();
-                        }
-                      }}
-                      disabled={!Object.values(sceneImages).every(s => s.image)}
-                      className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {clipsActive ? "Back to Video" : "Approve All & Continue"}
-                    </button>
-                  </div>
+                  {/* Shared bottom bar for scenes tab (grid + scene view) */}
+                  {Object.keys(sceneImages).length > 0 && (
+                    <div className="mt-8 flex items-center justify-between">
+                      <button
+                        onClick={() => { setVisualsTab("lookbook"); saveNow({ visualsTab: "lookbook" }); }}
+                        className="text-sm text-[#B8B6FC] hover:text-[#B8B6FC]/80 transition-colors flex items-center gap-1"
+                      >
+                        &larr; Back to Your Characters
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (clipsActive) { setDisplayedStage(3); saveNow({ displayedStage: 3 }); }
+                          else { enterClipsStage(); }
+                        }}
+                        disabled={!Object.values(sceneImages).every(s => s.image)}
+                        className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Approve &amp; Continue
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -4847,121 +4854,55 @@ export default function CreateEpisodePage() {
 
           return (
             <div>
-              {/* Back to visuals */}
-              <button
-                onClick={() => { setDisplayedStage(2); saveNow({ displayedStage: 2 }); }}
-                className="text-sm text-[#ADADAD] hover:text-white transition-colors mb-4"
-              >
-                &larr; Back to Visuals
-              </button>
-
-              {/* ─── Film Timeline ─── */}
-              <div className="mb-4 rounded-2xl bg-white/[0.02] p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-sm text-[#ADADAD]">{completedCount} of {scenes.length} clips ready &middot; {totalDuration}s / {maxDuration}s</p>
-                </div>
-
-                {/* Timeline filmstrip (shared component) */}
-                {renderFilmstrip({
-                  scenes,
-                  currentScene: selectedClipScene,
-                  onSelect: setSelectedClipScene,
-                  getStatus: (n) => clipStates[n]?.status === "completed" ? "completed"
-                    : clipStates[n]?.status === "generating" ? "generating"
-                      : clipStates[n]?.status === "failed" ? "failed"
-                        : sceneImages[n]?.image ? "ready" : "empty",
-                  getThumbnail: (n) => sceneImages[n]?.image ? getImageSrc(sceneImages[n].image!) : null,
-                  isFilm: true,
-                })}
-
-                {/* Progress bar */}
-                <div className="mt-3 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-[#9C99FF] to-emerald-500 rounded-full transition-all duration-500" style={{ width: `${scenes.length > 0 ? (completedCount / scenes.length) * 100 : 0}%` }} />
+              {/* Top Row: Title + Preview Film */}
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-white text-2xl font-bold">Refine Your Episode</h2>
+                <div className="flex items-center gap-3">
+                  {completedCount > 0 && (
+                    <button
+                      onClick={previewFilm}
+                      disabled={assembleIntent !== null}
+                      className="px-4 py-2 text-sm font-medium border border-[#B8B6FC] text-[#B8B6FC] rounded-xl hover:bg-[#B8B6FC]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+                    >
+                      {assembleIntent === "preview" ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-[#B8B6FC] border-t-transparent rounded-full animate-spin" />
+                          Assembling...
+                        </>
+                      ) : "Preview Film"}
+                    </button>
+                  )}
                 </div>
               </div>
 
-              <div className="bg-panel rounded-3xl outline outline-1 outline-panel-border p-8">
-
-                {/* Scene View navigation + Video + Details — constrained like storyboard */}
-                <div className="max-w-2xl mx-auto">
-                  {/* Prev / Next navigation — matches storyboard scene view */}
-                  <div className="flex items-center justify-center gap-6 mb-6">
-                    <button
-                      onClick={() => { if (canGoPrev) setSelectedClipScene(scenes[sceneIdx - 1].scene_number); }}
-                      disabled={!canGoPrev}
-                      className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center text-white/50 hover:text-white hover:border-white/30 disabled:text-white/10 disabled:border-white/5 disabled:cursor-not-allowed transition-all"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>
-                    </button>
-                    <div className="text-center">
-                      <span className="text-white/40 text-xs font-medium tracking-wider uppercase">Scene</span>
-                      <span className="text-white text-sm font-semibold ml-1.5">{currentScene?.scene_number || 1}</span>
-                      <span className="text-white/30 text-xs ml-1">/ {scenes.length}</span>
-                    </div>
-                    <button
-                      onClick={() => { if (canGoNext) setSelectedClipScene(scenes[sceneIdx + 1].scene_number); }}
-                      disabled={!canGoNext}
-                      className="w-9 h-9 rounded-full border border-white/10 flex items-center justify-center text-white/50 hover:text-white hover:border-white/30 disabled:text-white/10 disabled:border-white/5 disabled:cursor-not-allowed transition-all"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
-                    </button>
-                  </div>
-
-                  {/* Large centered video player — matches storyboard style */}
-                  <div className="flex justify-center mb-6">
-                    <div className="w-full max-w-[380px] aspect-[9/16] relative overflow-hidden rounded-2xl bg-[#0A0A0F] shadow-2xl shadow-black/40">
-                      {currentClip?.status === "completed" && currentClip.videoUrl ? (
-                        <video
-                          key={`clip-${selectedClipScene}-${currentClip.videoUrl}`}
-                          src={resolveVideoUrl(currentClip.videoUrl)}
-                          controls
-                          playsInline
-                          className="absolute inset-0 w-full h-full object-cover"
-                        />
-                      ) : currentClip?.status === "generating" ? (
-                        <>
-                          {storyboardImg && (
-                            <img src={getImageSrc(storyboardImg)} className="absolute inset-0 w-full h-full object-cover blur-sm opacity-40" />
-                          )}
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="text-center">
-                              <div className="w-10 h-10 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-                              <p className="text-white/60 text-sm">Generating clip...</p>
-                              <p className="text-white/30 text-xs mt-1">~1-2 minutes</p>
-                            </div>
-                          </div>
-                        </>
-                      ) : currentClip?.status === "failed" ? (
-                        <div className="absolute inset-0 flex items-center justify-center p-4">
-                          <div className="text-center">
-                            <svg className="w-10 h-10 mx-auto text-red-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <p className="text-red-400 text-sm font-medium mb-1">Generation Failed</p>
-                            <p className="text-white/40 text-xs">{currentClip.error || "Unknown error"}</p>
-                          </div>
-                        </div>
-                      ) : storyboardImg ? (
-                        <img src={getImageSrc(storyboardImg)} className="absolute inset-0 w-full h-full object-cover" />
-                      ) : (
-                        <div className="absolute inset-0 flex items-center justify-center bg-panel-border">
-                          <p className="text-white/30 text-sm">No storyboard image</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Scene details + generate button */}
+              {/* Two-column layout */}
+              <div className="flex flex-col lg:flex-row gap-6 lg:gap-8">
+                {/* LEFT: Scene details */}
+                <div className="lg:w-1/2 flex flex-col order-2 lg:order-1 bg-panel rounded-2xl lg:rounded-3xl outline outline-1 outline-panel-border p-4 md:p-6">
                   {currentScene && (
                     <div>
-                      {/* Scene title — matches storyboard */}
-                      <h3 className="text-white text-lg font-semibold mb-3">
-                        {sceneImages[selectedClipScene]?.title || currentScene.title}
-                      </h3>
+                      {/* Scene title + edit pencil */}
+                      <div className="flex items-start gap-2 mb-4">
+                        <h3 className="text-white text-lg font-semibold flex-1">
+                          {sceneImages[selectedClipScene]?.title || currentScene.title}
+                        </h3>
+                        {editingSceneIndex === null && (
+                          <button
+                            onClick={() => {
+                              const idx = scenes.findIndex((s) => s.scene_number === selectedClipScene);
+                              if (idx >= 0) { setEditingSceneIndex(idx); setEditSceneDraft({ ...currentScene }); }
+                            }}
+                            className="ml-3 mt-0.5 p-1.5 rounded-lg text-white/30 hover:text-white/70 hover:bg-white/5 transition-all flex-shrink-0"
+                            title="Edit scene"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="opacity-70"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
+                          </button>
+                        )}
+                      </div>
 
-                      {/* Action */}
+                      {/* Description / Action */}
                       {currentScene.action && (
-                        <div className="text-white/70 text-sm italic mb-3 leading-relaxed space-y-0.5">
+                        <div className="text-white/70 text-sm leading-relaxed mb-4 space-y-0.5">
                           {splitActionLines(currentScene.action).map((line, li) => (
                             <p key={li}>{line}</p>
                           ))}
@@ -5016,19 +4957,9 @@ export default function CreateEpisodePage() {
                           <button onClick={() => saveSceneEdit(editingSceneIndex, editSceneDraft)} className="px-3 py-1.5 bg-[#B8B6FC] text-black text-xs font-medium rounded-lg hover:opacity-90">Save</button>
                           <button onClick={() => { setEditingSceneIndex(null); setEditSceneDraft(null); }} className="px-3 py-1.5 bg-[#262626] text-[#ADADAD] text-xs rounded-lg hover:text-white">Cancel</button>
                         </div>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            const idx = scenes.findIndex((s) => s.scene_number === selectedClipScene);
-                            if (idx >= 0) { setEditingSceneIndex(idx); setEditSceneDraft({ ...currentScene }); }
-                          }}
-                          className="text-[#B8B6FC] text-xs hover:underline mb-4 inline-block"
-                        >
-                          Edit dialogue
-                        </button>
-                      )}
+                      ) : null}
 
-                      {/* Characters + Location — labeled text with inline avatars (matches storyboard) */}
+                      {/* Characters + Location */}
                       {(() => {
                         const charsOnScreen = currentScene.characters_on_screen || [];
                         const charImagesForClip = charsOnScreen.map(cName => {
@@ -5046,7 +4977,7 @@ export default function CreateEpisodePage() {
                             {charImagesForClip.length > 0 && (
                               <div className="flex items-center gap-2">
                                 <span className="text-white/30">Characters:</span>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                   {charImagesForClip.map(({ name, img }) => (
                                     <span key={name} className="flex items-center gap-1.5">
                                       {img && <img src={getImageSrc(img)} alt={name} className="w-5 h-5 rounded-full object-cover" />}
@@ -5069,11 +5000,11 @@ export default function CreateEpisodePage() {
                         );
                       })()}
 
-                      {/* Generate / Regenerate Clip button */}
+                      {/* Generate / Regenerate Clip — green button */}
                       <button
                         onClick={() => generateClip(selectedClipScene)}
                         disabled={currentClip?.status === "generating"}
-                        className="w-full py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
                       >
                         {currentClip?.status === "generating" ? (
                           <>
@@ -5081,55 +5012,112 @@ export default function CreateEpisodePage() {
                             Generating...
                           </>
                         ) : currentClip?.status === "completed" ? (
-                          "Regenerate Clip ~$0.18"
+                          "Regenerate Clip"
                         ) : currentClip?.status === "failed" ? (
-                          "Retry Clip ~$0.18"
+                          "Retry Clip"
                         ) : (
-                          "Generate Clip ~$0.18"
+                          "Generate Clip"
                         )}
                       </button>
+                      <p className="text-white/30 text-xs mt-2 text-center">~$0.18 per clip</p>
                     </div>
                   )}
-                </div>{/* close max-w-2xl mx-auto */}
+                </div>
 
-                {/* Bottom actions */}
-                <div className="mt-8 border-t border-white/5 pt-6 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    {completedCount > 0 && (
-                      <button
-                        onClick={previewFilm}
-                        disabled={assembleIntent !== null}
-                        className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {assembleIntent === "preview" ? (
-                          <>
-                            <div className="w-3.5 h-3.5 border-2 border-white/50 border-t-transparent rounded-full animate-spin" />
-                            Assembling...
-                          </>
-                        ) : (
-                          <>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                            Preview Film
-                          </>
-                        )}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => { handleSaveDraft(); }}
-                      disabled={draftSaveStatus === "saving"}
-                      className={`text-sm transition-colors ${draftSaveStatus === "saved"
-                        ? "text-emerald-400"
-                        : "text-white/50 hover:text-white"
-                        } disabled:opacity-40 disabled:cursor-not-allowed`}
-                    >
-                      {draftSaveStatus === "saved" ? (
-                        <span className="flex items-center gap-1.5">
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                          Saved
-                        </span>
-                      ) : draftSaveStatus === "saving" ? "Saving..." : "Save to Drafts"}
-                    </button>
+                {/* RIGHT: Video + Vertical Filmstrip */}
+                <div className="lg:w-1/2 order-1 lg:order-2 bg-panel rounded-2xl lg:rounded-3xl outline outline-1 outline-panel-border p-4 md:p-6">
+                  {/* Scene counter */}
+                  <div className="flex justify-end mb-2">
+                    <div>
+                      <span className="text-white/40 text-xs font-medium tracking-wider uppercase">Scene</span>
+                      <span className="text-white text-sm font-semibold ml-1.5">{currentScene?.scene_number || 1}</span>
+                      <span className="text-white/30 text-xs ml-1">/ {scenes.length}</span>
+                    </div>
                   </div>
+
+                  <div className="flex gap-3 items-stretch">
+                    {/* Main video */}
+                    <div className="flex-1 aspect-[9/16] relative overflow-hidden rounded-2xl bg-[#0A0A0F] shadow-2xl shadow-black/40">
+                      {currentClip?.status === "completed" && currentClip.videoUrl ? (
+                        <video
+                          key={`clip-${selectedClipScene}-${currentClip.videoUrl}`}
+                          src={resolveVideoUrl(currentClip.videoUrl)}
+                          controls
+                          playsInline
+                          className="absolute inset-0 w-full h-full object-cover"
+                        />
+                      ) : currentClip?.status === "generating" ? (
+                        <>
+                          {storyboardImg && (
+                            <img src={getImageSrc(storyboardImg)} className="absolute inset-0 w-full h-full object-cover blur-sm opacity-40" />
+                          )}
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="text-center">
+                              <div className="w-10 h-10 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                              <p className="text-white/60 text-sm">Generating clip...</p>
+                              <p className="text-white/30 text-xs mt-1">~1-2 minutes</p>
+                            </div>
+                          </div>
+                        </>
+                      ) : currentClip?.status === "failed" ? (
+                        <div className="absolute inset-0 flex items-center justify-center p-4">
+                          <div className="text-center">
+                            <svg className="w-10 h-10 mx-auto text-red-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <p className="text-red-400 text-sm font-medium mb-1">Generation Failed</p>
+                            <p className="text-white/40 text-xs">{currentClip.error || "Unknown error"}</p>
+                          </div>
+                        </div>
+                      ) : storyboardImg ? (
+                        <img src={getImageSrc(storyboardImg)} className="absolute inset-0 w-full h-full object-cover" />
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center bg-panel-border">
+                          <p className="text-white/30 text-sm">No storyboard image</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Vertical filmstrip */}
+                    {renderVerticalFilmstrip({
+                      scenes,
+                      currentScene: selectedClipScene,
+                      onSelect: setSelectedClipScene,
+                      getStatus: (n) => clipStates[n]?.status === "completed" ? "completed"
+                        : clipStates[n]?.status === "generating" ? "generating"
+                          : clipStates[n]?.status === "failed" ? "failed"
+                            : sceneImages[n]?.image ? "ready" : "empty",
+                      getThumbnail: (n) => sceneImages[n]?.image ? getImageSrc(sceneImages[n].image!) : null,
+                      isFilm: true,
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom bar */}
+              <div className="mt-8 border-t border-white/5 pt-6 flex items-center justify-between">
+                <button
+                  onClick={() => { setDisplayedStage(2); saveNow({ displayedStage: 2 }); }}
+                  className="text-sm text-[#B8B6FC] hover:text-[#B8B6FC]/80 transition-colors flex items-center gap-1"
+                >
+                  &larr; Back to Your Episode Setting
+                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => { handleSaveDraft(); }}
+                    disabled={draftSaveStatus === "saving"}
+                    className={`px-4 py-2 text-sm font-medium border rounded-xl transition-colors ${draftSaveStatus === "saved"
+                      ? "border-emerald-500/30 text-emerald-400"
+                      : "border-white/10 text-white/50 hover:text-white hover:border-white/30"
+                      } disabled:opacity-40 disabled:cursor-not-allowed`}
+                  >
+                    {draftSaveStatus === "saved" ? (
+                      <span className="flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                        Saved
+                      </span>
+                    ) : draftSaveStatus === "saving" ? "Saving..." : "Save to Profile"}
+                  </button>
                   {publishedEpisodeId ? (
                     <button
                       onClick={() => setShowUnpublishConfirm(true)}
