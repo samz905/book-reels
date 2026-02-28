@@ -487,7 +487,7 @@ Create additional supporting characters ONLY if the story absolutely requires th
         for c in library_characters:
             char_lines.append(
                 f'  - id: "{c.id}", name: "{c.name}", gender: "{c.gender}", '
-                f'age: "{c.age}", appearance: "{c.appearance}", role: "{c.role}"'
+                f'age: "{c.age}", appearance: "{c.appearance}"'
             )
         prompt += f"""
 
@@ -865,7 +865,7 @@ def parse_story_response(
                 char["gender"] = matched.gender
                 char["age"] = matched.age
                 char["appearance"] = matched.appearance
-                char["role"] = matched.role or char.get("role", "supporting")
+                # role left to AI — varies per episode
                 char["origin"] = "story"
             else:
                 char["origin"] = "ai"

@@ -1462,7 +1462,6 @@ export default function CreateEpisodePage() {
           gender: c.gender || "",
           age: c.age || "",
           appearance: c.description || "",
-          role: c.role || "supporting",
         })) : undefined,
         library_locations: storyLibraryLocs.length > 0 ? storyLibraryLocs.map(l => ({
           id: l.id,
@@ -1499,7 +1498,6 @@ export default function CreateEpisodePage() {
           gender: c.gender || "",
           age: c.age || "",
           appearance: c.description || "",
-          role: c.role || "supporting",
         })) : undefined,
         library_locations: storyLibraryLocs.length > 0 ? storyLibraryLocs.map(l => ({
           id: l.id,
@@ -3560,7 +3558,7 @@ export default function CreateEpisodePage() {
                   Your Episode Idea
                 </h2>
                 <p className="text-sm text-[#ADADAD] mb-6">
-                  Paste text (chapter or scene) or describe an idea for the episode. Include characters, setting, location, dialogue stye, and other details you want to see in the episode.
+                  Paste text (chapter or scene) or describe an idea for the episode. Include characters, setting, location, dialogue style, and other details you want to see in the episode.
                 </p>
 
                 <div className="mb-6">

@@ -266,6 +266,8 @@ async def handle_story_generate(payload: dict) -> dict:
         req.idea, req.style,
         characters=req.characters,
         location=req.location,
+        library_characters=req.library_characters,
+        library_locations=req.library_locations,
     )
     response = await generate_text(
         prompt=prompt,
@@ -277,6 +279,8 @@ async def handle_story_generate(payload: dict) -> dict:
         pre_selected_char_ids=pre_char_ids,
         pre_selected_chars=req.characters,
         pre_selected_location=req.location,
+        library_characters=req.library_characters,
+        library_locations=req.library_locations,
     )
     cost = estimate_story_cost(len(story_obj.scenes) or len(story_obj.beats))
     sanitized = story_mod.sanitize_story_for_client(story_obj)
@@ -292,6 +296,8 @@ async def handle_story_regenerate(payload: dict) -> dict:
         feedback=req.feedback,
         characters=req.characters,
         location=req.location,
+        library_characters=req.library_characters,
+        library_locations=req.library_locations,
     )
     response = await generate_text(
         prompt=prompt,
@@ -303,6 +309,8 @@ async def handle_story_regenerate(payload: dict) -> dict:
         pre_selected_char_ids=pre_char_ids,
         pre_selected_chars=req.characters,
         pre_selected_location=req.location,
+        library_characters=req.library_characters,
+        library_locations=req.library_locations,
     )
     cost = estimate_story_cost(len(story_obj.scenes) or len(story_obj.beats))
     sanitized = story_mod.sanitize_story_for_client(story_obj)
