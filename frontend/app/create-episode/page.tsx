@@ -2400,8 +2400,9 @@ export default function CreateEpisodePage() {
       const byId = storyLibraryChars.find((c) => c.id === char.id)
         || selectedChars.find((c) => c.id === char.id);
       if (byId && (byId.imageBase64 || byId.imageUrl)) return byId;
-      // Name fallback: ONLY against selectedChars (user-picked), never full library
-      const byName = selectedChars.find((c) => c.name.toLowerCase() === nameLower);
+      // Name fallback: selected first, then full library (safe — same-name = same character)
+      const byName = selectedChars.find((c) => c.name.toLowerCase() === nameLower)
+        || storyLibraryChars.find((c) => c.name.toLowerCase() === nameLower);
       if (byName && (byName.imageBase64 || byName.imageUrl)) return byName;
       return null;
     };
@@ -2436,8 +2437,9 @@ export default function CreateEpisodePage() {
       const byId = storyLibraryLocs.find((l) => l.id === loc.id)
         || (selectedLocation?.id === loc.id ? selectedLocation : null);
       if (byId && (byId.imageBase64 || byId.imageUrl)) return byId;
-      // Name fallback: ONLY against selectedLocation (user-picked), never full library
-      const byName = (selectedLocation && (selectedLocation.name || "").toLowerCase() === nameLower ? selectedLocation : null);
+      // Name fallback: selected first, then full library
+      const byName = (selectedLocation && (selectedLocation.name || "").toLowerCase() === nameLower ? selectedLocation : null)
+        || storyLibraryLocs.find((l) => (l.name || "").toLowerCase() === nameLower);
       if (byName && (byName.imageBase64 || byName.imageUrl)) return byName;
       return null;
     };
