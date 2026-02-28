@@ -3218,9 +3218,9 @@ export default function CreateEpisodePage() {
               key={scene.scene_number}
               onClick={() => opts.onSelect(scene.scene_number)}
               className={`relative rounded-lg overflow-hidden transition-all ${isSelected ? "ring-2 ring-[#B8B6FC] ring-offset-1 ring-offset-[#0A0A0F]"
-                  : status === "generating" ? "ring-1 ring-[#9C99FF]/60"
-                    : status === "queued" ? "ring-1 ring-white/20"
-                      : "ring-1 ring-white/10 hover:ring-white/30"
+                : status === "generating" ? "ring-1 ring-[#9C99FF]/60"
+                  : status === "queued" ? "ring-1 ring-white/20"
+                    : "ring-1 ring-white/10 hover:ring-white/30"
                 }`}
             >
               <div className="aspect-[9/16] bg-[#13131A]">
@@ -3284,9 +3284,9 @@ export default function CreateEpisodePage() {
             key={scene.scene_number}
             onClick={() => opts.onSelect(scene.scene_number)}
             className={`relative rounded-lg overflow-hidden transition-all flex-shrink-0 w-12 lg:w-full ${isSelected ? "ring-2 ring-[#B8B6FC] ring-offset-1 ring-offset-[#0A0A0F]"
-                : status === "generating" ? "ring-1 ring-[#9C99FF]/60"
-                  : status === "queued" ? "ring-1 ring-white/20"
-                    : "ring-1 ring-white/10 hover:ring-white/30"
+              : status === "generating" ? "ring-1 ring-[#9C99FF]/60"
+                : status === "queued" ? "ring-1 ring-white/20"
+                  : "ring-1 ring-white/10 hover:ring-white/30"
               }`}
           >
             <div className="aspect-[9/16] bg-[#13131A]">
@@ -3466,7 +3466,7 @@ export default function CreateEpisodePage() {
                   disabled={step.active}
                   className={`flex items-center gap-2 ${isClickable ? "cursor-pointer" : step.active ? "cursor-default" : "cursor-not-allowed"}`}
                 >
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 transition-colors ${step.active ? "bg-[#9C99FF] text-black" : isUnlocked ? "bg-[#9C99FF]/70 text-black hover:bg-[#9C99FF]" : "bg-white/10 text-white/50"
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 transition-colors ${isCompleted && !step.active ? "bg-emerald-500 text-white" : step.active ? "bg-[#9C99FF] text-black" : isUnlocked ? "bg-[#9C99FF]/70 text-black hover:bg-[#9C99FF]" : "bg-white/10 text-white/50"
                     }`}>
                     {isCompleted ? "\u2713" : step.num}
                   </div>
@@ -3527,7 +3527,7 @@ export default function CreateEpisodePage() {
                   Your Episode Idea
                 </h2>
                 <p className="text-sm text-[#ADADAD] mb-6">
-                  Keep it short — this is a 1 minute episode. Include characters, setting, genre, dialogue style, and other details you want to see.
+                  Paste text (chapter or scene) or describe an idea for the episode. Include characters, setting, location, dialogue stye, and other details you want to see in the episode.
                 </p>
 
                 <div className="mb-6">
@@ -3537,29 +3537,8 @@ export default function CreateEpisodePage() {
                     placeholder="e.g., A robot learns to dance in an abandoned factory..."
                     className="w-full h-48 bg-[#262626] rounded-2xl px-4 py-3 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-[#B8B6FC] resize-none"
                   />
+                  <p className="text-[#ADADAD] text-xs mt-1.5">AI works best with 200-300 words</p>
                 </div>
-
-                {/* Try these: suggestions */}
-                {!idea.trim() && !story && (
-                  <div className="mb-6">
-                    <p className="text-xs text-[#ADADAD] mb-2">Try these:</p>
-                    <div className="space-y-2">
-                      {[
-                        "A jazz musician discovers she can hear other people's memories through their music",
-                        "Two rival food truck owners are forced to share a parking spot at a music festival",
-                        "A retired astronaut receives a mysterious signal from a probe she launched 30 years ago",
-                      ].map((suggestion, i) => (
-                        <button
-                          key={i}
-                          onClick={() => setIdea(suggestion)}
-                          className="w-full text-left px-4 py-3 bg-[#262626] hover:bg-[#2a2a2a] border border-white/5 hover:border-[#B8B6FC]/30 rounded-xl text-sm text-[#ADADAD] hover:text-white transition-all"
-                        >
-                          &ldquo;{suggestion}&rdquo;
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 <div className="flex items-center gap-3 mb-6">
                   <span className="text-xs text-[#ADADAD] bg-[#262626] px-3 py-1.5 rounded-full">Episode Length: ~60s</span>
@@ -3618,7 +3597,7 @@ export default function CreateEpisodePage() {
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                       </svg>
-                      Generate Script ~$0.05
+                      Generate Script
                     </>
                   )}
                 </button>
@@ -3666,7 +3645,7 @@ export default function CreateEpisodePage() {
               {!story && !isGenerating && (
                 <div className="text-center py-16 text-[#ADADAD]">
                   <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
                   <p>Enter your idea and click Generate Script</p>
                 </div>
@@ -3927,28 +3906,6 @@ export default function CreateEpisodePage() {
                                     );
                                   })()}
                                 </div>
-                                {/* Image prompt (collapsible) */}
-                                <details className="group">
-                                  <summary className="text-[10px] text-white/40 uppercase tracking-wider cursor-pointer hover:text-white/60">Image Prompt</summary>
-                                  <textarea
-                                    value={draft.image_prompt}
-                                    onChange={(e) => setEditSceneDraft({ ...draft, image_prompt: e.target.value })}
-                                    className="w-full mt-1 bg-[#262626] text-white/60 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
-                                    rows={3}
-                                    placeholder="Camera sees: composition, framing, lighting..."
-                                  />
-                                </details>
-                                {/* Regenerate notes (collapsible) */}
-                                <details className="group">
-                                  <summary className="text-[10px] text-white/40 uppercase tracking-wider cursor-pointer hover:text-white/60">Regenerate Notes</summary>
-                                  <textarea
-                                    value={draft.regenerate_notes}
-                                    onChange={(e) => setEditSceneDraft({ ...draft, regenerate_notes: e.target.value })}
-                                    className="w-full mt-1 bg-[#262626] text-white/60 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
-                                    rows={2}
-                                    placeholder="What can vary without breaking continuity..."
-                                  />
-                                </details>
                                 {/* Save/Cancel */}
                                 <div className="flex gap-2 pt-2 border-t border-white/10">
                                   <button
@@ -4079,7 +4036,7 @@ export default function CreateEpisodePage() {
             {/* Sub-tab breadcrumb navigation */}
             <div className="flex items-center gap-2 mb-6">
               {(["lookbook", "scenes"] as VisualsTab[]).map((tab, idx) => {
-                const labels: Record<VisualsTab, string> = { lookbook: "Lookbook", scenes: "Storyboard" };
+                const labels: Record<VisualsTab, string> = { lookbook: "Your Chars & Locations", scenes: "Your Scenes" };
                 const isActive = visualsTab === tab;
                 return (
                   <div key={tab} className="flex items-center gap-2">
@@ -4106,7 +4063,7 @@ export default function CreateEpisodePage() {
             </div>
 
             <div>
-              {/* ─── Lookbook ─── */}
+              {/* ─── Chars & Locations ─── */}
               {visualsTab === "lookbook" && (() => {
                 const protChar = story.characters.find(c => c.role === "protagonist") || story.characters[0];
                 const protId = protChar?.id;
@@ -4124,7 +4081,7 @@ export default function CreateEpisodePage() {
                           disabled={anyGenerating}
                           className="px-5 py-2.5 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
                         >
-                          {anyGenerating ? "Generating..." : `Generate All ~$${(needsGenCount * 0.02).toFixed(2)}`}
+                          {anyGenerating ? "Generating..." : "Generate All"}
                         </button>
                       )}
                     </div>
@@ -4140,8 +4097,8 @@ export default function CreateEpisodePage() {
                         return (
                           <div key={char.id} className="flex flex-col">
                             <div className={`group relative aspect-[9/16] rounded-2xl overflow-hidden transition-all ${hasFailed ? "border-2 border-red-500/40 bg-panel-border" :
-                                hasImage ? "bg-panel-border" :
-                                  "border-2 border-dashed border-white/20 bg-panel-border"
+                              hasImage ? "bg-panel-border" :
+                                "border-2 border-dashed border-white/20 bg-panel-border"
                               }`}>
                               {/* Completed badge */}
                               {hasImage && (
@@ -4170,14 +4127,14 @@ export default function CreateEpisodePage() {
                               ) : hasFailed ? (
                                 <div className="w-full h-full flex flex-col items-center justify-center p-3">
                                   <span className="text-red-400 text-xs mb-2 text-center line-clamp-2">{imgState?.error}</span>
-                                  <button onClick={() => generateSingleChar(char.id)} className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs rounded-lg transition-colors">Retry ~$0.02</button>
+                                  <button onClick={() => generateSingleChar(char.id)} className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs rounded-lg transition-colors">Retry</button>
                                 </div>
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center p-3 cursor-pointer hover:bg-white/5 transition-colors" onClick={() => generateSingleChar(char.id)}>
                                   <div className="w-10 h-10 rounded-full border-2 border-dashed border-white/20 flex items-center justify-center mb-2">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40"><path d="M12 5v14M5 12h14" /></svg>
                                   </div>
-                                  <span className="text-white/40 text-xs">Generate ~$0.02</span>
+                                  <span className="text-white/40 text-xs">Generate</span>
                                 </div>
                               )}
                             </div>
@@ -4217,8 +4174,8 @@ export default function CreateEpisodePage() {
                         return (
                           <div key={loc.id} className="flex flex-col">
                             <div className={`group relative aspect-[9/16] rounded-2xl overflow-hidden transition-all ${hasFailed ? "border-2 border-red-500/40 bg-panel-border" :
-                                hasImage ? "bg-panel-border" :
-                                  "border-2 border-dashed border-white/20 bg-panel-border"
+                              hasImage ? "bg-panel-border" :
+                                "border-2 border-dashed border-white/20 bg-panel-border"
                               }`}>
                               {hasImage && (
                                 <div className="absolute top-2 right-2 z-10 w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
@@ -4246,14 +4203,14 @@ export default function CreateEpisodePage() {
                               ) : hasFailed ? (
                                 <div className="w-full h-full flex flex-col items-center justify-center p-3">
                                   <span className="text-red-400 text-xs mb-2 text-center line-clamp-2">{imgState?.error}</span>
-                                  <button onClick={() => generateSingleLoc(loc.id)} className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs rounded-lg transition-colors">Retry ~$0.02</button>
+                                  <button onClick={() => generateSingleLoc(loc.id)} className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs rounded-lg transition-colors">Retry</button>
                                 </div>
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center p-3 cursor-pointer hover:bg-white/5 transition-colors" onClick={() => generateSingleLoc(loc.id)}>
                                   <div className="w-10 h-10 rounded-full border-2 border-dashed border-white/20 flex items-center justify-center mb-2">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40"><path d="M12 5v14M5 12h14" /></svg>
                                   </div>
-                                  <span className="text-white/40 text-xs">Generate ~$0.02</span>
+                                  <span className="text-white/40 text-xs">Generate</span>
                                 </div>
                               )}
                             </div>
@@ -4292,7 +4249,7 @@ export default function CreateEpisodePage() {
                       })}
                     </div>
 
-                    {/* Lookbook footer navigation */}
+                    {/* Chars & Locations footer navigation */}
                     <div className="mt-10 flex items-center justify-between">
                       <button
                         onClick={() => { setDisplayedStage(1); saveNow({ displayedStage: 1 }); }}
@@ -4402,7 +4359,7 @@ export default function CreateEpisodePage() {
                               onClick={fetchSceneDescriptions}
                               className="px-5 py-2.5 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 transition-opacity"
                             >
-                              Generate Storyboard ~$0.05
+                              Generate Storyboard
                             </button>
                           </>
                         ) : (
@@ -4413,7 +4370,7 @@ export default function CreateEpisodePage() {
                             </svg>
                             <p className="text-white text-sm font-medium text-center">All characters and locations need images first</p>
                             <p className="text-[#ADADAD] text-xs text-center max-w-sm">
-                              Go back to the Lookbook tab and generate images for
+                              Go back to the Chars & Locations tab and generate images for
                               {missingCharImages.length > 0 && ` ${missingCharImages.length} character${missingCharImages.length > 1 ? "s" : ""}`}
                               {missingCharImages.length > 0 && missingLocImages.length > 0 && " and"}
                               {missingLocImages.length > 0 && ` ${missingLocImages.length} location${missingLocImages.length > 1 ? "s" : ""}`}
@@ -4423,7 +4380,7 @@ export default function CreateEpisodePage() {
                               onClick={() => setVisualsTab("lookbook")}
                               className="px-5 py-2.5 border border-[#B8B6FC]/40 text-[#B8B6FC] rounded-xl font-medium text-sm hover:bg-[#B8B6FC]/10 transition-colors"
                             >
-                              Go to Lookbook
+                              Go to Chars & Locations
                             </button>
                           </>
                         )}

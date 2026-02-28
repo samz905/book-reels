@@ -5,25 +5,24 @@ import { useState } from "react";
 interface PersonalInfoCardProps {
   name: string;
   email: string;
+  isOAuthUser?: boolean;
   onNameUpdate?: (newName: string) => Promise<void>;
-  onPasswordUpdate?: (newPassword: string) => Promise<void>;
+  onPasswordReset?: () => Promise<void>;
 }
 
 export default function PersonalInfoCard({
   name,
   email,
+  isOAuthUser = false,
   onNameUpdate,
-  onPasswordUpdate,
+  onPasswordReset,
 }: PersonalInfoCardProps) {
   const [editingName, setEditingName] = useState(false);
-  const [editingPassword, setEditingPassword] = useState(false);
   const [nameValue, setNameValue] = useState(name);
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
 
   const [nameSaving, setNameSaving] = useState(false);
   const [nameStatus, setNameStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
-  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordResetting, setPasswordResetting] = useState(false);
   const [passwordStatus, setPasswordStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   const handleNameSave = async () => {
@@ -41,23 +40,17 @@ export default function PersonalInfoCard({
     }
   };
 
-  const handlePasswordSave = async () => {
-    if (newPassword !== confirmPassword) return;
-    if (newPassword.length < 8) return;
-
-    setPasswordSaving(true);
+  const handlePasswordReset = async () => {
+    setPasswordResetting(true);
     setPasswordStatus(null);
     try {
-      await onPasswordUpdate?.(newPassword);
-      setEditingPassword(false);
-      setNewPassword("");
-      setConfirmPassword("");
-      setPasswordStatus({ type: "success", message: "Password updated" });
-      setTimeout(() => setPasswordStatus(null), 3000);
+      await onPasswordReset?.();
+      setPasswordStatus({ type: "success", message: "Password reset link sent to your email" });
+      setTimeout(() => setPasswordStatus(null), 5000);
     } catch {
-      setPasswordStatus({ type: "error", message: "Failed to update password" });
+      setPasswordStatus({ type: "error", message: "Failed to send reset email" });
     } finally {
-      setPasswordSaving(false);
+      setPasswordResetting(false);
     }
   };
 
@@ -65,13 +58,6 @@ export default function PersonalInfoCard({
     setNameValue(name);
     setEditingName(false);
     setNameStatus(null);
-  };
-
-  const handlePasswordCancel = () => {
-    setNewPassword("");
-    setConfirmPassword("");
-    setEditingPassword(false);
-    setPasswordStatus(null);
   };
 
   const EditButton = ({ onClick }: { onClick: () => void }) => (
@@ -148,76 +134,33 @@ export default function PersonalInfoCard({
           <span className="text-white text-xl font-semibold">{email}</span>
         </div>
 
-        {/* Divider */}
-        <div className="hidden md:block w-px h-[61px] bg-[#272727]" />
+        {/* Password Field — hidden for OAuth users */}
+        {!isOAuthUser && (
+          <>
+            <div className="hidden md:block w-px h-[61px] bg-[#272727]" />
 
-        {/* Password Field */}
-        <div className="flex-1">
-          <label className="text-[#ADADAD] text-[17px] font-semibold block mb-3">
-            Password
-          </label>
-          {editingPassword ? (
-            <div className="space-y-3">
-              <div>
-                <label className="text-[#ADADAD] text-sm block mb-1">
-                  New Password
-                </label>
-                <div className="relative">
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
-                    placeholder="••••••••"
-                  />
-                </div>
-                <p className="text-[#ADADAD] text-xs mt-1">
-                  Use at least 8 characters with letters and numbers
+            <div className="flex-1">
+              <label className="text-[#ADADAD] text-[17px] font-semibold block mb-3">
+                Password
+              </label>
+              <button
+                onClick={handlePasswordReset}
+                disabled={passwordResetting}
+                className="px-4 py-2 bg-[#3E3D40] text-white text-sm font-semibold rounded-lg hover:bg-[#4E4D50] transition-colors disabled:opacity-50"
+              >
+                {passwordResetting ? "Sending..." : "Change Password"}
+              </button>
+              <p className="text-[#ADADAD] text-xs mt-2">
+                We&apos;ll send a reset link to your email
+              </p>
+              {passwordStatus && (
+                <p className={`text-sm mt-2 ${passwordStatus.type === "success" ? "text-[#256B5F]" : "text-[#AE1414]"}`}>
+                  {passwordStatus.message}
                 </p>
-              </div>
-              <div>
-                <label className="text-[#ADADAD] text-sm block mb-1">
-                  Confirm New Password
-                </label>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full bg-input-dark border border-[#272727] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple"
-                  placeholder="••••••••"
-                />
-              </div>
-              <div className="flex items-center gap-3 pt-2">
-                <button
-                  onClick={handlePasswordCancel}
-                  disabled={passwordSaving}
-                  className="text-[#ADADAD] text-sm font-medium hover:text-white transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handlePasswordSave}
-                  disabled={passwordSaving || newPassword.length < 8 || newPassword !== confirmPassword}
-                  className="px-4 py-2 bg-purple text-white text-sm font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
-                >
-                  {passwordSaving ? "Saving..." : "Save"}
-                </button>
-              </div>
+              )}
             </div>
-          ) : (
-            <div className="flex items-center gap-4">
-              <span className="text-white text-xl font-semibold">
-                ***********
-              </span>
-              <EditButton onClick={() => { setEditingPassword(true); setPasswordStatus(null); }} />
-            </div>
-          )}
-          {passwordStatus && (
-            <p className={`text-sm mt-2 ${passwordStatus.type === "success" ? "text-[#256B5F]" : "text-[#AE1414]"}`}>
-              {passwordStatus.message}
-            </p>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

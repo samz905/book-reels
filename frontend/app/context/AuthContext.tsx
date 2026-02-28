@@ -96,6 +96,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           setAccessStatus(null);
         }
+      } else if (event === "USER_UPDATED") {
+        // Same user but metadata changed (e.g. name update)
+        setUser(session?.user ?? null);
       }
     });
 

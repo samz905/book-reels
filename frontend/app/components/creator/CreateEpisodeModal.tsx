@@ -120,7 +120,7 @@ export default function CreateEpisodeModal({
               setFieldErrors(prev => { const { number: _, ...rest } = prev; return rest; });
             }}
             onBlur={() => { if (episodeNum === "") setEpisodeNum(nextEpisodeNumber); }}
-            className={`w-24 h-14 bg-[#262626] rounded-2xl px-4 text-white text-center text-lg font-bold focus:outline-none focus:ring-2 ${fieldErrors.number ? "ring-2 ring-red-500 focus:ring-red-500" : "focus:ring-[#B8B6FC]"}`}
+            className={`w-24 h-14 bg-[#262626] rounded-2xl px-4 text-white text-center text-lg font-bold focus:outline-none focus:ring-2 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield] ${fieldErrors.number ? "ring-2 ring-red-500 focus:ring-red-500" : "focus:ring-[#B8B6FC]"}`}
           />
           {fieldErrors.number && (
             <p className="text-red-400 text-xs mt-2">{fieldErrors.number}</p>

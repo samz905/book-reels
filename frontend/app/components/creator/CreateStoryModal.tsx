@@ -74,6 +74,10 @@ export default function CreateStoryModal({
   const handleSubmit = () => {
     if (isSaving) return;
 
+    if (!cover) {
+      alert("Cover image is required");
+      return;
+    }
     if (!storyName.trim()) {
       alert("Story name is required");
       return;
@@ -94,7 +98,7 @@ export default function CreateStoryModal({
       title: storyName,
       type: storyType,
       description,
-      cover: cover || "https://picsum.photos/seed/newstory/300/450",
+      cover: cover,
       genre: selectedGenres,
       status: "draft",
     });

@@ -99,6 +99,8 @@ export default function AccountPage() {
     user.email?.split("@")[0] ||
     "User";
   const userEmail = user.email || "";
+  const isOAuthUser = user.app_metadata?.provider === "google" ||
+    (user.identities?.length === 1 && user.identities[0].provider !== "email");
 
   return (
     <div className="min-h-screen bg-black relative overflow-clip">
@@ -109,15 +111,18 @@ export default function AccountPage() {
         <PersonalInfoCard
           name={userName}
           email={userEmail}
+          isOAuthUser={isOAuthUser}
           onNameUpdate={async (newName) => {
             await updateProfile(user.id, { name: newName });
             // Also sync auth metadata so Header picks up the new name
             const supabase = createClient();
             await supabase.auth.updateUser({ data: { full_name: newName } });
           }}
-          onPasswordUpdate={async (newPassword) => {
+          onPasswordReset={async () => {
             const supabase = createClient();
-            const { error } = await supabase.auth.updateUser({ password: newPassword });
+            const { error } = await supabase.auth.resetPasswordForEmail(userEmail, {
+              redirectTo: `${window.location.origin}/auth/callback`,
+            });
             if (error) throw error;
           }}
         />

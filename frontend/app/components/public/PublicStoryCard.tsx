@@ -48,7 +48,7 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
   };
 
   // Free episode count for display label
-  const freeCount = 2;
+  const freeCount = 4;
 
   return (
     <div

@@ -28,11 +28,8 @@ export default function WaitlistPage() {
     router.push("/login");
   };
 
-  const displayName =
-    user?.user_metadata?.full_name ||
-    user?.user_metadata?.name ||
-    user?.email?.split("@")[0] ||
-    "there";
+  const fullName = user?.user_metadata?.full_name || user?.user_metadata?.name || "";
+  const displayName = fullName.split(" ")[0] || user?.email?.split("@")[0] || "there";
 
   if (loading) {
     return (

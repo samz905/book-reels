@@ -44,7 +44,7 @@ export default function LibraryCarousel({
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-[#1ED760] text-lg font-bold">{title}</h3>
+        <h3 className="text-white text-lg font-bold">{title}</h3>
         <div className="flex items-center gap-3">
           {onAdd && (
             <button

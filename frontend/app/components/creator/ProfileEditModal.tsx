@@ -123,7 +123,7 @@ export default function ProfileEditModal({
               <img
                 src={avatar}
                 alt="Profile"
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover rounded-full"
               />
             ) : (
               <svg
