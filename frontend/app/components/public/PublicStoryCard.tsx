@@ -12,6 +12,7 @@ interface PublicStoryCardProps {
 
 export default function PublicStoryCard({ story }: PublicStoryCardProps) {
   const [showEpisodes, setShowEpisodes] = useState(false);
+  const [expandedEbooks, setExpandedEbooks] = useState<Set<string>>(new Set());
 
   // Horizontal scroll state for ebooks
   const ebooksScrollRef = useRef<HTMLDivElement>(null);
@@ -234,15 +235,27 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
                         <h5 className="text-white text-sm font-semibold line-clamp-2">
                           {ebook.title}
                         </h5>
-                        <p className="text-[#C5C5C5] text-sm leading-[19px] tracking-tight line-clamp-8 flex-1">
+                        <p className={`text-[#C5C5C5] text-sm leading-[19px] tracking-tight ${!expandedEbooks.has(ebook.id) ? "line-clamp-8" : ""}`}>
                           {ebook.description}
                         </p>
+                        {ebook.description && ebook.description.length > 200 && (
+                          <button
+                            onClick={() => setExpandedEbooks(prev => {
+                              const next = new Set(prev);
+                              next.has(ebook.id) ? next.delete(ebook.id) : next.add(ebook.id);
+                              return next;
+                            })}
+                            className="text-white text-xs font-medium hover:opacity-80 transition-colors mt-1 self-end"
+                          >
+                            {expandedEbooks.has(ebook.id) ? "Show less" : "Read more"}
+                          </button>
+                        )}
                       </div>
                     </div>
 
                     {/* Vertical divider (except last) - 24px gap includes the divider */}
                     {index < story.ebooks.length - 1 && (
-                      <div className="w-px bg-[#272727] ml-6 self-stretch" />
+                      <div className="w-[1.5px] bg-[#3E3D55] ml-6 self-stretch" />
                     )}
                   </div>
                 ))}
