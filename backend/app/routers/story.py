@@ -491,8 +491,9 @@ Create additional supporting characters ONLY if the story absolutely requires th
             )
         prompt += f"""
 
-STORY CHARACTER LIBRARY (use the most relevant characters for this episode — preserve their id, name, gender, age, and appearance EXACTLY as given. Do NOT rewrite or enrich appearance. Set origin to "story" for library characters):
+STORY CHARACTER LIBRARY (pick the most relevant characters for this episode):
 {chr(10).join(char_lines)}
+For library characters: include them in the characters array using their EXACT id and name. Set origin to "story". You can write a short placeholder for appearance — all library fields are auto-filled from the database.
 You may create additional supporting characters if the story requires them. Any new characters must have origin "ai"."""
 
     prompt += """
@@ -852,7 +853,8 @@ def parse_story_response(
             else:
                 char["origin"] = "ai"
     elif library_characters:
-        # Library path: match by name (case-insensitive) to restore DB IDs
+        # Library path: match by name (case-insensitive) to restore ALL fields from library
+        # AI output is just an ID signal — library is the source of truth
         lib_by_name = {c.name.lower(): c for c in library_characters}
         lib_by_id = {c.id: c for c in library_characters}
         for char in data.get("characters", []):
@@ -860,9 +862,10 @@ def parse_story_response(
             if matched:
                 char["id"] = matched.id
                 char["name"] = matched.name
-                char["gender"] = matched.gender or char.get("gender", "")
-                char["age"] = matched.age or char.get("age", "")
-                char["appearance"] = matched.appearance or char.get("appearance", "")
+                char["gender"] = matched.gender
+                char["age"] = matched.age
+                char["appearance"] = matched.appearance
+                char["role"] = matched.role or char.get("role", "supporting")
                 char["origin"] = "story"
             else:
                 char["origin"] = "ai"
@@ -885,7 +888,7 @@ def parse_story_response(
                 loc["atmosphere"] = pre_selected_location.atmosphere
                 break
     elif library_locations:
-        # Library path: match by name to restore DB IDs
+        # Library path: match by name — library is source of truth for all fields
         lib_loc_by_name = {l.name.lower(): l for l in library_locations}
         lib_loc_by_id = {l.id: l for l in library_locations}
         for loc in data.get("locations", []):
@@ -893,8 +896,8 @@ def parse_story_response(
             if matched:
                 loc["id"] = matched.id
                 loc["name"] = matched.name
-                loc["description"] = matched.description or loc.get("description", "")
-                loc["atmosphere"] = matched.atmosphere or loc.get("atmosphere", "")
+                loc["description"] = matched.description
+                loc["atmosphere"] = matched.atmosphere
                 break
 
     return Story(**data)
