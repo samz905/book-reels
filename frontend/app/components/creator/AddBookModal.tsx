@@ -167,7 +167,11 @@ export default function AddBookModal({
     const errors: Record<string, string> = {};
     if (!cover) errors.cover = "Cover photo is required";
     if (!title.trim()) errors.title = "Book title is required";
-    if (!description.trim()) errors.description = "Description is required";
+    if (!description.trim()) {
+      errors.description = "Description is required";
+    } else if (description.trim().split(/\s+/).filter(Boolean).length > 200) {
+      errors.description = "Description must be 200 words or fewer";
+    }
     if (!selectedStoryId) errors.story = "Please select a story";
     if (!isEditMode && !epubFile) errors.epub = "Please upload an EPUB file";
     if (!price) {
@@ -365,7 +369,14 @@ export default function AddBookModal({
             className={`w-full bg-[#262626] rounded-2xl px-4 py-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 resize-none disabled:opacity-50 ${fieldErrors.description ? "ring-2 ring-red-500 focus:ring-red-500" : "focus:ring-[#B8B6FC]"}`}
             placeholder="Describe your ebook..."
           />
-          {fieldErrors.description && <p className="text-red-400 text-xs mt-1">{fieldErrors.description}</p>}
+          <div className="flex items-center justify-between mt-1.5">
+            {fieldErrors.description ? (
+              <p className="text-red-400 text-xs">{fieldErrors.description}</p>
+            ) : <span />}
+            <p className={`text-xs ${description.trim().split(/\s+/).filter(Boolean).length > 200 ? "text-red-400" : "text-[#ADADAD]"}`}>
+              {description.trim() ? description.trim().split(/\s+/).filter(Boolean).length : 0}/200 words
+            </p>
+          </div>
         </div>
 
         {/* Select Story */}

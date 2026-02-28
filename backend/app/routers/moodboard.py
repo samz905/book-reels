@@ -346,7 +346,7 @@ Show the tension in their posture and expression.
 This character defines the visual style for the entire film.
 Establish clear design language: eye style, proportions, line weight.
 
-Portrait orientation, 9:16 aspect ratio."""
+TRUE portrait orientation, 9:16 aspect ratio. Compose natively for portrait — do NOT rotate landscape or add padding."""
 
 
 def build_character_prompt(story: Story, character: Character, feedback: Optional[str] = None, use_reference: bool = False) -> str:
@@ -370,7 +370,7 @@ Show enough detail to establish their complete look."""
 STYLE REFERENCE ONLY: Match the art style, color palette, lighting, and rendering quality of the reference image.
 Do NOT copy the reference person's face, body, or features. Generate a completely different-looking person based on the character description above."""
 
-    prompt += "\n\nPortrait orientation, 9:16 aspect ratio."
+    prompt += "\n\nTRUE portrait orientation, 9:16 aspect ratio. Compose natively for portrait — do NOT rotate landscape or add padding."
 
     if feedback:
         prompt += f"\n\nAdditional direction: {feedback}"
@@ -405,7 +405,7 @@ No characters in frame."""
 CRITICAL: Match the visual style of the reference image exactly.
 Same rendering approach, same color treatment, same texture quality."""
 
-    prompt += "\n\nPortrait orientation, 9:16 aspect ratio."
+    prompt += "\n\nTRUE portrait orientation, 9:16 aspect ratio. Compose natively for portrait — do NOT rotate landscape or add padding."
 
     if feedback:
         prompt += f"\n\nAdditional direction: {feedback}"
@@ -433,7 +433,7 @@ Wide establishing shot showing the environment.
 
 No characters in frame.
 
-Portrait orientation, 9:16 aspect ratio."""
+TRUE portrait orientation, 9:16 aspect ratio. Compose natively for portrait — do NOT rotate landscape or add padding."""
 
     if use_reference:
         prompt += """
@@ -514,7 +514,7 @@ Show the full scene with characters in action, not a close-up portrait.
 Medium or wide shot showing body language and environment context.
 Dynamic cinematic composition.
 
-Portrait orientation, 9:16 aspect ratio."""
+TRUE portrait orientation, 9:16 aspect ratio. Compose natively for portrait — do NOT rotate landscape or add padding."""
 
     if feedback:
         prompt += f"\n\nAdditional direction: {feedback}"
@@ -1310,7 +1310,7 @@ Show the full scene with characters in action, not a close-up portrait.
 Medium or wide shot showing body language and environment context.
 Dynamic cinematic composition.
 
-Portrait orientation, 9:16 aspect ratio."""
+TRUE portrait orientation, 9:16 aspect ratio. Compose natively for portrait — do NOT rotate landscape or add padding."""
 
             print(f"  Scene {desc.scene_number}: {len(refs)} refs, prompt: {prompt[:150]}...")
 

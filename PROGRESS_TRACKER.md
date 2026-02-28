@@ -9,7 +9,7 @@
 ## EPISODE CREATION
 
 ### EC-1: Modal button text — "Generate" vs "Regenerate with AI"
-- [ ] **Done**
+- [x] **Done**
 - **What**: If a character or location already has an image, the modal button should say "Regenerate with AI". Only show "Generate with AI" if there's no image.
 - **Files**:
   - `frontend/app/components/creator/CharacterModal.tsx:447` — currently hardcoded `"Generate with AI"`
@@ -126,7 +126,7 @@
 ---
 
 ### EC-10: Clean up script edit dropdowns on Mac
-- [ ] **Done**
+- [x] **Done**
 - **What**: The script edit section dropdowns look weird on Mac — need visual cleanup.
 - **Files**:
   - `frontend/app/create-episode/page.tsx` — scene editing view, look for any `<select>` or native dropdown elements in the scene edit section
@@ -258,7 +258,7 @@
 ---
 
 ### M-4: Modal "Generate with AI" spinner overlays existing text
-- [ ] **Done**
+- [x] **Done**
 - **What**: Clicking "Generate with AI" in any modal shows a processing spinner on top of existing content — looks bad with text visible behind it.
 - **Files**:
   - `frontend/app/components/creator/CharacterModal.tsx` — generating state UI
@@ -268,7 +268,7 @@
 ---
 
 ### M-5: Book description — 200 word limit, "read more", save bug
-- [ ] **Done**
+- [x] **Done**
 - **What**: Three issues with book descriptions:
   1. Add 200 word limit to the description field
   2. Show description with "read more" if too long in the book display
@@ -318,7 +318,7 @@
 ---
 
 ### M-9: Creator profile — don't truncate own description
-- [ ] **Done**
+- [x] **Done**
 - **What**: The creator's own profile view should NOT truncate the description like the public view does.
 - **Files**:
   - `frontend/app/create/[storyId]/page.tsx:638` — `line-clamp-5` on story description
@@ -340,7 +340,7 @@
 ---
 
 ### M-11: Enforce true portrait mode in AI image generation
-- [ ] **Done**
+- [x] **Done**
 - **What**: AI sometimes "cheats" — rotates landscape images to portrait or adds white padding. Must enforce TRUE portrait mode only.
 - **Files**:
   - `backend/app/core/imagen.py:320-321` — current prompt: `"The image should be in portrait orientation (taller than wide)."`

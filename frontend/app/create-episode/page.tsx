@@ -3792,13 +3792,16 @@ export default function CreateEpisodePage() {
                                     className="flex-1 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
                                     placeholder="Scene title..."
                                   />
-                                  <select
-                                    value={draft.duration}
-                                    onChange={(e) => setEditSceneDraft({ ...draft, duration: e.target.value })}
-                                    className="w-28 bg-[#262626] text-white/70 text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                                  >
-                                    {[6, 7, 8, 9].map(s => <option key={s} value={`${s} seconds`}>{s}s</option>)}
-                                  </select>
+                                  <div className="relative">
+                                    <select
+                                      value={draft.duration}
+                                      onChange={(e) => setEditSceneDraft({ ...draft, duration: e.target.value })}
+                                      className="w-28 bg-[#262626] text-white/70 text-sm rounded px-2 py-1 pr-7 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] appearance-none cursor-pointer"
+                                    >
+                                      {[6, 7, 8, 9].map(s => <option key={s} value={`${s} seconds`}>{s}s</option>)}
+                                    </select>
+                                    <svg className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" width="12" height="12" viewBox="0 0 24 24" fill="#ADADAD"><path d="M7 10l5 5 5-5z" /></svg>
+                                  </div>
                                 </div>
                                 {/* Scene heading */}
                                 <input
@@ -3834,15 +3837,18 @@ export default function CreateEpisodePage() {
                                 {/* Setting (single select) */}
                                 <div>
                                   <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Setting</label>
-                                  <select
-                                    value={draft.setting_id}
-                                    onChange={(e) => setEditSceneDraft({ ...draft, setting_id: e.target.value })}
-                                    className="w-full bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                                  >
-                                    {story.locations.map(loc => (
-                                      <option key={loc.id} value={loc.id}>{loc.name || loc.id}</option>
-                                    ))}
-                                  </select>
+                                  <div className="relative">
+                                    <select
+                                      value={draft.setting_id}
+                                      onChange={(e) => setEditSceneDraft({ ...draft, setting_id: e.target.value })}
+                                      className="w-full bg-[#262626] text-white text-sm rounded px-2 py-1 pr-7 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] appearance-none cursor-pointer"
+                                    >
+                                      {story.locations.map(loc => (
+                                        <option key={loc.id} value={loc.id}>{loc.name || loc.id}</option>
+                                      ))}
+                                    </select>
+                                    <svg className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" width="12" height="12" viewBox="0 0 24 24" fill="#ADADAD"><path d="M7 10l5 5 5-5z" /></svg>
+                                  </div>
                                 </div>
                                 {/* Action */}
                                 <div>
@@ -3877,14 +3883,17 @@ export default function CreateEpisodePage() {
                                       <div className="space-y-2">
                                         {lines.map((dl, i) => (
                                           <div key={i} className="flex gap-2 items-start">
-                                            <select
-                                              value={dl.character}
-                                              onChange={(e) => { const u = [...lines]; u[i] = { ...u[i], character: e.target.value }; updateLines(u); }}
-                                              className="w-[120px] flex-shrink-0 bg-[#262626] text-white text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]"
-                                            >
-                                              <option value="">Character...</option>
-                                              {charsInScene.map(c => <option key={c!.id} value={c!.name}>{c!.name}</option>)}
-                                            </select>
+                                            <div className="relative flex-shrink-0">
+                                              <select
+                                                value={dl.character}
+                                                onChange={(e) => { const u = [...lines]; u[i] = { ...u[i], character: e.target.value }; updateLines(u); }}
+                                                className="w-[120px] bg-[#262626] text-white text-sm rounded px-2 py-1 pr-7 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] appearance-none cursor-pointer"
+                                              >
+                                                <option value="">Character...</option>
+                                                {charsInScene.map(c => <option key={c!.id} value={c!.name}>{c!.name}</option>)}
+                                              </select>
+                                              <svg className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" width="12" height="12" viewBox="0 0 24 24" fill="#ADADAD"><path d="M7 10l5 5 5-5z" /></svg>
+                                            </div>
                                             <input
                                               value={dl.line}
                                               onChange={(e) => { const u = [...lines]; u[i] = { ...u[i], line: e.target.value }; updateLines(u); }}

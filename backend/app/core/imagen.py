@@ -318,7 +318,7 @@ async def generate_image(
     """
     full_prompt = f"Generate a high quality image: {prompt}"
     if aspect_ratio == "9:16":
-        full_prompt += " The image should be in portrait orientation (taller than wide)."
+        full_prompt += " The image MUST be in true portrait orientation (taller than wide, 9:16 aspect ratio). Do NOT rotate a landscape image. Do NOT add white padding or letterboxing. Compose the content natively for portrait format."
     elif aspect_ratio == "16:9":
         full_prompt += " The image should be in landscape orientation (wider than tall)."
 
@@ -373,7 +373,10 @@ async def generate_image_with_references(
             print("[imagen] No valid reference images — falling back to T2I")
             return await generate_image(prompt, aspect_ratio)
 
-        contents = [prompt] + pil_images[:14]
+        final_prompt = prompt
+        if aspect_ratio == "9:16":
+            final_prompt += " The image MUST be in true portrait orientation (taller than wide). Do NOT rotate a landscape image or add padding."
+        contents = [final_prompt] + pil_images[:14]
         result = await _google_generate(
             contents=contents,
             aspect_ratio=aspect_ratio,

@@ -223,6 +223,7 @@ export default function CreatePage() {
     ebookData: {
       storyId: string;
       title: string;
+      description?: string;
       fileUrl: string;
       coverUrl?: string;
       price: number;
@@ -232,6 +233,7 @@ export default function CreatePage() {
     try {
       const newEbook = await createEbook(ebookData.storyId, {
         title: ebookData.title,
+        description: ebookData.description,
         file_url: ebookData.fileUrl,
         cover_url: ebookData.coverUrl || null,
         isbn: ebookData.isbn || null,
@@ -258,6 +260,7 @@ export default function CreatePage() {
     ebookId: string,
     data: {
       title: string;
+      description?: string;
       coverUrl?: string;
       price: number;
       isbn?: string;
@@ -266,6 +269,7 @@ export default function CreatePage() {
     try {
       await updateEbook(ebookId, {
         title: data.title,
+        description: data.description,
         cover_url: data.coverUrl || null,
         isbn: data.isbn || null,
         price: data.price,
@@ -280,6 +284,7 @@ export default function CreatePage() {
   const handleAddBookFromModal = async (ebookData: {
     storyId: string;
     title: string;
+    description?: string;
     fileUrl: string;
     coverUrl?: string;
     price: number;
@@ -289,6 +294,7 @@ export default function CreatePage() {
     try {
       await createEbook(ebookData.storyId, {
         title: ebookData.title,
+        description: ebookData.description,
         file_url: ebookData.fileUrl,
         cover_url: ebookData.coverUrl || null,
         isbn: ebookData.isbn || null,

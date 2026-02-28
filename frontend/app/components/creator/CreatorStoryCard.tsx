@@ -16,6 +16,7 @@ interface CreatorStoryCardProps {
   onAddEbook?: (ebookData: {
     storyId: string;
     title: string;
+    description?: string;
     fileUrl: string;
     coverUrl?: string;
     price: number;
@@ -23,6 +24,7 @@ interface CreatorStoryCardProps {
   }) => Promise<Ebook>;
   onUpdateEbook?: (ebookId: string, data: {
     title: string;
+    description?: string;
     coverUrl?: string;
     price: number;
     isbn?: string;
@@ -45,6 +47,8 @@ export default function CreatorStoryCard({
   const [editingEbook, setEditingEbook] = useState<Ebook | null>(null);
   const [showStatusConfirm, setShowStatusConfirm] = useState(false);
   const [isTogglingStatus, setIsTogglingStatus] = useState(false);
+  const [expandedEbooks, setExpandedEbooks] = useState<Set<string>>(new Set());
+  const [storyDescExpanded, setStoryDescExpanded] = useState(false);
 
   // Horizontal scroll state for ebooks
   const ebooksScrollRef = useRef<HTMLDivElement>(null);
@@ -87,6 +91,7 @@ export default function CreatorStoryCard({
   const handleAddBook = async (bookData: {
     storyId: string;
     title: string;
+    description?: string;
     fileUrl: string;
     coverUrl?: string;
     price: number;
@@ -231,9 +236,18 @@ export default function CreatorStoryCard({
           </div>
 
           {/* Description - 14px */}
-          <p className="text-white text-sm leading-[19px] tracking-tight mb-4 line-clamp-5">
+          <p className={`text-white text-sm leading-[19px] tracking-tight mb-1 ${!storyDescExpanded ? "line-clamp-5" : ""}`}>
             {story.description}
           </p>
+          {story.description && story.description.length > 200 && (
+            <button
+              onClick={() => setStoryDescExpanded(!storyDescExpanded)}
+              className="text-[#9C99FF] text-xs font-medium hover:text-[#B8B6FC] transition-colors mb-3"
+            >
+              {storyDescExpanded ? "Show less" : "Read more"}
+            </button>
+          )}
+          {!(story.description && story.description.length > 200) && <div className="mb-3" />}
 
           {/* Genre + Plays row */}
           <div className="flex items-center justify-between mb-4">
@@ -377,10 +391,21 @@ export default function CreatorStoryCard({
                     <h5 className="text-white text-sm font-semibold line-clamp-2">
                       {ebook.title}
                     </h5>
-                    <p className="text-[#C5C5C5] text-sm leading-[19px] tracking-tight line-clamp-7 flex-1">
+                    <p className={`text-[#C5C5C5] text-sm leading-[19px] tracking-tight ${!expandedEbooks.has(ebook.id) ? "line-clamp-7" : ""}`}>
                       {ebook.description}
                     </p>
-                    {/* Edit button at bottom-right of text area */}
+                    {ebook.description && ebook.description.length > 200 && (
+                      <button
+                        onClick={() => setExpandedEbooks(prev => {
+                          const next = new Set(prev);
+                          next.has(ebook.id) ? next.delete(ebook.id) : next.add(ebook.id);
+                          return next;
+                        })}
+                        className="text-[#9C99FF] text-xs font-medium hover:text-[#B8B6FC] transition-colors mt-1 mb-3 self-end"
+                      >
+                        {expandedEbooks.has(ebook.id) ? "Show less" : "Read more"}
+                      </button>
+                    )}
                     <div className="flex justify-end mt-auto">
                       <button
                         onClick={() => {

@@ -82,15 +82,13 @@ function DraftProgressDots({ status }: { status: string }) {
       {DRAFT_STEPS.map((label, i) => (
         <div key={label} className="flex items-center">
           <div
-            className={`w-[6px] h-[6px] rounded-full transition-colors ${
-              isFailed ? "bg-red-400/50" : i <= step ? "bg-[#9C99FF]" : "bg-white/10"
-            }`}
+            className={`w-[6px] h-[6px] rounded-full transition-colors ${isFailed ? "bg-red-400/50" : i <= step ? "bg-[#9C99FF]" : "bg-white/10"
+              }`}
             title={label}
           />
           {i < DRAFT_STEPS.length - 1 && (
-            <div className={`w-2 h-[1px] ${
-              isFailed ? "bg-red-400/20" : i < step ? "bg-[#9C99FF]/50" : "bg-white/5"
-            }`} />
+            <div className={`w-2 h-[1px] ${isFailed ? "bg-red-400/20" : i < step ? "bg-[#9C99FF]/50" : "bg-white/5"
+              }`} />
           )}
         </div>
       ))}
@@ -237,6 +235,7 @@ export default function StoryManagementPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [showStatusConfirm, setShowStatusConfirm] = useState(false);
   const [isTogglingStatus, setIsTogglingStatus] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
 
   // ============ Draft Generation Handlers ============
 
@@ -637,9 +636,18 @@ export default function StoryManagementPage() {
               </div>
 
               {/* Description */}
-              <p className="text-white text-sm leading-[19px] tracking-tight mb-4 line-clamp-5">
+              <p className={`text-white text-sm leading-[19px] tracking-tight mb-1 ${!descExpanded ? "line-clamp-5" : ""}`}>
                 {story.description}
               </p>
+              {story.description && story.description.length > 200 && (
+                <button
+                  onClick={() => setDescExpanded(!descExpanded)}
+                  className="text-[#9C99FF] text-xs font-medium hover:text-[#B8B6FC] transition-colors mb-3"
+                >
+                  {descExpanded ? "Show less" : "Read more"}
+                </button>
+              )}
+              {!(story.description && story.description.length > 200) && <div className="mb-3" />}
 
               {/* Genre + Plays */}
               <div className="flex items-center justify-between mb-4">

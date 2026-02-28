@@ -114,7 +114,7 @@ Plain white background. No scenery, no props, no distractions.
 Full body visible head to toe, centered in frame.
 Show enough detail to establish their complete look.
 
-Portrait orientation, 9:16 aspect ratio."""
+TRUE portrait orientation, 9:16 aspect ratio. Compose natively for portrait — do NOT rotate landscape or add padding."""
 
         # Always T2I — chars are generated independently (no style ref needed)
         result = await generate_image(prompt=prompt, aspect_ratio="9:16")
@@ -151,7 +151,7 @@ Wide establishing shot showing the environment.
 
 No characters in frame.
 
-Portrait orientation, 9:16 aspect ratio."""
+TRUE portrait orientation, 9:16 aspect ratio. Compose natively for portrait — do NOT rotate landscape or add padding."""
 
         # Always T2I — locations are generated independently (no style ref needed)
         result = await generate_image(prompt=prompt, aspect_ratio="9:16")

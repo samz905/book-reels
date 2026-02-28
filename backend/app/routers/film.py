@@ -547,7 +547,7 @@ Show these exact characters in this exact location.
 Maintain character appearances precisely from references.
 Maintain location appearance precisely from references.
 
-Portrait orientation, 9:16 aspect ratio."""
+TRUE portrait orientation, 9:16 aspect ratio. Compose natively for portrait — do NOT rotate landscape or add padding."""
 
         result = await generate_image_with_references(
             prompt=prompt,
