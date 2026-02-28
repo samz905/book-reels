@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import type { StoryLocationFE, StoryCharacterFE } from "@/app/data/mockCreatorData";
+import type { StoryLocationFE, StoryCharacterFE, LocationAngleFE } from "@/app/data/mockCreatorData";
 import { VISUAL_STYLES } from "@/app/data/mockCreatorData";
-import { generateLocationImage, submitJob } from "@/lib/api/creator";
+import { generateLocationImage, submitJob, getLocationAngles, createLocationAngle, setDefaultLocationAngle, deleteLocationAngle } from "@/lib/api/creator";
+import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 
 interface LocationModalProps {
   isOpen: boolean;
@@ -31,6 +32,8 @@ interface LocationModalProps {
   generatingError?: string | null;
   /** Called when the modal submits a generation job, so parent can update card state */
   onGenerationStarted?: () => void;
+  /** Story ID — required for angles management */
+  storyId?: string;
 }
 
 export default function LocationModal({
@@ -46,6 +49,7 @@ export default function LocationModal({
   locationId,
   generatingError,
   onGenerationStarted,
+  storyId,
 }: LocationModalProps) {
   const isEditing = !!location;
 
@@ -54,13 +58,19 @@ export default function LocationModal({
   const [atmosphere, setAtmosphere] = useState("");
   const [visualStyle, setVisualStyle] = useState<string>("cinematic");
   const [refCharId, setRefCharId] = useState<string>("");
+  const [refUploadBase64, setRefUploadBase64] = useState<string | null>(null);
+  const [refUploadMime, setRefUploadMime] = useState("image/png");
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageMimeType, setImageMimeType] = useState("image/png");
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [angles, setAngles] = useState<LocationAngleFE[]>([]);
+  const [anglesLoading, setAnglesLoading] = useState(false);
+  const [savingAsAngle, setSavingAsAngle] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const refUploadInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -75,6 +85,7 @@ export default function LocationModal({
         setAtmosphere(location.atmosphere);
         setVisualStyle(lockedStyle || location.visualStyle || "cinematic");
         setRefCharId("");
+        setRefUploadBase64(null);
         setImageBase64(location.imageBase64);
         setImageUrl(location.imageUrl || null);
         setImageMimeType(location.imageMimeType);
@@ -84,6 +95,7 @@ export default function LocationModal({
         setAtmosphere("");
         setVisualStyle(lockedStyle || "cinematic");
         setRefCharId("");
+        setRefUploadBase64(null);
         setImageBase64(null);
         setImageUrl(null);
         setImageMimeType("image/png");
@@ -125,6 +137,75 @@ export default function LocationModal({
     return () => clearTimeout(timer);
   }, [isGenerating]);
 
+  // Fetch angles when editing a location
+  useEffect(() => {
+    if (!isOpen || !storyId || !location?.id) {
+      setAngles([]);
+      return;
+    }
+    let cancelled = false;
+    setAnglesLoading(true);
+    getLocationAngles(storyId, location.id)
+      .then((data) => { if (!cancelled) setAngles(data); })
+      .catch(() => { if (!cancelled) setAngles([]); })
+      .finally(() => { if (!cancelled) setAnglesLoading(false); });
+    return () => { cancelled = true; };
+  }, [isOpen, storyId, location?.id]);
+
+  const handleSaveAsAngle = async () => {
+    if (!storyId || !location?.id || savingAsAngle) return;
+    const imgUrl = imageUrl || null;
+    const imgB64 = imageBase64 || null;
+    if (!imgUrl && !imgB64) return;
+
+    // Dedup: skip if this exact URL is already saved as an angle
+    if (imgUrl && angles.some((a) => a.imageUrl === imgUrl)) return;
+
+    setSavingAsAngle(true);
+    try {
+      let url = imgUrl;
+      if (!url && imgB64) {
+        url = await uploadGenerationAsset(storyId, `angles/${Date.now()}`, imgB64, imageMimeType);
+      }
+      if (!url) throw new Error("Upload failed");
+      const newAngle = await createLocationAngle(storyId, location.id, {
+        image_url: url,
+        image_mime_type: imageMimeType,
+      });
+      setAngles((prev) => [...prev, newAngle]);
+    } catch (err) {
+      console.error("Error saving angle:", err);
+      alert("Failed to save angle");
+    } finally {
+      setSavingAsAngle(false);
+    }
+  };
+
+  const handleSetDefaultAngle = async (angle: LocationAngleFE) => {
+    if (!storyId || !location?.id) return;
+    try {
+      await setDefaultLocationAngle(storyId, location.id, angle.id);
+      setAngles((prev) => prev.map((a) => ({ ...a, isDefault: a.id === angle.id })));
+      setImageUrl(angle.imageUrl);
+      setImageBase64(null);
+      setImageMimeType(angle.imageMimeType);
+    } catch (err) {
+      console.error("Error setting default angle:", err);
+    }
+  };
+
+  const handleDeleteAngle = async (angleId: string) => {
+    if (!storyId || !location?.id) return;
+    if (!window.confirm("Delete this angle?")) return;
+    try {
+      await deleteLocationAngle(storyId, location.id, angleId);
+      setAngles((prev) => prev.filter((a) => a.id !== angleId));
+    } catch (err) {
+      console.error("Error deleting angle:", err);
+      alert("Cannot delete the default angle. Set another angle as default first.");
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = "hidden";
@@ -154,6 +235,20 @@ export default function LocationModal({
     reader.readAsDataURL(file);
   };
 
+  const handleRefUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { alert("Please select an image file"); return; }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      setRefUploadBase64(dataUrl.split(",")[1]);
+      setRefUploadMime(dataUrl.split(";")[0].split(":")[1]);
+      setRefCharId(""); // clear library ref — uploaded ref takes priority
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleGenerate = async () => {
     if (!name.trim() || !description.trim()) {
       setGenError("Name and Description are required for AI generation.");
@@ -177,11 +272,13 @@ export default function LocationModal({
       description: description.trim(),
       atmosphere: atmosphere.trim() || undefined,
       visual_style: refChar ? undefined : (lockedStyle || visualStyle),
-      reference_image: refChar?.imageBase64
-        ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
-        : refChar?.imageUrl
-          ? { image_url: refChar.imageUrl, mime_type: refChar.imageMimeType }
-          : undefined,
+      reference_image: refUploadBase64
+        ? { image_base64: refUploadBase64, mime_type: refUploadMime }
+        : refChar?.imageBase64
+          ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
+          : refChar?.imageUrl
+            ? { image_url: refChar.imageUrl, mime_type: refChar.imageMimeType }
+            : undefined,
     };
 
     // Non-blocking: submit as background job, result arrives via Realtime
@@ -270,8 +367,9 @@ export default function LocationModal({
           </div>
         )}
 
-        {/* Hidden file input */}
+        {/* Hidden file inputs */}
         <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+        <input ref={refUploadInputRef} type="file" accept="image/*" onChange={handleRefUpload} className="hidden" />
 
         {/* Location Name */}
         <div className="mb-4">
@@ -331,6 +429,37 @@ export default function LocationModal({
             </select>
           </div>
         )}
+
+        {/* Upload Reference Image (optional) */}
+        <div className="mb-4">
+          <label className="block text-white text-sm mb-2">
+            Upload Reference Image <span className="text-[#ADADAD]">(optional - for style consistency)</span>
+          </label>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => refUploadInputRef.current?.click()}
+              className="flex items-center gap-2 px-3 py-1.5 bg-[#262626] border border-[#444] rounded-lg text-[#ADADAD] text-sm hover:border-[#B8B6FC] transition-colors"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" /></svg>
+              Choose File
+            </button>
+            {refUploadBase64 && (
+              <>
+                <div className="w-10 h-10 rounded-lg overflow-hidden border border-[#B8B6FC] flex-shrink-0">
+                  <img src={`data:${refUploadMime};base64,${refUploadBase64}`} alt="Ref" className="w-full h-full object-cover" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRefUploadBase64(null)}
+                  className="text-red-400 text-xs hover:text-red-300"
+                >
+                  Remove
+                </button>
+              </>
+            )}
+          </div>
+        </div>
 
         {/* Visual Style (hidden when ref char selected OR lockedStyle is set) */}
         {!refCharId && !lockedStyle && (
@@ -410,6 +539,68 @@ export default function LocationModal({
             <p className="text-red-400 text-sm mt-2">{genError}</p>
           )}
         </div>
+
+        {/* Angles gallery — only when editing with storyId */}
+        {isEditing && storyId && (
+          <div className="mb-5">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-white text-sm font-medium">
+                Angles {angles.length > 0 && <span className="text-[#ADADAD]">({angles.length}/10)</span>}
+              </label>
+              {(imageBase64 || imageUrl) && angles.length < 10 && (() => {
+                const alreadySaved = !!imageUrl && angles.some((a) => a.imageUrl === imageUrl);
+                return (
+                  <button
+                    type="button"
+                    onClick={handleSaveAsAngle}
+                    disabled={savingAsAngle || alreadySaved}
+                    className={`text-xs disabled:opacity-50 ${alreadySaved ? "text-emerald-400 cursor-default" : "text-[#B8B6FC] hover:underline"}`}
+                  >
+                    {savingAsAngle ? "Saving..." : alreadySaved ? "Saved" : "+ Save current as angle"}
+                  </button>
+                );
+              })()}
+            </div>
+            {anglesLoading ? (
+              <p className="text-[#ADADAD] text-xs">Loading angles...</p>
+            ) : angles.length > 0 ? (
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {angles.map((angle) => (
+                  <div
+                    key={angle.id}
+                    className={`relative group/angle w-[70px] h-[98px] rounded-lg overflow-hidden flex-shrink-0 cursor-pointer border-2 transition-colors ${
+                      angle.isDefault ? "border-[#B8B6FC]" : "border-transparent hover:border-[#444]"
+                    }`}
+                    onClick={() => handleSetDefaultAngle(angle)}
+                  >
+                    <img src={angle.imageUrl} alt="Angle" className="w-full h-full object-cover" />
+                    {angle.isDefault && (
+                      <div className="absolute top-1 right-1 w-4 h-4 bg-[#B8B6FC] rounded-full flex items-center justify-center">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="#1A1E2F">
+                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.56 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z" />
+                        </svg>
+                      </div>
+                    )}
+                    {!angle.isDefault && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteAngle(angle.id); }}
+                        className="absolute top-1 right-1 w-4 h-4 bg-red-500/80 rounded-full items-center justify-center opacity-0 group-hover/angle:opacity-100 transition-opacity hidden group-hover/angle:flex"
+                      >
+                        <svg width="8" height="8" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="2">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[#ADADAD] text-xs">No angles saved yet. Generate images and save them as angles.</p>
+            )}
+          </div>
+        )}
 
         {/* Action buttons */}
         <div className="flex items-center justify-end gap-3">

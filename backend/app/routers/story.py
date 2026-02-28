@@ -92,12 +92,30 @@ class PreSelectedCharacter(BaseModel):
     role: Literal["protagonist", "antagonist", "supporting"]
 
 
+class LibraryCharacter(BaseModel):
+    """Character from the story library (all chars sent, AI picks relevant ones)."""
+    id: str
+    name: str
+    gender: str = ""
+    age: str = ""
+    appearance: str = ""
+    role: str = "supporting"
+
+
 class PreSelectedLocation(BaseModel):
     """Location pre-selected from the story library before script generation."""
     id: str
     name: str
     description: str
     atmosphere: str
+
+
+class LibraryLocation(BaseModel):
+    """Location from the story library (all locs sent, AI picks relevant ones)."""
+    id: str
+    name: str
+    description: str = ""
+    atmosphere: str = ""
 
 
 class Setting(BaseModel):
@@ -191,6 +209,8 @@ class GenerateStoryRequest(BaseModel):
     style: Literal["cinematic", "anime", "animated", "pixar"]
     characters: Optional[List[PreSelectedCharacter]] = None
     location: Optional[PreSelectedLocation] = None
+    library_characters: Optional[List[LibraryCharacter]] = None
+    library_locations: Optional[List[LibraryLocation]] = None
     # No duration - fixed at 1 minute
 
 
@@ -205,6 +225,8 @@ class RegenerateStoryRequest(BaseModel):
     feedback: Optional[str] = None
     characters: Optional[List[PreSelectedCharacter]] = None
     location: Optional[PreSelectedLocation] = None
+    library_characters: Optional[List[LibraryCharacter]] = None
+    library_locations: Optional[List[LibraryLocation]] = None
     # No duration - fixed at 1 minute
 
 
@@ -424,6 +446,8 @@ def build_story_prompt(
     feedback: Optional[str] = None,
     characters: Optional[List[PreSelectedCharacter]] = None,
     location: Optional[PreSelectedLocation] = None,
+    library_characters: Optional[List[LibraryCharacter]] = None,
+    library_locations: Optional[List[LibraryLocation]] = None,
 ) -> str:
     """Build the user prompt for story generation using Playbook structural blueprint."""
     style_display = STYLE_DISPLAY[style]
@@ -444,7 +468,7 @@ STEP 1 — Extract story ingredients:
 STEP 2 — Create characters:
 For each: id (snake_case), name, gender, age (e.g. "mid-30s"), appearance (4-5 specific visual details we will SEE on camera), role (protagonist/antagonist/supporting)."""
 
-    # Inject pre-selected characters
+    # Inject pre-selected characters (legacy: explicit selection)
     if characters:
         char_lines = []
         for c in characters:
@@ -457,6 +481,19 @@ For each: id (snake_case), name, gender, age (e.g. "mid-30s"), appearance (4-5 s
 PRE-SELECTED CHARACTERS (YOU MUST USE THESE EXACTLY — keep their id, name, gender, age, and role unchanged. You may enrich their appearance field):
 {chr(10).join(char_lines)}
 Create additional supporting characters ONLY if the story absolutely requires them. Any additional characters must have origin "ai"."""
+    elif library_characters:
+        # New: all library chars provided, AI picks the relevant ones
+        char_lines = []
+        for c in library_characters:
+            char_lines.append(
+                f'  - id: "{c.id}", name: "{c.name}", gender: "{c.gender}", '
+                f'age: "{c.age}", appearance: "{c.appearance}", role: "{c.role}"'
+            )
+        prompt += f"""
+
+STORY CHARACTER LIBRARY (use the most relevant characters for this episode — preserve their id, name, gender, age, and appearance EXACTLY as given. Do NOT rewrite or enrich appearance. Set origin to "story" for library characters):
+{chr(10).join(char_lines)}
+You may create additional supporting characters if the story requires them. Any new characters must have origin "ai"."""
 
     prompt += """
 
@@ -470,6 +507,19 @@ For each: id (e.g. "loc_1"), name (short name like "Kitchen" or "Hospital Suite"
 PRE-SELECTED LOCATION (USE THIS for ALL 8 scenes — do NOT create additional locations):
   - id: "{location.id}", name: "{location.name}", description: "{location.description}", atmosphere: "{location.atmosphere}"
 Every scene's setting_id MUST be "{location.id}". This follows the Vibe Application Rules: consistent environment across all scenes."""
+    elif library_locations:
+        # New: all library locs provided, AI picks the most fitting one
+        loc_lines = []
+        for loc in library_locations:
+            loc_lines.append(
+                f'  - id: "{loc.id}", name: "{loc.name}", description: "{loc.description}", atmosphere: "{loc.atmosphere}"'
+            )
+        prompt += f"""
+
+STORY LOCATION LIBRARY (pick the SINGLE most appropriate location for this episode — all 8 scenes must use the same location):
+{chr(10).join(loc_lines)}
+Preserve the chosen location's id, name, description unchanged. You may create a new location ONLY if none from the library fit.
+Every scene's setting_id MUST reference the chosen location. This follows the Vibe Application Rules: consistent environment across all scenes."""
     else:
         prompt += """
 
@@ -674,6 +724,8 @@ def parse_story_response(
     pre_selected_char_ids: Optional[set] = None,
     pre_selected_chars: Optional[List[PreSelectedCharacter]] = None,
     pre_selected_location: Optional[PreSelectedLocation] = None,
+    library_characters: Optional[List[LibraryCharacter]] = None,
+    library_locations: Optional[List[LibraryLocation]] = None,
 ) -> Story:
     """Parse the AI response into a Story object with both scenes and beats populated."""
     data = json.loads(response_text)
@@ -799,6 +851,21 @@ def parse_story_response(
                 char["origin"] = "story"
             else:
                 char["origin"] = "ai"
+    elif library_characters:
+        # Library path: match by name (case-insensitive) to restore DB IDs
+        lib_by_name = {c.name.lower(): c for c in library_characters}
+        lib_by_id = {c.id: c for c in library_characters}
+        for char in data.get("characters", []):
+            matched = lib_by_id.get(char.get("id")) or lib_by_name.get(char.get("name", "").lower())
+            if matched:
+                char["id"] = matched.id
+                char["name"] = matched.name
+                char["gender"] = matched.gender or char.get("gender", "")
+                char["age"] = matched.age or char.get("age", "")
+                char["appearance"] = matched.appearance or char.get("appearance", "")
+                char["origin"] = "story"
+            else:
+                char["origin"] = "ai"
     elif pre_selected_char_ids:
         # Legacy path: only IDs available
         for char in data.get("characters", []):
@@ -816,6 +883,18 @@ def parse_story_response(
                 loc["name"] = pre_selected_location.name
                 loc["description"] = pre_selected_location.description
                 loc["atmosphere"] = pre_selected_location.atmosphere
+                break
+    elif library_locations:
+        # Library path: match by name to restore DB IDs
+        lib_loc_by_name = {l.name.lower(): l for l in library_locations}
+        lib_loc_by_id = {l.id: l for l in library_locations}
+        for loc in data.get("locations", []):
+            matched = lib_loc_by_id.get(loc.get("id")) or lib_loc_by_name.get(loc.get("name", "").lower())
+            if matched:
+                loc["id"] = matched.id
+                loc["name"] = matched.name
+                loc["description"] = matched.description or loc.get("description", "")
+                loc["atmosphere"] = matched.atmosphere or loc.get("atmosphere", "")
                 break
 
     return Story(**data)
@@ -837,10 +916,13 @@ async def generate_story(request: GenerateStoryRequest):
     """
     try:
         pre_char_ids = {c.id for c in request.characters} if request.characters else None
+        lib_char_ids = {c.id for c in (request.library_characters or [])} if request.library_characters else None
         prompt = build_story_prompt(
             request.idea, request.style,
             characters=request.characters,
             location=request.location,
+            library_characters=request.library_characters,
+            library_locations=request.library_locations,
         )
 
         response = await generate_text(
@@ -853,9 +935,11 @@ async def generate_story(request: GenerateStoryRequest):
 
         story = parse_story_response(
             response, request.style,
-            pre_selected_char_ids=pre_char_ids,
+            pre_selected_char_ids=pre_char_ids or lib_char_ids,
             pre_selected_chars=request.characters,
             pre_selected_location=request.location,
+            library_characters=request.library_characters,
+            library_locations=request.library_locations,
         )
         cost = estimate_story_cost(len(story.scenes) or len(story.beats))
 
@@ -881,12 +965,15 @@ async def regenerate_story(request: RegenerateStoryRequest):
     """
     try:
         pre_char_ids = {c.id for c in request.characters} if request.characters else None
+        lib_char_ids = {c.id for c in (request.library_characters or [])} if request.library_characters else None
         prompt = build_story_prompt(
             request.idea,
             request.style,
             feedback=request.feedback,
             characters=request.characters,
             location=request.location,
+            library_characters=request.library_characters,
+            library_locations=request.library_locations,
         )
 
         response = await generate_text(
@@ -899,9 +986,11 @@ async def regenerate_story(request: RegenerateStoryRequest):
 
         story = parse_story_response(
             response, request.style,
-            pre_selected_char_ids=pre_char_ids,
+            pre_selected_char_ids=pre_char_ids or lib_char_ids,
             pre_selected_chars=request.characters,
             pre_selected_location=request.location,
+            library_characters=request.library_characters,
+            library_locations=request.library_locations,
         )
         cost = estimate_story_cost(len(story.scenes) or len(story.beats))
 

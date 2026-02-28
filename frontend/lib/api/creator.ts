@@ -9,6 +9,8 @@ import type {
   StoryCharacter as DbStoryCharacter,
   StoryLocation as DbStoryLocation,
   EpisodeStoryboard as DbEpisodeStoryboard,
+  CharacterLook as DbCharacterLook,
+  LocationAngle as DbLocationAngle,
 } from "@/types/database";
 import type {
   CreatorProfile,
@@ -20,6 +22,8 @@ import type {
   StoryCharacterFE,
   StoryLocationFE,
   EpisodeStoryboardFE,
+  CharacterLookFE,
+  LocationAngleFE,
 } from "@/app/data/mockCreatorData";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
@@ -85,6 +89,7 @@ export function mapDbStoryToFrontend(
     likes: dbStory.likes,
     genre: dbStory.genres,
     status: dbStory.status,
+    visualStyle: dbStory.visual_style || "cinematic",
     ebooks: ebooks.map(mapDbEbookToFrontend),
   };
 }
@@ -185,6 +190,7 @@ export async function createStory(data: {
   type: "video";
   description?: string;
   cover_url?: string | null;
+  visual_style?: string;
   genres?: string[];
   status?: "draft" | "published";
 }): Promise<FrontendStory> {
@@ -218,6 +224,7 @@ export async function updateStory(
     type?: "video";
     description?: string;
     cover_url?: string | null;
+    visual_style?: string;
     genres?: string[];
     status?: "draft" | "published";
   }
@@ -409,12 +416,25 @@ export function mapDbStoryboardToFrontend(db: DbEpisodeStoryboard): EpisodeStory
 
 // ============ Character CRUD ============
 
-export async function getStoryCharacters(storyId: string): Promise<StoryCharacterFE[]> {
+export async function getStoryCharacters(storyId: string, includeLooks = false): Promise<StoryCharacterFE[]> {
   const response = await fetch(`/api/stories/${storyId}/characters`, {
     credentials: "include",
   });
   const data = await handleResponse<DbStoryCharacter[]>(response);
-  return data.map(mapDbCharacterToFrontend);
+  const chars = data.map(mapDbCharacterToFrontend);
+
+  if (includeLooks && chars.length > 0) {
+    const looksResults = await Promise.allSettled(
+      chars.map((c) => getCharacterLooks(storyId, c.id))
+    );
+    looksResults.forEach((result, i) => {
+      if (result.status === "fulfilled") {
+        chars[i].looks = result.value;
+      }
+    });
+  }
+
+  return chars;
 }
 
 export async function createStoryCharacter(
@@ -476,12 +496,25 @@ export async function deleteStoryCharacter(storyId: string, characterId: string)
 
 // ============ Location CRUD ============
 
-export async function getStoryLocations(storyId: string): Promise<StoryLocationFE[]> {
+export async function getStoryLocations(storyId: string, includeAngles = false): Promise<StoryLocationFE[]> {
   const response = await fetch(`/api/stories/${storyId}/locations`, {
     credentials: "include",
   });
   const data = await handleResponse<DbStoryLocation[]>(response);
-  return data.map(mapDbLocationToFrontend);
+  const locs = data.map(mapDbLocationToFrontend);
+
+  if (includeAngles && locs.length > 0) {
+    const anglesResults = await Promise.allSettled(
+      locs.map((l) => getLocationAngles(storyId, l.id))
+    );
+    anglesResults.forEach((result, i) => {
+      if (result.status === "fulfilled") {
+        locs[i].angles = result.value;
+      }
+    });
+  }
+
+  return locs;
 }
 
 export async function createStoryLocation(
@@ -535,6 +568,132 @@ export async function deleteStoryLocation(storyId: string, locationId: string): 
     credentials: "include",
   });
   await handleResponse<{ success: boolean }>(response);
+}
+
+// ============ Character Looks ============
+
+function mapDbLookToFrontend(db: DbCharacterLook): CharacterLookFE {
+  return {
+    id: db.id,
+    characterId: db.character_id,
+    storyId: db.story_id,
+    imageUrl: db.image_url,
+    imageMimeType: db.image_mime_type,
+    isDefault: db.is_default,
+    sortOrder: db.sort_order,
+  };
+}
+
+export async function getCharacterLooks(storyId: string, characterId: string): Promise<CharacterLookFE[]> {
+  const response = await fetch(`/api/stories/${storyId}/characters/${characterId}/looks`, {
+    credentials: "include",
+  });
+  const data = await handleResponse<DbCharacterLook[]>(response);
+  return data.map(mapDbLookToFrontend);
+}
+
+export async function createCharacterLook(
+  storyId: string,
+  characterId: string,
+  data: { image_url: string; image_mime_type?: string; is_default?: boolean }
+): Promise<CharacterLookFE> {
+  const response = await fetch(`/api/stories/${storyId}/characters/${characterId}/looks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
+  });
+  const db = await handleResponse<DbCharacterLook>(response);
+  return mapDbLookToFrontend(db);
+}
+
+export async function setDefaultCharacterLook(
+  storyId: string,
+  characterId: string,
+  lookId: string
+): Promise<void> {
+  const response = await fetch(`/api/stories/${storyId}/characters/${characterId}/looks/${lookId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ is_default: true }),
+  });
+  await handleResponse(response);
+}
+
+export async function deleteCharacterLook(
+  storyId: string,
+  characterId: string,
+  lookId: string
+): Promise<void> {
+  const response = await fetch(`/api/stories/${storyId}/characters/${characterId}/looks/${lookId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  await handleResponse(response);
+}
+
+// ============ Location Angles ============
+
+function mapDbAngleToFrontend(db: DbLocationAngle): LocationAngleFE {
+  return {
+    id: db.id,
+    locationId: db.location_id,
+    storyId: db.story_id,
+    imageUrl: db.image_url,
+    imageMimeType: db.image_mime_type,
+    isDefault: db.is_default,
+    sortOrder: db.sort_order,
+  };
+}
+
+export async function getLocationAngles(storyId: string, locationId: string): Promise<LocationAngleFE[]> {
+  const response = await fetch(`/api/stories/${storyId}/locations/${locationId}/angles`, {
+    credentials: "include",
+  });
+  const data = await handleResponse<DbLocationAngle[]>(response);
+  return data.map(mapDbAngleToFrontend);
+}
+
+export async function createLocationAngle(
+  storyId: string,
+  locationId: string,
+  data: { image_url: string; image_mime_type?: string; is_default?: boolean }
+): Promise<LocationAngleFE> {
+  const response = await fetch(`/api/stories/${storyId}/locations/${locationId}/angles`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
+  });
+  const db = await handleResponse<DbLocationAngle>(response);
+  return mapDbAngleToFrontend(db);
+}
+
+export async function setDefaultLocationAngle(
+  storyId: string,
+  locationId: string,
+  angleId: string
+): Promise<void> {
+  const response = await fetch(`/api/stories/${storyId}/locations/${locationId}/angles/${angleId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ is_default: true }),
+  });
+  await handleResponse(response);
+}
+
+export async function deleteLocationAngle(
+  storyId: string,
+  locationId: string,
+  angleId: string
+): Promise<void> {
+  const response = await fetch(`/api/stories/${storyId}/locations/${locationId}/angles/${angleId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  await handleResponse(response);
 }
 
 // ============ Storyboard CRUD ============

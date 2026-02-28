@@ -85,7 +85,7 @@ export default function CreatorStoryCard({
   };
 
   // Free episode count for display label
-  const freeCount = 2;
+  const freeCount = 4;
 
   // Handler for adding book
   const handleAddBook = async (bookData: {

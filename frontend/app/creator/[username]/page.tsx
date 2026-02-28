@@ -110,6 +110,7 @@ function transformCreatorData(api: ApiCreatorResponse): PublicCreatorProfile {
   return {
     profile,
     subscription: {
+      isEnabled: settings?.subscription_enabled ?? false,
       monthlyPrice: settings?.monthly_price || 9.99,
       description: `Unlock all episodes (5+) across all stories`,
     },
@@ -222,6 +223,7 @@ export default function PublicCreatorProfilePage() {
       <div className="px-4 md:px-6 py-6 max-w-7xl mx-auto">
         <PublicProfileHeader
           profile={creator.profile}
+          subscriptionEnabled={creator.subscription.isEnabled}
           subscriptionPrice={creator.subscription.monthlyPrice}
           subscriptionDescription={creator.subscription.description}
         />

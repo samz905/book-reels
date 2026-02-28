@@ -153,6 +153,7 @@ export async function POST(request: NextRequest) {
     cover_url: body.cover_url || null,
     type: body.type,
     status: body.status || "draft",
+    visual_style: body.visual_style || "cinematic",
     genres: body.genres || [],
   };
 

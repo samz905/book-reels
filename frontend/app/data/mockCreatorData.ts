@@ -56,7 +56,28 @@ export interface Story {
   likes: number;
   genre: string[];
   status: "draft" | "published";
+  visualStyle?: string;
   ebooks: Ebook[];
+}
+
+export interface CharacterLookFE {
+  id: string;
+  characterId: string;
+  storyId: string;
+  imageUrl: string;
+  imageMimeType: string;
+  isDefault: boolean;
+  sortOrder: number;
+}
+
+export interface LocationAngleFE {
+  id: string;
+  locationId: string;
+  storyId: string;
+  imageUrl: string;
+  imageMimeType: string;
+  isDefault: boolean;
+  sortOrder: number;
 }
 
 export interface StoryCharacterFE {
@@ -70,7 +91,7 @@ export interface StoryCharacterFE {
   imageBase64: string | null;
   imageUrl: string | null;
   imageMimeType: string;
-
+  looks?: CharacterLookFE[];
 }
 
 export interface StoryLocationFE {
@@ -82,7 +103,7 @@ export interface StoryLocationFE {
   imageBase64: string | null;
   imageUrl: string | null;
   imageMimeType: string;
-
+  angles?: LocationAngleFE[];
 }
 
 export interface EpisodeStoryboardFE {

@@ -81,19 +81,19 @@ export function useStoryDetail(storyId: string | undefined) {
   });
 }
 
-export function useStoryCharacters(storyId: string | undefined) {
+export function useStoryCharacters(storyId: string | undefined, includeLooks = false) {
   return useQuery({
-    queryKey: queryKeys.storyCharacters(storyId!),
-    queryFn: () => getStoryCharacters(storyId!),
+    queryKey: [...queryKeys.storyCharacters(storyId!), { includeLooks }],
+    queryFn: () => getStoryCharacters(storyId!, includeLooks),
     enabled: !!storyId,
     staleTime: 30_000,
   });
 }
 
-export function useStoryLocations(storyId: string | undefined) {
+export function useStoryLocations(storyId: string | undefined, includeAngles = false) {
   return useQuery({
-    queryKey: queryKeys.storyLocations(storyId!),
-    queryFn: () => getStoryLocations(storyId!),
+    queryKey: [...queryKeys.storyLocations(storyId!), { includeAngles }],
+    queryFn: () => getStoryLocations(storyId!, includeAngles),
     enabled: !!storyId,
     staleTime: 30_000,
   });

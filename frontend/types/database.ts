@@ -78,6 +78,7 @@ export interface Database {
           cover_url: string | null;
           type: StoryType;
           status: ContentStatus;
+          visual_style: string;
           view_count: number;
           likes: number;
           genres: string[];
@@ -92,6 +93,7 @@ export interface Database {
           cover_url?: string | null;
           type: StoryType;
           status?: ContentStatus;
+          visual_style?: string;
           view_count?: number;
           likes?: number;
           genres?: string[];
@@ -104,6 +106,7 @@ export interface Database {
           cover_url?: string | null;
           type?: StoryType;
           status?: ContentStatus;
+          visual_style?: string;
           view_count?: number;
           likes?: number;
           genres?: string[];
@@ -454,6 +457,60 @@ export interface Database {
           cost?: number;
         };
       };
+      character_looks: {
+        Row: {
+          id: string;
+          character_id: string;
+          story_id: string;
+          image_url: string;
+          image_mime_type: string;
+          is_default: boolean;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          character_id: string;
+          story_id: string;
+          image_url: string;
+          image_mime_type?: string;
+          is_default?: boolean;
+          sort_order?: number;
+        };
+        Update: {
+          image_url?: string;
+          image_mime_type?: string;
+          is_default?: boolean;
+          sort_order?: number;
+        };
+      };
+      location_angles: {
+        Row: {
+          id: string;
+          location_id: string;
+          story_id: string;
+          image_url: string;
+          image_mime_type: string;
+          is_default: boolean;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          location_id: string;
+          story_id: string;
+          image_url: string;
+          image_mime_type?: string;
+          is_default?: boolean;
+          sort_order?: number;
+        };
+        Update: {
+          image_url?: string;
+          image_mime_type?: string;
+          is_default?: boolean;
+          sort_order?: number;
+        };
+      };
       cart_items: {
         Row: {
           id: string;
@@ -530,6 +587,14 @@ export type EpisodeStoryboardUpdate = Database["public"]["Tables"]["episode_stor
 export type EpisodeClip = Database["public"]["Tables"]["episode_clips"]["Row"];
 export type EpisodeClipInsert = Database["public"]["Tables"]["episode_clips"]["Insert"];
 export type EpisodeClipUpdate = Database["public"]["Tables"]["episode_clips"]["Update"];
+
+export type CharacterLook = Database["public"]["Tables"]["character_looks"]["Row"];
+export type CharacterLookInsert = Database["public"]["Tables"]["character_looks"]["Insert"];
+export type CharacterLookUpdate = Database["public"]["Tables"]["character_looks"]["Update"];
+
+export type LocationAngle = Database["public"]["Tables"]["location_angles"]["Row"];
+export type LocationAngleInsert = Database["public"]["Tables"]["location_angles"]["Insert"];
+export type LocationAngleUpdate = Database["public"]["Tables"]["location_angles"]["Update"];
 
 export type CartItem = Database["public"]["Tables"]["cart_items"]["Row"];
 export type CartItemInsert = Database["public"]["Tables"]["cart_items"]["Insert"];

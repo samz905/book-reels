@@ -26,6 +26,7 @@ export interface PublicStory {
 export interface PublicCreatorProfile {
   profile: CreatorProfile;
   subscription: {
+    isEnabled: boolean;
     monthlyPrice: number;
     description: string;
   };
@@ -67,6 +68,7 @@ export const mockPublicCreators: Record<string, PublicCreatorProfile> = {
       newEpisodesWeekly: 19,
     },
     subscription: {
+      isEnabled: true,
       monthlyPrice: 8.99,
       description: "Unlock all episodes, 5+1 stories, all ebooks",
     },
@@ -126,6 +128,7 @@ export const mockPublicCreators: Record<string, PublicCreatorProfile> = {
       newEpisodesWeekly: 5,
     },
     subscription: {
+      isEnabled: true,
       monthlyPrice: 6.99,
       description: "Unlock all episodes, 3 stories, all ebooks",
     },
@@ -157,6 +160,7 @@ export const mockPublicCreators: Record<string, PublicCreatorProfile> = {
       newEpisodesWeekly: 3,
     },
     subscription: {
+      isEnabled: true,
       monthlyPrice: 7.99,
       description: "Unlock all episodes, 2 stories, all ebooks",
     },
@@ -204,6 +208,7 @@ export function getCreatorByUsername(username: string): PublicCreatorProfile | n
       newEpisodesWeekly: 5,
     },
     subscription: {
+      isEnabled: true,
       monthlyPrice: 6.99,
       description: "Unlock all episodes and exclusive content",
     },

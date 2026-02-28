@@ -171,6 +171,7 @@ export default function CreatePage() {
         description: storyData.description,
         cover_url: storyData.cover || null,
         genres: storyData.genre,
+        visual_style: storyData.visualStyle || "cinematic",
         status: storyData.status,
       });
       posthog.capture("story_created", {

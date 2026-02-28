@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Story, GENRES } from "@/app/data/mockCreatorData";
+import { Story, GENRES, VISUAL_STYLES } from "@/app/data/mockCreatorData";
 
 interface CreateStoryModalProps {
   isOpen: boolean;
@@ -22,6 +22,7 @@ export default function CreateStoryModal({
   const [storyType] = useState<"video">("video");
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [description, setDescription] = useState("");
+  const [visualStyle, setVisualStyle] = useState("cinematic");
   const [isGenreDropdownOpen, setIsGenreDropdownOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -101,6 +102,7 @@ export default function CreateStoryModal({
       cover: cover,
       genre: selectedGenres,
       status: "draft",
+      visualStyle,
     });
 
     // Reset form (done by parent closing modal)
@@ -113,6 +115,7 @@ export default function CreateStoryModal({
     setStoryName("");
     setSelectedGenres([]);
     setDescription("");
+    setVisualStyle("cinematic");
     onClose();
   };
 
@@ -238,6 +241,28 @@ export default function CreateStoryModal({
                 ))}
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Visual Style */}
+        <div className="mb-6">
+          <label className="block text-white text-base mb-2">Visual Style</label>
+          <p className="text-[#ADADAD] text-xs mb-3">This dictates the visual style for all episodes.</p>
+          <div className="flex flex-wrap gap-2">
+            {VISUAL_STYLES.map((s) => (
+              <button
+                key={s.value}
+                type="button"
+                onClick={() => setVisualStyle(s.value)}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                  visualStyle === s.value
+                    ? "bg-[#262550] border border-[#B8B6FC] text-[#B8B6FC]"
+                    : "bg-[#262626] border border-transparent text-white/60 hover:text-white"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
           </div>
         </div>
 

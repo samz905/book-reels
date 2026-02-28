@@ -206,8 +206,8 @@ export default function StoryManagementPage() {
 
   // Data — React Query (cached, stale-while-revalidate)
   const { data: story, isLoading: storyLoading, error: storyError } = useStoryDetail(storyId);
-  const { data: characters = [] } = useStoryCharacters(storyId);
-  const { data: locations = [] } = useStoryLocations(storyId);
+  const { data: characters = [] } = useStoryCharacters(storyId, true);
+  const { data: locations = [] } = useStoryLocations(storyId, true);
   const { data: storyGenerations = [] } = useStoryGenerations(storyId);
 
   const isLoading = authLoading || storyLoading;
@@ -264,6 +264,7 @@ export default function StoryManagementPage() {
         description: updatedStory.description,
         cover_url: updatedStory.cover || null,
         genres: updatedStory.genre,
+        visual_style: updatedStory.visualStyle || "cinematic",
         status: updatedStory.status,
       });
       queryClient.setQueryData(queryKeys.story(storyId), updatedStory);
@@ -522,7 +523,7 @@ export default function StoryManagementPage() {
     );
   }
 
-  const freeCount = 2;
+  const freeCount = 4;
 
   return (
     <div className="min-h-screen bg-black relative overflow-clip">
@@ -929,7 +930,9 @@ export default function StoryManagementPage() {
         onSave={handleSaveCharacter}
         character={editingCharacter}
         existingCharacters={characters}
+        lockedStyle={story.visualStyle || "cinematic"}
         isSaving={isCharSaving}
+        storyId={storyId}
       />
 
       <LocationModal
@@ -941,7 +944,9 @@ export default function StoryManagementPage() {
         onSave={handleSaveLocation}
         location={editingLocation}
         existingCharacters={characters}
+        lockedStyle={story.visualStyle || "cinematic"}
         isSaving={isLocSaving}
+        storyId={storyId}
       />
 
       <DeleteConfirmModal

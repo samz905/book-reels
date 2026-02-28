@@ -50,7 +50,14 @@ export default function LocationCard({ location, onEdit, onDelete }: LocationCar
 
       {/* Info */}
       <div className="mt-2">
-        <p className="text-white text-sm font-medium truncate">{location.name}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-white text-sm font-medium truncate">{location.name}</p>
+          {(location.angles?.length || 0) > 1 && (
+            <span className="text-[10px] text-[#B8B6FC] bg-[#262550] px-1.5 py-0.5 rounded-full flex-shrink-0">
+              {location.angles!.length} angles
+            </span>
+          )}
+        </div>
         <p className="text-[#ADADAD] text-xs truncate">
           {location.description || "No description"}
         </p>

@@ -104,6 +104,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     "cover_url",
     "type",
     "status",
+    "visual_style",
     "genres",
   ];
   const updateData: StoryUpdate = {};

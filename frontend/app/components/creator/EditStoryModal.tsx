@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Story, GENRES } from "@/app/data/mockCreatorData";
+import { Story, GENRES, VISUAL_STYLES } from "@/app/data/mockCreatorData";
 
 interface EditStoryModalProps {
   isOpen: boolean;
@@ -24,6 +24,7 @@ export default function EditStoryModal({
   const [storyType] = useState<"video">("video");
   const [selectedGenres, setSelectedGenres] = useState<string[]>(story.genre);
   const [description, setDescription] = useState(story.description);
+  const [visualStyle, setVisualStyle] = useState(story.visualStyle || "cinematic");
   const [status, setStatus] = useState<"draft" | "published">(story.status);
   const [isGenreDropdownOpen, setIsGenreDropdownOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -40,6 +41,7 @@ export default function EditStoryModal({
     setStoryName(story.title);
     setSelectedGenres(story.genre);
     setDescription(story.description);
+    setVisualStyle(story.visualStyle || "cinematic");
     setStatus(story.status);
   }, [story]);
 
@@ -109,6 +111,7 @@ export default function EditStoryModal({
       description,
       cover,
       genre: selectedGenres,
+      visualStyle,
       status,
     });
   };
@@ -240,6 +243,28 @@ export default function EditStoryModal({
                 ))}
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Visual Style */}
+        <div className="mb-6">
+          <label className="block text-white text-base mb-2">Visual Style</label>
+          <p className="text-[#ADADAD] text-xs mb-3">This dictates the visual style for all episodes.</p>
+          <div className="flex flex-wrap gap-2">
+            {VISUAL_STYLES.map((s) => (
+              <button
+                key={s.value}
+                type="button"
+                onClick={() => setVisualStyle(s.value)}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                  visualStyle === s.value
+                    ? "bg-[#262550] border border-[#B8B6FC] text-[#B8B6FC]"
+                    : "bg-[#262626] border border-transparent text-white/60 hover:text-white"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
           </div>
         </div>
 

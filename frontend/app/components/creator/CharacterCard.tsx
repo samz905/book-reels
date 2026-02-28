@@ -50,7 +50,14 @@ export default function CharacterCard({ character, onEdit, onDelete }: Character
 
       {/* Info */}
       <div className="mt-2">
-        <p className="text-white text-sm font-medium truncate">{character.name}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-white text-sm font-medium truncate">{character.name}</p>
+          {(character.looks?.length || 0) > 1 && (
+            <span className="text-[10px] text-[#B8B6FC] bg-[#262550] px-1.5 py-0.5 rounded-full flex-shrink-0">
+              {character.looks!.length} looks
+            </span>
+          )}
+        </div>
         {character.description && (
           <p className="text-[#ADADAD] text-xs truncate">{character.description}</p>
         )}

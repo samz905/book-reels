@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import type { StoryCharacterFE } from "@/app/data/mockCreatorData";
+import type { StoryCharacterFE, CharacterLookFE } from "@/app/data/mockCreatorData";
 import { VISUAL_STYLES } from "@/app/data/mockCreatorData";
-import { generateCharacterImage, submitJob } from "@/lib/api/creator";
+import { generateCharacterImage, submitJob, getCharacterLooks, createCharacterLook, setDefaultCharacterLook, deleteCharacterLook } from "@/lib/api/creator";
+import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 
 interface CharacterModalProps {
   isOpen: boolean;
@@ -34,6 +35,8 @@ interface CharacterModalProps {
   generatingError?: string | null;
   /** Called when the modal submits a generation job, so parent can update card state */
   onGenerationStarted?: () => void;
+  /** Story ID — required for looks management */
+  storyId?: string;
 }
 
 export default function CharacterModal({
@@ -50,6 +53,7 @@ export default function CharacterModal({
   characterId,
   generatingError,
   onGenerationStarted,
+  storyId,
 }: CharacterModalProps) {
   const isEditing = !!character;
 
@@ -60,13 +64,19 @@ export default function CharacterModal({
   const [role, setRole] = useState("supporting");
   const [visualStyle, setVisualStyle] = useState<string>("cinematic");
   const [refCharId, setRefCharId] = useState<string>("");
+  const [refUploadBase64, setRefUploadBase64] = useState<string | null>(null);
+  const [refUploadMime, setRefUploadMime] = useState("image/png");
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageMimeType, setImageMimeType] = useState("image/png");
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [looks, setLooks] = useState<CharacterLookFE[]>([]);
+  const [looksLoading, setLooksLoading] = useState(false);
+  const [savingAsLook, setSavingAsLook] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const refUploadInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -87,6 +97,7 @@ export default function CharacterModal({
         setRole(character.role);
         setVisualStyle(lockedStyle || character.visualStyle || "cinematic");
         setRefCharId("");
+        setRefUploadBase64(null);
         setImageBase64(character.imageBase64);
         setImageUrl(character.imageUrl || null);
         setImageMimeType(character.imageMimeType);
@@ -98,6 +109,7 @@ export default function CharacterModal({
         setRole("supporting");
         setVisualStyle(lockedStyle || "cinematic");
         setRefCharId("");
+        setRefUploadBase64(null);
         setImageBase64(null);
         setImageUrl(null);
         setImageMimeType("image/png");
@@ -141,6 +153,76 @@ export default function CharacterModal({
     return () => clearTimeout(timer);
   }, [isGenerating]);
 
+  // Fetch looks when editing a character
+  useEffect(() => {
+    if (!isOpen || !storyId || !character?.id) {
+      setLooks([]);
+      return;
+    }
+    let cancelled = false;
+    setLooksLoading(true);
+    getCharacterLooks(storyId, character.id)
+      .then((data) => { if (!cancelled) setLooks(data); })
+      .catch(() => { if (!cancelled) setLooks([]); })
+      .finally(() => { if (!cancelled) setLooksLoading(false); });
+    return () => { cancelled = true; };
+  }, [isOpen, storyId, character?.id]);
+
+  const handleSaveAsLook = async () => {
+    if (!storyId || !character?.id || savingAsLook) return;
+    const imgUrl = imageUrl || null;
+    const imgB64 = imageBase64 || null;
+    if (!imgUrl && !imgB64) return;
+
+    // Dedup: skip if this exact URL is already saved as a look
+    if (imgUrl && looks.some((l) => l.imageUrl === imgUrl)) return;
+
+    setSavingAsLook(true);
+    try {
+      let url = imgUrl;
+      if (!url && imgB64) {
+        url = await uploadGenerationAsset(storyId, `looks/${Date.now()}`, imgB64, imageMimeType);
+      }
+      if (!url) throw new Error("Upload failed");
+      const newLook = await createCharacterLook(storyId, character.id, {
+        image_url: url,
+        image_mime_type: imageMimeType,
+      });
+      setLooks((prev) => [...prev, newLook]);
+    } catch (err) {
+      console.error("Error saving look:", err);
+      alert("Failed to save look");
+    } finally {
+      setSavingAsLook(false);
+    }
+  };
+
+  const handleSetDefaultLook = async (look: CharacterLookFE) => {
+    if (!storyId || !character?.id) return;
+    try {
+      await setDefaultCharacterLook(storyId, character.id, look.id);
+      setLooks((prev) => prev.map((l) => ({ ...l, isDefault: l.id === look.id })));
+      // Update the main image to match
+      setImageUrl(look.imageUrl);
+      setImageBase64(null);
+      setImageMimeType(look.imageMimeType);
+    } catch (err) {
+      console.error("Error setting default look:", err);
+    }
+  };
+
+  const handleDeleteLook = async (lookId: string) => {
+    if (!storyId || !character?.id) return;
+    if (!window.confirm("Delete this look?")) return;
+    try {
+      await deleteCharacterLook(storyId, character.id, lookId);
+      setLooks((prev) => prev.filter((l) => l.id !== lookId));
+    } catch (err) {
+      console.error("Error deleting look:", err);
+      alert("Cannot delete the default look. Set another look as default first.");
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = "hidden";
@@ -171,6 +253,20 @@ export default function CharacterModal({
     reader.readAsDataURL(file);
   };
 
+  const handleRefUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { alert("Please select an image file"); return; }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      setRefUploadBase64(dataUrl.split(",")[1]);
+      setRefUploadMime(dataUrl.split(";")[0].split(":")[1]);
+      setRefCharId(""); // clear library ref — uploaded ref takes priority
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleGenerate = async () => {
     if (!name.trim() || !age.trim() || !description.trim()) {
       setGenError("Name, Age, and Description are required for AI generation.");
@@ -195,11 +291,13 @@ export default function CharacterModal({
       gender: gender || undefined,
       description: description.trim(),
       visual_style: refChar ? undefined : (lockedStyle || visualStyle),
-      reference_image: refChar?.imageBase64
-        ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
-        : refChar?.imageUrl
-          ? { image_url: refChar.imageUrl, mime_type: refChar.imageMimeType }
-          : undefined,
+      reference_image: refUploadBase64
+        ? { image_base64: refUploadBase64, mime_type: refUploadMime }
+        : refChar?.imageBase64
+          ? { image_base64: refChar.imageBase64, mime_type: refChar.imageMimeType }
+          : refChar?.imageUrl
+            ? { image_url: refChar.imageUrl, mime_type: refChar.imageMimeType }
+            : undefined,
     };
 
     // Non-blocking: submit as background job, result arrives via Realtime
@@ -290,8 +388,9 @@ export default function CharacterModal({
           </div>
         )}
 
-        {/* Hidden file input */}
+        {/* Hidden file inputs */}
         <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+        <input ref={refUploadInputRef} type="file" accept="image/*" onChange={handleRefUpload} className="hidden" />
 
         {/* Name + Age row */}
         <div className="flex gap-4 mb-4">
@@ -367,6 +466,37 @@ export default function CharacterModal({
             </select>
           </div>
         )}
+
+        {/* Upload Reference Image (optional) */}
+        <div className="mb-4">
+          <label className="block text-white text-sm mb-2">
+            Upload Reference Image <span className="text-[#ADADAD]">(optional - for style consistency)</span>
+          </label>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => refUploadInputRef.current?.click()}
+              className="flex items-center gap-2 px-3 py-1.5 bg-[#262626] border border-[#444] rounded-lg text-[#ADADAD] text-sm hover:border-[#B8B6FC] transition-colors"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" /></svg>
+              Choose File
+            </button>
+            {refUploadBase64 && (
+              <>
+                <div className="w-10 h-10 rounded-lg overflow-hidden border border-[#B8B6FC] flex-shrink-0">
+                  <img src={`data:${refUploadMime};base64,${refUploadBase64}`} alt="Ref" className="w-full h-full object-cover" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRefUploadBase64(null)}
+                  className="text-red-400 text-xs hover:text-red-300"
+                >
+                  Remove
+                </button>
+              </>
+            )}
+          </div>
+        </div>
 
         {/* Visual Style (hidden when ref char selected OR lockedStyle is set) */}
         {!refCharId && !lockedStyle && (
@@ -462,6 +592,69 @@ export default function CharacterModal({
             <p className="text-red-400 text-sm mt-2">{genError}</p>
           )}
         </div>
+
+        {/* Looks gallery — only when editing with storyId */}
+        {isEditing && storyId && (
+          <div className="mb-5">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-white text-sm font-medium">
+                Looks {looks.length > 0 && <span className="text-[#ADADAD]">({looks.length}/10)</span>}
+              </label>
+              {(imageBase64 || imageUrl) && looks.length < 10 && (() => {
+                const alreadySaved = !!imageUrl && looks.some((l) => l.imageUrl === imageUrl);
+                return (
+                  <button
+                    type="button"
+                    onClick={handleSaveAsLook}
+                    disabled={savingAsLook || alreadySaved}
+                    className={`text-xs disabled:opacity-50 ${alreadySaved ? "text-emerald-400 cursor-default" : "text-[#B8B6FC] hover:underline"}`}
+                  >
+                    {savingAsLook ? "Saving..." : alreadySaved ? "Saved" : "+ Save current as look"}
+                  </button>
+                );
+              })()}
+            </div>
+            {looksLoading ? (
+              <p className="text-[#ADADAD] text-xs">Loading looks...</p>
+            ) : looks.length > 0 ? (
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {looks.map((look) => (
+                  <div
+                    key={look.id}
+                    className={`relative group/look w-[70px] h-[98px] rounded-lg overflow-hidden flex-shrink-0 cursor-pointer border-2 transition-colors ${
+                      look.isDefault ? "border-[#B8B6FC]" : "border-transparent hover:border-[#444]"
+                    }`}
+                    onClick={() => handleSetDefaultLook(look)}
+                  >
+                    <img src={look.imageUrl} alt="Look" className="w-full h-full object-cover" />
+                    {look.isDefault && (
+                      <div className="absolute top-1 right-1 w-4 h-4 bg-[#B8B6FC] rounded-full flex items-center justify-center">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="#1A1E2F">
+                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.56 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z" />
+                        </svg>
+                      </div>
+                    )}
+                    {/* Delete on hover (not default) */}
+                    {!look.isDefault && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteLook(look.id); }}
+                        className="absolute top-1 right-1 w-4 h-4 bg-red-500/80 rounded-full items-center justify-center opacity-0 group-hover/look:opacity-100 transition-opacity hidden group-hover/look:flex"
+                      >
+                        <svg width="8" height="8" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="2">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[#ADADAD] text-xs">No looks saved yet. Generate images and save them as looks.</p>
+            )}
+          </div>
+        )}
 
         {/* Action buttons */}
         <div className="flex items-center justify-end gap-3">

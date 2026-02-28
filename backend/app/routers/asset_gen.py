@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..core import generate_image, COST_IMAGE_GENERATION
+from ..core import generate_image, generate_image_with_references, COST_IMAGE_GENERATION
 
 router = APIRouter()
 
@@ -116,8 +116,13 @@ Show enough detail to establish their complete look.
 
 TRUE portrait orientation, 9:16 aspect ratio. Compose natively for portrait — do NOT rotate landscape or add padding."""
 
-        # Always T2I — chars are generated independently (no style ref needed)
-        result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+        # Use reference image if provided, otherwise T2I
+        ref = request.reference_image
+        if ref and (ref.image_base64 or ref.image_url):
+            refs = [{"image_base64": ref.image_base64, "image_url": ref.image_url, "mime_type": ref.mime_type}]
+            result = await generate_image_with_references(prompt=prompt, reference_images=refs, aspect_ratio="9:16")
+        else:
+            result = await generate_image(prompt=prompt, aspect_ratio="9:16")
 
         return GeneratedImageResponse(
             image_base64=result["image_base64"],
@@ -153,8 +158,13 @@ No characters in frame.
 
 TRUE portrait orientation, 9:16 aspect ratio. Compose natively for portrait — do NOT rotate landscape or add padding."""
 
-        # Always T2I — locations are generated independently (no style ref needed)
-        result = await generate_image(prompt=prompt, aspect_ratio="9:16")
+        # Use reference image if provided, otherwise T2I
+        ref = request.reference_image
+        if ref and (ref.image_base64 or ref.image_url):
+            refs = [{"image_base64": ref.image_base64, "image_url": ref.image_url, "mime_type": ref.mime_type}]
+            result = await generate_image_with_references(prompt=prompt, reference_images=refs, aspect_ratio="9:16")
+        else:
+            result = await generate_image(prompt=prompt, aspect_ratio="9:16")
 
         return GeneratedImageResponse(
             image_base64=result["image_base64"],

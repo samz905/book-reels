@@ -13,7 +13,7 @@ import {
   type GenJob,
 } from "@/lib/supabase/ai-generations";
 import { useAuth } from "@/app/context/AuthContext";
-import { getMyStories, getStoryCharacters, getStoryLocations, createStoryCharacter, createStoryLocation, deleteStoryCharacter, deleteStoryLocation, createStory, submitJob, getEpisodeStoryboards, upsertEpisodeStoryboards, getEpisodeClips, upsertEpisodeClips } from "@/lib/api/creator";
+import { getMyStories, getStoryCharacters, getStoryLocations, createStoryCharacter, createStoryLocation, updateStoryCharacter, updateStoryLocation, deleteStoryCharacter, deleteStoryLocation, createStory, submitJob, getEpisodeStoryboards, upsertEpisodeStoryboards, getEpisodeClips, upsertEpisodeClips } from "@/lib/api/creator";
 import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 import { useGenJobs } from "@/lib/hooks/useGenJobs";
 import type { StoryCharacterFE, StoryLocationFE, EpisodeStoryboardFE } from "@/app/data/mockCreatorData";
@@ -208,7 +208,9 @@ interface SceneImageState {
   title: string;
   visualDescription: string;
   originalDescription: string;
-  image: MoodboardImage | null;
+  images?: MoodboardImage[];     // History — all generated versions
+  selectedIndex?: number;         // Active version index
+  image: MoodboardImage | null;  // Primary image (= images[selectedIndex] when history exists)
   isQueued: boolean;
   isGenerating: boolean;
   error: string;
@@ -979,7 +981,12 @@ export default function CreateEpisodePage() {
               })
               .catch(() => { });
           }
-          setSceneImages((prev) => ({ ...prev, [sceneNum]: { ...prev[sceneNum], image: img, isQueued: false, isGenerating: false, feedback: "" } }));
+          setSceneImages((prev) => {
+            const s = prev[sceneNum];
+            const prevImages = s?.images || (s?.image ? [s.image] : []);
+            const newImages = [...prevImages, img];
+            return { ...prev, [sceneNum]: { ...s, image: img, images: newImages, selectedIndex: newImages.length - 1, isQueued: false, isGenerating: false, feedback: "" } };
+          });
           // Persist refined image to episode_storyboards DB table
           if (genId) {
             upsertEpisodeStoryboards(genId, [{
@@ -1449,20 +1456,20 @@ export default function CreateEpisodePage() {
       const payload = {
         idea,
         style,
-        characters: selectedChars.length > 0 ? selectedChars.map(c => ({
+        library_characters: storyLibraryChars.length > 0 ? storyLibraryChars.map(c => ({
           id: c.id,
           name: c.name,
-          gender: c.gender,
-          age: c.age,
-          appearance: c.description,
-          role: c.episodeRole,
+          gender: c.gender || "",
+          age: c.age || "",
+          appearance: c.description || "",
+          role: c.role || "supporting",
         })) : undefined,
-        location: selectedLocation ? {
-          id: selectedLocation.id,
-          name: selectedLocation.name,
-          description: selectedLocation.description,
-          atmosphere: selectedLocation.atmosphere,
-        } : undefined,
+        library_locations: storyLibraryLocs.length > 0 ? storyLibraryLocs.map(l => ({
+          id: l.id,
+          name: l.name,
+          description: l.description || "",
+          atmosphere: l.atmosphere || "",
+        })) : undefined,
       };
 
       clearProcessedJob("script");
@@ -1486,20 +1493,20 @@ export default function CreateEpisodePage() {
         idea,
         style,
         feedback: globalFeedback || null,
-        characters: selectedChars.length > 0 ? selectedChars.map(c => ({
+        library_characters: storyLibraryChars.length > 0 ? storyLibraryChars.map(c => ({
           id: c.id,
           name: c.name,
-          gender: c.gender,
-          age: c.age,
-          appearance: c.description,
-          role: c.episodeRole,
+          gender: c.gender || "",
+          age: c.age || "",
+          appearance: c.description || "",
+          role: c.role || "supporting",
         })) : undefined,
-        location: selectedLocation ? {
-          id: selectedLocation.id,
-          name: selectedLocation.name,
-          description: selectedLocation.description,
-          atmosphere: selectedLocation.atmosphere,
-        } : undefined,
+        library_locations: storyLibraryLocs.length > 0 ? storyLibraryLocs.map(l => ({
+          id: l.id,
+          name: l.name,
+          description: l.description || "",
+          atmosphere: l.atmosphere || "",
+        })) : undefined,
       };
 
       clearProcessedJob("script");
@@ -1759,8 +1766,8 @@ export default function CreateEpisodePage() {
   const fetchStoryLibrary = async (storyId: string) => {
     try {
       const [chars, locs] = await Promise.all([
-        getStoryCharacters(storyId),
-        getStoryLocations(storyId),
+        getStoryCharacters(storyId, true),
+        getStoryLocations(storyId, true),
       ]);
       console.log(`[FETCH-LIB] storyId=${storyId}, chars=${chars.length}, locs=${locs.length}`, chars.map(c => ({
         id: c.id, name: c.name, hasImg: !!(c.imageBase64?.length || c.imageUrl),
@@ -1845,7 +1852,11 @@ export default function CreateEpisodePage() {
         associatedStoryIdRef.current = data.story_id;
         fetch(`/api/stories/${data.story_id}`)
           .then(res => res.ok ? res.json() : null)
-          .then(d => { if (d?.title) setAssociatedStoryName(d.title); })
+          .then(d => {
+            if (d?.title) setAssociatedStoryName(d.title);
+            // Set visual style from story if JSONB didn't have one (backward compat)
+            if (d?.visual_style && !s.style) setStyle(d.visual_style as Style);
+          })
           .catch(() => { });
         // Check if an episode is already published for this generation
         fetch(`/api/stories/${data.story_id}/episodes`)
@@ -2567,43 +2578,60 @@ export default function CreateEpisodePage() {
       if (type === "character") {
         const char = story?.characters.find(c => c.id === id);
         if (!char) { savingToLibRef.current.delete(key); setSavingToLibKeys(new Set(savingToLibRef.current)); return; }
-        // Check if already saved by name (race condition guard — AI IDs ≠ DB IDs)
-        if (storyLibraryChars.some(c => c.name.toLowerCase() === char.name.toLowerCase())) {
-          savingToLibRef.current.delete(key);
-          setSavingToLibKeys(new Set(savingToLibRef.current));
-          return;
-        }
         const img = characterImages[id]?.image;
-        const newDbChar = await createStoryCharacter(sid, {
-          name: char.name, age: char.age, gender: char.gender,
-          description: char.appearance || "", role: char.role, visual_style: style,
-          image_url: img?.image_url || null,
-          image_mime_type: img?.mime_type || "image/png",
-        });
-        setStoryLibraryChars(prev => {
-          // Dedupe: skip if name already present (another click resolved first)
-          if (prev.some(c => c.name.toLowerCase() === newDbChar.name.toLowerCase())) return prev;
-          return [...prev, newDbChar];
-        });
+        const existingLibChar = storyLibraryChars.find(c => c.name.toLowerCase() === char.name.toLowerCase());
+        if (existingLibChar) {
+          // Already in library — ask to replace image
+          const replace = window.confirm(`"${char.name}" already exists in your library. Replace the existing image?`);
+          if (replace && img?.image_url) {
+            await updateStoryCharacter(sid, existingLibChar.id, {
+              image_url: img.image_url,
+              image_mime_type: img.mime_type || "image/png",
+            });
+            setStoryLibraryChars(prev => prev.map(c =>
+              c.id === existingLibChar.id ? { ...c, imageUrl: img.image_url!, imageMimeType: img.mime_type || "image/png" } : c
+            ));
+          }
+        } else {
+          const newDbChar = await createStoryCharacter(sid, {
+            name: char.name, age: char.age, gender: char.gender,
+            description: char.appearance || "", role: char.role, visual_style: style,
+            image_url: img?.image_url || null,
+            image_mime_type: img?.mime_type || "image/png",
+          });
+          setStoryLibraryChars(prev => {
+            if (prev.some(c => c.name.toLowerCase() === newDbChar.name.toLowerCase())) return prev;
+            return [...prev, newDbChar];
+          });
+        }
       } else {
         const loc = story?.locations.find(l => l.id === id);
         if (!loc) { savingToLibRef.current.delete(key); setSavingToLibKeys(new Set(savingToLibRef.current)); return; }
-        if (storyLibraryLocs.some(l => (l.name || "").toLowerCase() === (loc.name || "").toLowerCase())) {
-          savingToLibRef.current.delete(key);
-          setSavingToLibKeys(new Set(savingToLibRef.current));
-          return;
-        }
         const img = locationImages[id]?.image;
-        const newDbLoc = await createStoryLocation(sid, {
-          name: loc.name, description: loc.description || "",
-          atmosphere: loc.atmosphere || "", visual_style: style,
-          image_url: img?.image_url || null,
-          image_mime_type: img?.mime_type || "image/png",
-        });
-        setStoryLibraryLocs(prev => {
-          if (prev.some(l => (l.name || "").toLowerCase() === (newDbLoc.name || "").toLowerCase())) return prev;
-          return [...prev, newDbLoc];
-        });
+        const existingLibLoc = storyLibraryLocs.find(l => (l.name || "").toLowerCase() === (loc.name || "").toLowerCase());
+        if (existingLibLoc) {
+          const replace = window.confirm(`"${loc.name}" already exists in your library. Replace the existing image?`);
+          if (replace && img?.image_url) {
+            await updateStoryLocation(sid, existingLibLoc.id, {
+              image_url: img.image_url,
+              image_mime_type: img.mime_type || "image/png",
+            });
+            setStoryLibraryLocs(prev => prev.map(l =>
+              l.id === existingLibLoc.id ? { ...l, imageUrl: img.image_url!, imageMimeType: img.mime_type || "image/png" } : l
+            ));
+          }
+        } else {
+          const newDbLoc = await createStoryLocation(sid, {
+            name: loc.name, description: loc.description || "",
+            atmosphere: loc.atmosphere || "", visual_style: style,
+            image_url: img?.image_url || null,
+            image_mime_type: img?.mime_type || "image/png",
+          });
+          setStoryLibraryLocs(prev => {
+            if (prev.some(l => (l.name || "").toLowerCase() === (newDbLoc.name || "").toLowerCase())) return prev;
+            return [...prev, newDbLoc];
+          });
+        }
       }
     } catch (e) {
       console.error("[SAVE-TO-LIB] FAILED:", e);
@@ -2991,10 +3019,13 @@ export default function CreateEpisodePage() {
       if (urlStoryId) {
         setAssociatedStoryId(urlStoryId);
         associatedStoryIdRef.current = urlStoryId;
-        // Fetch story name for banner
+        // Fetch story name + visual style for banner
         fetch(`/api/stories/${urlStoryId}`)
           .then(res => res.ok ? res.json() : null)
-          .then(data => { if (data?.title) setAssociatedStoryName(data.title); })
+          .then(data => {
+            if (data?.title) setAssociatedStoryName(data.title);
+            if (data?.visual_style) setStyle(data.visual_style as Style);
+          })
           .catch(() => { });
         // Fetch story library chars & locations
         fetchStoryLibrary(urlStoryId);
@@ -3543,41 +3574,6 @@ export default function CreateEpisodePage() {
                 <div className="flex items-center gap-3 mb-6">
                   <span className="text-xs text-[#ADADAD] bg-[#262626] px-3 py-1.5 rounded-full">Episode Length: ~60s</span>
                 </div>
-
-                {/* Visual Style selector */}
-                <div className="mb-6">
-                  <label className="block text-white text-sm font-medium mb-2">Visual Style</label>
-                  <div className="flex flex-wrap gap-2">
-                    {STYLE_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        onClick={() => { if (!story) { setStyle(opt.value); setSelectedChars([]); setSelectedLocation(null); } }}
-                        disabled={!!story}
-                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${style === opt.value
-                          ? "bg-[#262550] border border-[#B8B6FC] text-[#B8B6FC]"
-                          : "bg-[#262626] border border-[#262626] text-[#ADADAD] hover:border-[#444]"
-                          } ${story ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                  {story && (
-                    <p className="text-[#ADADAD] text-xs mt-1.5">Style locked after script generation</p>
-                  )}
-                </div>
-
-                {/* Character & Location picker (from story library) */}
-                <CharacterLocationPicker
-                  storyCharacters={storyLibraryChars}
-                  storyLocations={storyLibraryLocs}
-                  selectedStyle={style}
-                  selectedCharacters={selectedChars}
-                  selectedLocation={selectedLocation}
-                  onCharactersChange={setSelectedChars}
-                  onLocationChange={setSelectedLocation}
-                  disabled={!!story}
-                />
 
                 <button
                   onClick={generateStory}
@@ -4167,6 +4163,39 @@ export default function CreateEpisodePage() {
                                   </button>
                                 );
                               })()}
+                              {/* Library looks strip */}
+                              {(() => {
+                                const libChar = storyLibraryChars.find(c => c.name.toLowerCase() === char.name.toLowerCase());
+                                const charLooks = libChar?.looks;
+                                if (!charLooks || charLooks.length <= 1) return null;
+                                return (
+                                  <div className="flex gap-1 mt-1.5 overflow-x-auto">
+                                    {charLooks.map((look) => {
+                                      const isActive = imgState?.image?.image_url === look.imageUrl;
+                                      return (
+                                        <button
+                                          key={look.id}
+                                          type="button"
+                                          onClick={() => {
+                                            setCharacterImages(prev => ({
+                                              ...prev,
+                                              [char.id]: {
+                                                ...prev[char.id],
+                                                image: { type: "character", image_url: look.imageUrl, mime_type: look.imageMimeType, prompt_used: "" },
+                                                isGenerating: false,
+                                                error: "",
+                                              },
+                                            }));
+                                          }}
+                                          className={`w-7 h-7 rounded flex-shrink-0 overflow-hidden border transition-colors ${isActive ? "border-[#B8B6FC]" : "border-transparent hover:border-[#444]"}`}
+                                        >
+                                          <img src={look.imageUrl} alt="Look" className="w-full h-full object-cover" />
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </div>
                         );
@@ -4250,6 +4279,39 @@ export default function CreateEpisodePage() {
                                     )}
                                     {isSaving ? "Saving..." : "Save to Library"}
                                   </button>
+                                );
+                              })()}
+                              {/* Library angles strip */}
+                              {(() => {
+                                const libLoc = storyLibraryLocs.find(l => (l.name || "").toLowerCase() === (loc.name || "").toLowerCase());
+                                const locAngles = libLoc?.angles;
+                                if (!locAngles || locAngles.length <= 1) return null;
+                                return (
+                                  <div className="flex gap-1 mt-1.5 overflow-x-auto">
+                                    {locAngles.map((angle) => {
+                                      const isActive = imgState?.image?.image_url === angle.imageUrl;
+                                      return (
+                                        <button
+                                          key={angle.id}
+                                          type="button"
+                                          onClick={() => {
+                                            setLocationImages(prev => ({
+                                              ...prev,
+                                              [loc.id]: {
+                                                ...prev[loc.id],
+                                                image: { type: "location", image_url: angle.imageUrl, mime_type: angle.imageMimeType, prompt_used: "" },
+                                                isGenerating: false,
+                                                error: "",
+                                              },
+                                            }));
+                                          }}
+                                          className={`w-7 h-7 rounded flex-shrink-0 overflow-hidden border transition-colors ${isActive ? "border-[#B8B6FC]" : "border-transparent hover:border-[#444]"}`}
+                                        >
+                                          <img src={angle.imageUrl} alt="Angle" className="w-full h-full object-cover" />
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
                                 );
                               })()}
                             </div>
@@ -4665,6 +4727,28 @@ export default function CreateEpisodePage() {
                                     <p className="text-white/20 text-sm">No image</p>
                                   </div>
                                 )}
+                                {/* Image version history (overlay on main image) */}
+                                {(() => {
+                                  const history = currentScene.images || (currentScene.image ? [currentScene.image] : []);
+                                  if (history.length <= 1) return null;
+                                  const selIdx = currentScene.selectedIndex ?? history.length - 1;
+                                  return (
+                                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 bg-black/60 rounded-lg px-2 py-1.5 backdrop-blur-sm z-10">
+                                      {history.map((img, idx) => (
+                                        <button
+                                          key={idx}
+                                          onClick={() => setSceneImages(prev => ({
+                                            ...prev,
+                                            [currentScene.sceneNumber]: { ...prev[currentScene.sceneNumber], image: img, selectedIndex: idx },
+                                          }))}
+                                          className={`w-8 h-8 rounded overflow-hidden border-2 transition-colors flex-shrink-0 ${idx === selIdx ? "border-[#B8B6FC]" : "border-transparent opacity-60 hover:opacity-100"}`}
+                                        >
+                                          <img src={getImageSrc(img)} alt={`v${idx + 1}`} className="w-full h-full object-cover" />
+                                        </button>
+                                      ))}
+                                    </div>
+                                  );
+                                })()}
                               </div>
 
                               {/* Vertical filmstrip */}

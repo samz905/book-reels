@@ -5,12 +5,14 @@ import { CreatorProfile } from "@/app/data/mockCreatorData";
 
 interface PublicProfileHeaderProps {
   profile: CreatorProfile;
+  subscriptionEnabled?: boolean;
   subscriptionPrice: number;
   subscriptionDescription: string;
 }
 
 export default function PublicProfileHeader({
   profile,
+  subscriptionEnabled,
   subscriptionPrice,
   subscriptionDescription,
 }: PublicProfileHeaderProps) {
@@ -86,19 +88,21 @@ export default function PublicProfileHeader({
         </div>
 
         {/* Subscribe button + description — full-width on mobile */}
-        <div className="flex flex-col items-stretch md:items-end md:flex-shrink-0">
-          <button
-            className="px-6 md:px-10 py-3 md:py-3.5 rounded-[14px] font-bold text-white text-base md:text-lg text-center"
-            style={{
-              background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",
-            }}
-          >
-            Subscribe for ${subscriptionPrice.toFixed(2)} / month
-          </button>
-          <p className="text-[#ADADAD] text-xs sm:text-sm leading-6 sm:leading-7 mt-2 text-left md:text-right">
-            {subscriptionDescription}
-          </p>
-        </div>
+        {subscriptionEnabled && (
+          <div className="flex flex-col items-stretch md:items-end md:flex-shrink-0">
+            <button
+              className="px-6 md:px-10 py-3 md:py-3.5 rounded-[14px] font-bold text-white text-base md:text-lg text-center"
+              style={{
+                background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)",
+              }}
+            >
+              Subscribe for ${subscriptionPrice.toFixed(2)} / month
+            </button>
+            <p className="text-[#ADADAD] text-xs sm:text-sm leading-6 sm:leading-7 mt-2 text-left md:text-right">
+              {subscriptionDescription}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Stats row + Share button */}
