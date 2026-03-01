@@ -2497,7 +2497,7 @@ export default function CreateEpisodePage() {
   // Character visuals modal save handler
   const handleVisualCharSave = async (charId: string, data: {
     name: string; age: string; gender: string; description: string;
-    role: string; visualStyle: string | null; imageBase64: string | null; imageMimeType: string;
+    role: string; visualStyle: string | null; imageBase64: string | null; imageUrl?: string | null; imageMimeType: string;
   }) => {
     if (!story) return;
     setIsSavingVisualChar(true);
@@ -2505,6 +2505,7 @@ export default function CreateEpisodePage() {
     // Compute updated character images so we can pass fresh data to saveNow
     let updatedCharacterImages = characterImages;
     if (data.imageBase64) {
+      // New image generated — upload to Storage
       const imgUrl = generationIdRef.current
         ? await uploadGenerationAsset(generationIdRef.current, `characters/${charId}/${Date.now()}_0`, data.imageBase64, data.imageMimeType)
         : null;
@@ -2513,6 +2514,19 @@ export default function CreateEpisodePage() {
         [charId]: {
           ...(characterImages[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
           image: { type: "character" as const, image_url: imgUrl || undefined, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
+          approved: true,
+          isGenerating: false,
+          error: "",
+        },
+      };
+      setCharacterImages(updatedCharacterImages);
+    } else if (data.imageUrl) {
+      // Saved look selected — use its URL directly (no base64 to upload)
+      updatedCharacterImages = {
+        ...characterImages,
+        [charId]: {
+          ...(characterImages[charId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+          image: { type: "character" as const, image_url: data.imageUrl, mime_type: data.imageMimeType, prompt_used: "" },
           approved: true,
           isGenerating: false,
           error: "",
@@ -2529,7 +2543,7 @@ export default function CreateEpisodePage() {
   // Location visuals modal save handler
   const handleVisualLocSave = async (locId: string, data: {
     name: string; description: string; atmosphere: string;
-    visualStyle: string | null; imageBase64: string | null; imageMimeType: string;
+    visualStyle: string | null; imageBase64: string | null; imageUrl?: string | null; imageMimeType: string;
   }) => {
     if (!story) return;
     setIsSavingVisualLoc(true);
@@ -2537,6 +2551,7 @@ export default function CreateEpisodePage() {
     // Compute updated location images so we can pass fresh data to saveNow
     let updatedLocationImages = locationImages;
     if (data.imageBase64) {
+      // New image generated — upload to Storage
       const imgUrl = generationIdRef.current
         ? await uploadGenerationAsset(generationIdRef.current, `locations/${locId}/${Date.now()}_0`, data.imageBase64, data.imageMimeType)
         : null;
@@ -2545,6 +2560,19 @@ export default function CreateEpisodePage() {
         [locId]: {
           ...(locationImages[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
           image: { type: "location" as const, image_url: imgUrl || undefined, image_base64: data.imageBase64!, mime_type: data.imageMimeType, prompt_used: "" },
+          approved: true,
+          isGenerating: false,
+          error: "",
+        },
+      };
+      setLocationImages(updatedLocationImages);
+    } else if (data.imageUrl) {
+      // Saved angle selected — use its URL directly (no base64 to upload)
+      updatedLocationImages = {
+        ...locationImages,
+        [locId]: {
+          ...(locationImages[locId] || { images: [], selectedIndex: 0, approved: false, isGenerating: false, feedback: "", promptUsed: "", error: "", refImages: [] }),
+          image: { type: "location" as const, image_url: data.imageUrl, mime_type: data.imageMimeType, prompt_used: "" },
           approved: true,
           isGenerating: false,
           error: "",
@@ -4145,7 +4173,7 @@ export default function CreateEpisodePage() {
                             </div>
                             <div className="mt-2">
                               <p className="text-white text-sm font-medium truncate">{char.name}</p>
-                              <p className="text-[#ADADAD] text-[11px]">{isProtag ? "Lead" : char.role === "antagonist" ? "Antagonist" : "Supporting"}</p>
+                              <p className="text-[#ADADAD] text-[11px] capitalize">{char.role || "Supporting"}</p>
                               {hasImage && (() => {
                                 const isSaved = char.origin === "story" || storyLibraryChars.some(c => c.name.toLowerCase() === char.name.toLowerCase());
                                 const isSaving = savingToLibKeys.has(`character:${char.id}`);
@@ -4193,6 +4221,16 @@ export default function CreateEpisodePage() {
                                         </button>
                                       );
                                     })}
+                                    {charLooks.length < 10 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingVisualCharId(char.id)}
+                                        className="w-7 h-7 rounded flex-shrink-0 border border-dashed border-white/20 hover:border-white/40 flex items-center justify-center transition-colors"
+                                        title="Generate new look"
+                                      >
+                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40"><path d="M12 5v14M5 12h14" /></svg>
+                                      </button>
+                                    )}
                                   </div>
                                 );
                               })()}
@@ -4311,6 +4349,16 @@ export default function CreateEpisodePage() {
                                         </button>
                                       );
                                     })}
+                                    {locAngles.length < 10 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingVisualLocId(loc.id)}
+                                        className="w-7 h-7 rounded flex-shrink-0 border border-dashed border-white/20 hover:border-white/40 flex items-center justify-center transition-colors"
+                                        title="Generate new angle"
+                                      >
+                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40"><path d="M12 5v14M5 12h14" /></svg>
+                                      </button>
+                                    )}
                                   </div>
                                 );
                               })()}
@@ -4332,10 +4380,6 @@ export default function CreateEpisodePage() {
                         onClick={() => {
                           setVisualsTab("scenes");
                           saveNow({ visualsTab: "scenes" });
-                          // Auto-trigger scene descriptions if storyboard is empty
-                          if (Object.keys(sceneImages).length === 0 && !isGeneratingSceneDescs) {
-                            fetchSceneDescriptions();
-                          }
                         }}
                         disabled={!(story?.characters.every(c => characterImages[c.id]?.image) && story?.locations.every(l => locationImages[l.id]?.image))}
                         className="px-6 py-3 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -4680,6 +4724,32 @@ export default function CreateEpisodePage() {
                                 </button>
                               )}
                             </div>
+
+                            {/* Previous versions */}
+                            {(() => {
+                              const history = currentScene.images || (currentScene.image ? [currentScene.image] : []);
+                              if (history.length <= 1) return null;
+                              const selIdx = currentScene.selectedIndex ?? history.length - 1;
+                              return (
+                                <div className="mt-5">
+                                  <p className="text-white/30 text-xs font-medium uppercase tracking-wider mb-2">Previous Versions</p>
+                                  <div className="flex gap-2 overflow-x-auto pb-1">
+                                    {history.map((img, idx) => (
+                                      <button
+                                        key={idx}
+                                        onClick={() => setSceneImages(prev => ({
+                                          ...prev,
+                                          [currentScene.sceneNumber]: { ...prev[currentScene.sceneNumber], image: img, selectedIndex: idx },
+                                        }))}
+                                        className={`w-12 h-16 rounded-lg overflow-hidden border-2 transition-colors flex-shrink-0 ${idx === selIdx ? "border-[#B8B6FC]" : "border-transparent opacity-50 hover:opacity-100"}`}
+                                      >
+                                        <img src={getImageSrc(img)} alt={`v${idx + 1}`} className="w-full h-full object-cover" />
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </div>
 
                           {/* ── RIGHT COLUMN: Media + Vertical Filmstrip ── */}
@@ -4727,28 +4797,7 @@ export default function CreateEpisodePage() {
                                     <p className="text-white/20 text-sm">No image</p>
                                   </div>
                                 )}
-                                {/* Image version history (overlay on main image) */}
-                                {(() => {
-                                  const history = currentScene.images || (currentScene.image ? [currentScene.image] : []);
-                                  if (history.length <= 1) return null;
-                                  const selIdx = currentScene.selectedIndex ?? history.length - 1;
-                                  return (
-                                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 bg-black/60 rounded-lg px-2 py-1.5 backdrop-blur-sm z-10">
-                                      {history.map((img, idx) => (
-                                        <button
-                                          key={idx}
-                                          onClick={() => setSceneImages(prev => ({
-                                            ...prev,
-                                            [currentScene.sceneNumber]: { ...prev[currentScene.sceneNumber], image: img, selectedIndex: idx },
-                                          }))}
-                                          className={`w-8 h-8 rounded overflow-hidden border-2 transition-colors flex-shrink-0 ${idx === selIdx ? "border-[#B8B6FC]" : "border-transparent opacity-60 hover:opacity-100"}`}
-                                        >
-                                          <img src={getImageSrc(img)} alt={`v${idx + 1}`} className="w-full h-full object-cover" />
-                                        </button>
-                                      ))}
-                                    </div>
-                                  );
-                                })()}
+                                {/* History moved below action buttons in left column */}
                               </div>
 
                               {/* Vertical filmstrip */}
@@ -4842,6 +4891,8 @@ export default function CreateEpisodePage() {
                 },
               }));
             }}
+            storyId={associatedStoryIdRef.current || undefined}
+            defaultLookLabel="Use this look"
           />
         )}
 
@@ -4885,6 +4936,8 @@ export default function CreateEpisodePage() {
                 },
               }));
             }}
+            storyId={associatedStoryIdRef.current || undefined}
+            defaultAngleLabel="Use this angle"
           />
         )}
 

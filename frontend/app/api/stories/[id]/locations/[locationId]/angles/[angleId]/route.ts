@@ -42,14 +42,33 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
   const { data: angle } = await supabase
     .from("location_angles")
-    .select("id, image_url, image_mime_type")
+    .select("id, image_url, image_mime_type, is_default")
     .eq("id", angleId)
     .eq("location_id", locationId)
     .single();
 
   if (!angle) return notFoundResponse("Angle");
 
-  const body = await parseBody<{ is_default?: boolean }>(request);
+  const body = await parseBody<{ is_default?: boolean; image_url?: string; image_mime_type?: string }>(request);
+
+  // Update image if provided
+  if (body?.image_url) {
+    const updateData: Record<string, string> = { image_url: body.image_url };
+    if (body.image_mime_type) updateData.image_mime_type = body.image_mime_type;
+
+    await supabase
+      .from("location_angles")
+      .update(updateData)
+      .eq("id", angleId);
+
+    // If this is the default angle, also update parent location
+    if (angle.is_default) {
+      await supabase
+        .from("story_locations")
+        .update({ image_url: body.image_url, image_mime_type: body.image_mime_type || angle.image_mime_type })
+        .eq("id", locationId);
+    }
+  }
 
   if (body?.is_default) {
     await supabase
@@ -62,10 +81,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       .update({ is_default: true })
       .eq("id", angleId);
 
-    // Update parent location's image_url to match the new default
+    const finalUrl = body.image_url || angle.image_url;
+    const finalMime = body.image_mime_type || angle.image_mime_type;
     await supabase
       .from("story_locations")
-      .update({ image_url: angle.image_url, image_mime_type: angle.image_mime_type })
+      .update({ image_url: finalUrl, image_mime_type: finalMime })
       .eq("id", locationId);
   }
 

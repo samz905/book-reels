@@ -336,29 +336,40 @@ export default function StoryManagementPage() {
   }) => {
     setIsCharSaving(true);
     try {
-      // Upload base64 to Storage if present, get URL
-      let imageUrl = data.imageUrl || null;
-      if (data.imageBase64 && !imageUrl) {
-        imageUrl = await uploadGenerationAsset(storyId, `characters/${Date.now()}`, data.imageBase64, data.imageMimeType);
+      // Upload new image to Storage only if user generated/uploaded one (imageBase64 set)
+      let newImageUrl: string | null = null;
+      if (data.imageBase64) {
+        newImageUrl = await uploadGenerationAsset(storyId, `characters/${Date.now()}`, data.imageBase64, data.imageMimeType);
       }
-      const payload = {
-        name: data.name,
-        age: data.age,
-        gender: data.gender,
-        description: data.description,
-        role: data.role,
-        visual_style: data.visualStyle,
-        image_url: imageUrl,
-        image_mime_type: data.imageMimeType,
-      };
 
       if (editingCharacter) {
-        await updateStoryCharacter(storyId, editingCharacter.id, payload);
+        // Only include image_url if a NEW image was generated/uploaded.
+        // When the user just changed the default look, setDefaultCharacterLook
+        // already updated story_characters.image_url — don't overwrite it.
+        await updateStoryCharacter(storyId, editingCharacter.id, {
+          name: data.name,
+          age: data.age,
+          gender: data.gender,
+          description: data.description,
+          role: data.role,
+          visual_style: data.visualStyle,
+          ...(newImageUrl ? { image_url: newImageUrl, image_mime_type: data.imageMimeType } : {}),
+        });
       } else {
-        await createStoryCharacter(storyId, payload);
+        // New character — always include image
+        await createStoryCharacter(storyId, {
+          name: data.name,
+          age: data.age,
+          gender: data.gender,
+          description: data.description,
+          role: data.role,
+          visual_style: data.visualStyle,
+          image_url: newImageUrl || data.imageUrl || null,
+          image_mime_type: data.imageMimeType,
+        });
       }
 
-      queryClient.invalidateQueries({ queryKey: queryKeys.storyCharacters(storyId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.storyCharacters(storyId) });
       setShowCharacterModal(false);
       setEditingCharacter(undefined);
     } catch (err) {
@@ -394,27 +405,36 @@ export default function StoryManagementPage() {
   }) => {
     setIsLocSaving(true);
     try {
-      // Upload base64 to Storage if present, get URL
-      let imageUrl = data.imageUrl || null;
-      if (data.imageBase64 && !imageUrl) {
-        imageUrl = await uploadGenerationAsset(storyId, `locations/${Date.now()}`, data.imageBase64, data.imageMimeType);
+      // Upload new image to Storage only if user generated/uploaded one (imageBase64 set)
+      let newImageUrl: string | null = null;
+      if (data.imageBase64) {
+        newImageUrl = await uploadGenerationAsset(storyId, `locations/${Date.now()}`, data.imageBase64, data.imageMimeType);
       }
-      const payload = {
-        name: data.name,
-        description: data.description,
-        atmosphere: data.atmosphere,
-        visual_style: data.visualStyle,
-        image_url: imageUrl,
-        image_mime_type: data.imageMimeType,
-      };
 
       if (editingLocation) {
-        await updateStoryLocation(storyId, editingLocation.id, payload);
+        // Only include image_url if a NEW image was generated/uploaded.
+        // When the user just changed the default angle, setDefaultLocationAngle
+        // already updated story_locations.image_url — don't overwrite it.
+        await updateStoryLocation(storyId, editingLocation.id, {
+          name: data.name,
+          description: data.description,
+          atmosphere: data.atmosphere,
+          visual_style: data.visualStyle,
+          ...(newImageUrl ? { image_url: newImageUrl, image_mime_type: data.imageMimeType } : {}),
+        });
       } else {
-        await createStoryLocation(storyId, payload);
+        // New location — always include image
+        await createStoryLocation(storyId, {
+          name: data.name,
+          description: data.description,
+          atmosphere: data.atmosphere,
+          visual_style: data.visualStyle,
+          image_url: newImageUrl || data.imageUrl || null,
+          image_mime_type: data.imageMimeType,
+        });
       }
 
-      queryClient.invalidateQueries({ queryKey: queryKeys.storyLocations(storyId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.storyLocations(storyId) });
       setShowLocationModal(false);
       setEditingLocation(undefined);
     } catch (err) {
@@ -445,10 +465,10 @@ export default function StoryManagementPage() {
     try {
       if (deleteTarget.type === "character") {
         await deleteStoryCharacter(storyId, deleteTarget.id);
-        queryClient.invalidateQueries({ queryKey: queryKeys.storyCharacters(storyId) });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.storyCharacters(storyId) });
       } else {
         await deleteStoryLocation(storyId, deleteTarget.id);
-        queryClient.invalidateQueries({ queryKey: queryKeys.storyLocations(storyId) });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.storyLocations(storyId) });
       }
       setShowDeleteModal(false);
       setDeleteTarget(null);

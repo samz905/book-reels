@@ -3,7 +3,10 @@ import { createClient } from "@/lib/supabase/server";
 
 // API Response helpers
 export function jsonResponse<T>(data: T, status = 200) {
-  return NextResponse.json(data, { status });
+  return NextResponse.json(data, {
+    status,
+    headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
+  });
 }
 
 export function errorResponse(message: string, status = 400) {

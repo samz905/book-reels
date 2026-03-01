@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { StoryLocationFE, StoryCharacterFE, LocationAngleFE } from "@/app/data/mockCreatorData";
 import { VISUAL_STYLES } from "@/app/data/mockCreatorData";
-import { generateLocationImage, submitJob, getLocationAngles, createLocationAngle, setDefaultLocationAngle, deleteLocationAngle } from "@/lib/api/creator";
+import { generateLocationImage, submitJob, getLocationAngles, createLocationAngle, setDefaultLocationAngle, deleteLocationAngle, updateLocationAngle } from "@/lib/api/creator";
 import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 
 interface LocationModalProps {
@@ -34,6 +34,8 @@ interface LocationModalProps {
   onGenerationStarted?: () => void;
   /** Story ID — required for angles management */
   storyId?: string;
+  /** Label for the set-default button under angle cards (e.g. "Use this angle" on episode page) */
+  defaultAngleLabel?: string;
 }
 
 export default function LocationModal({
@@ -50,6 +52,7 @@ export default function LocationModal({
   generatingError,
   onGenerationStarted,
   storyId,
+  defaultAngleLabel = "Save as default",
 }: LocationModalProps) {
   const isEditing = !!location;
 
@@ -69,8 +72,15 @@ export default function LocationModal({
   const [angles, setAngles] = useState<LocationAngleFE[]>([]);
   const [anglesLoading, setAnglesLoading] = useState(false);
   const [savingAsAngle, setSavingAsAngle] = useState(false);
+  const [selectedAngleId, setSelectedAngleId] = useState<string | null>(null);
+  const [angleEditor, setAngleEditor] = useState<{ mode: "edit" | "new"; angle?: LocationAngleFE } | null>(null);
+  const [angleEditorDiff, setAngleEditorDiff] = useState("");
+  const [angleEditorPreview, setAngleEditorPreview] = useState<{ base64: string; mime: string } | null>(null);
+  const [isGeneratingAngleEditor, setIsGeneratingAngleEditor] = useState(false);
+  const [isSavingAngleEditor, setIsSavingAngleEditor] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const refUploadInputRef = useRef<HTMLInputElement>(null);
+  const pendingDefaultAngleRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -173,6 +183,9 @@ export default function LocationModal({
         image_mime_type: imageMimeType,
       });
       setAngles((prev) => [...prev, newAngle]);
+      // Image is now persisted as an angle — clear base64 so Save doesn't re-upload
+      setImageUrl(url);
+      setImageBase64(null);
     } catch (err) {
       console.error("Error saving angle:", err);
       alert("Failed to save angle");
@@ -181,17 +194,30 @@ export default function LocationModal({
     }
   };
 
-  const handleSetDefaultAngle = async (angle: LocationAngleFE) => {
+  const handleSetDefaultAngle = (angle: LocationAngleFE) => {
     if (!storyId || !location?.id) return;
-    try {
-      await setDefaultLocationAngle(storyId, location.id, angle.id);
-      setAngles((prev) => prev.map((a) => ({ ...a, isDefault: a.id === angle.id })));
-      setImageUrl(angle.imageUrl);
-      setImageBase64(null);
-      setImageMimeType(angle.imageMimeType);
-    } catch (err) {
-      console.error("Error setting default angle:", err);
-    }
+    // Optimistic update — set state before API so Save picks up the new URL
+    const prevAngles = angles;
+    const prevImageUrl = imageUrl;
+    const prevImageBase64 = imageBase64;
+    const prevImageMimeType = imageMimeType;
+    setAngles((prev) => prev.map((a) => ({ ...a, isDefault: a.id === angle.id })));
+    setSelectedAngleId(null);
+    setImageUrl(angle.imageUrl);
+    setImageBase64(null);
+    setImageMimeType(angle.imageMimeType);
+    // Store promise so handleSubmit can await it before saving
+    const p = setDefaultLocationAngle(storyId, location.id, angle.id)
+      .catch((err) => {
+        console.error("Error setting default angle:", err);
+        // Revert on failure
+        setAngles(prevAngles);
+        setImageUrl(prevImageUrl);
+        setImageBase64(prevImageBase64);
+        setImageMimeType(prevImageMimeType);
+      })
+      .finally(() => { pendingDefaultAngleRef.current = null; });
+    pendingDefaultAngleRef.current = p;
   };
 
   const handleDeleteAngle = async (angleId: string) => {
@@ -204,6 +230,82 @@ export default function LocationModal({
       console.error("Error deleting angle:", err);
       alert("Cannot delete the default angle. Set another angle as default first.");
     }
+  };
+
+  const handleAngleEditorGenerate = async () => {
+    if (!angleEditorDiff.trim() || !angleEditor) return;
+    setIsGeneratingAngleEditor(true);
+    setGenError(null);
+
+    // Reference: editing angle's image (edit mode) or default angle (new mode)
+    const refUrl = angleEditor.mode === "edit"
+      ? angleEditor.angle?.imageUrl
+      : angles.find((a) => a.isDefault)?.imageUrl;
+
+    const payload = {
+      name: name.trim(),
+      description: `${description.trim()}. IN THIS ANGLE: ${angleEditorDiff.trim()}`,
+      atmosphere: atmosphere.trim(),
+      visual_style: lockedStyle || visualStyle,
+      reference_image: refUrl
+        ? { image_url: refUrl, mime_type: "image/png" }
+        : undefined,
+    };
+
+    try {
+      const result = await generateLocationImage(payload);
+      setAngleEditorPreview({ base64: result.image_base64, mime: result.mime_type });
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : "Failed to generate angle");
+    } finally {
+      setIsGeneratingAngleEditor(false);
+    }
+  };
+
+  const handleAngleEditorSave = async () => {
+    if (!angleEditorPreview || !storyId || !location?.id || isSavingAngleEditor) return;
+    setIsSavingAngleEditor(true);
+    try {
+      const url = await uploadGenerationAsset(storyId, `angles/${Date.now()}`, angleEditorPreview.base64, angleEditorPreview.mime);
+      if (!url) throw new Error("Upload failed");
+
+      if (angleEditor?.mode === "edit" && angleEditor.angle) {
+        await updateLocationAngle(storyId, location.id, angleEditor.angle.id, {
+          image_url: url,
+          image_mime_type: angleEditorPreview.mime,
+        });
+        setAngles((prev) => prev.map((a) =>
+          a.id === angleEditor.angle!.id ? { ...a, imageUrl: url, imageMimeType: angleEditorPreview.mime } : a
+        ));
+        // If editing the default angle, update main modal image too
+        if (angleEditor.angle.isDefault) {
+          setImageUrl(url);
+          setImageBase64(null);
+          setImageMimeType(angleEditorPreview.mime);
+        }
+      } else {
+        const newAngle = await createLocationAngle(storyId, location.id, {
+          image_url: url,
+          image_mime_type: angleEditorPreview.mime,
+        });
+        setAngles((prev) => [...prev, newAngle]);
+      }
+
+      setAngleEditor(null);
+      setAngleEditorDiff("");
+      setAngleEditorPreview(null);
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : "Failed to save angle");
+    } finally {
+      setIsSavingAngleEditor(false);
+    }
+  };
+
+  const closeAngleEditor = () => {
+    setAngleEditor(null);
+    setAngleEditorDiff("");
+    setAngleEditorPreview(null);
+    setGenError(null);
   };
 
   useEffect(() => {
@@ -317,14 +419,36 @@ export default function LocationModal({
       return;
     }
 
+    // Wait for any pending set-default-angle API call to finish
+    // so the DB is consistent before the parent writes + refetches
+    if (pendingDefaultAngleRef.current) {
+      await pendingDefaultAngleRef.current;
+    }
+
+    // If user selected an angle (thumbnail click), set it as default on save
+    let finalImageUrl = imageUrl;
+    let finalMimeType = imageMimeType;
+    if (selectedAngleId && storyId && location?.id) {
+      const selAngle = angles.find((a) => a.id === selectedAngleId);
+      if (selAngle) {
+        if (!selAngle.isDefault) {
+          await setDefaultLocationAngle(storyId, location.id, selectedAngleId);
+        }
+        finalImageUrl = selAngle.imageUrl;
+        finalMimeType = selAngle.imageMimeType;
+      }
+    }
+
+    // Don't send stale base64 if a saved angle was selected
+    const submitBase64 = selectedAngleId ? null : imageBase64;
     await onSave({
       name: name.trim(),
       description: description.trim(),
       atmosphere: atmosphere.trim(),
       visualStyle: refCharId ? null : visualStyle,
-      imageBase64,
-      imageUrl,
-      imageMimeType,
+      imageBase64: submitBase64,
+      imageUrl: finalImageUrl,
+      imageMimeType: finalMimeType,
     });
   };
 
@@ -486,28 +610,28 @@ export default function LocationModal({
         {/* Image section */}
         <div className="mb-5">
           <div className="max-w-[280px] mx-auto aspect-[9/16] bg-[#262626] rounded-2xl overflow-hidden flex items-center justify-center mb-3">
-            {(imageBase64 || imageUrl) ? (
-              <img
-                src={imageBase64 ? `data:${imageMimeType};base64,${imageBase64}` : imageUrl!}
-                alt="Location"
-                className="w-full h-full object-cover"
-              />
-            ) : isGenerating ? (
-              <div className="flex flex-col items-center justify-center text-center">
-                <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                <p className="text-sm text-[#ADADAD]">Generating...</p>
-              </div>
-            ) : (
-              <div className="text-center text-[#ADADAD]">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" className="mx-auto mb-2">
-                  <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
-                </svg>
-                <p className="text-sm">Upload or generate an image</p>
-              </div>
-            )}
+            {(() => {
+              const selAngle = selectedAngleId ? angles.find((a) => a.id === selectedAngleId) : null;
+              const displayUrl = selAngle ? selAngle.imageUrl : (imageBase64 ? `data:${imageMimeType};base64,${imageBase64}` : imageUrl);
+              if (displayUrl) return <img src={displayUrl} alt="Location" className="w-full h-full object-cover" />;
+              if (isGenerating) return (
+                <div className="flex flex-col items-center justify-center text-center">
+                  <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <p className="text-sm text-[#ADADAD]">Generating...</p>
+                </div>
+              );
+              return (
+                <div className="text-center text-[#ADADAD]">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" className="mx-auto mb-2">
+                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
+                  </svg>
+                  <p className="text-sm">Upload or generate an image</p>
+                </div>
+              );
+            })()}
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -547,8 +671,8 @@ export default function LocationModal({
               <label className="text-white text-sm font-medium">
                 Angles {angles.length > 0 && <span className="text-[#ADADAD]">({angles.length}/10)</span>}
               </label>
-              {(imageBase64 || imageUrl) && angles.length < 10 && (() => {
-                const alreadySaved = !!imageUrl && angles.some((a) => a.imageUrl === imageUrl);
+              {(imageBase64 || imageUrl || selectedAngleId) && angles.length < 10 && (() => {
+                const alreadySaved = !!selectedAngleId || (!!imageUrl && angles.some((a) => a.imageUrl === imageUrl));
                 return (
                   <button
                     type="button"
@@ -566,35 +690,75 @@ export default function LocationModal({
             ) : angles.length > 0 ? (
               <div className="flex gap-2 overflow-x-auto pb-1">
                 {angles.map((angle) => (
-                  <div
-                    key={angle.id}
-                    className={`relative group/angle w-[70px] h-[98px] rounded-lg overflow-hidden flex-shrink-0 cursor-pointer border-2 transition-colors ${
-                      angle.isDefault ? "border-[#B8B6FC]" : "border-transparent hover:border-[#444]"
-                    }`}
-                    onClick={() => handleSetDefaultAngle(angle)}
-                  >
-                    <img src={angle.imageUrl} alt="Angle" className="w-full h-full object-cover" />
-                    {angle.isDefault && (
-                      <div className="absolute top-1 right-1 w-4 h-4 bg-[#B8B6FC] rounded-full flex items-center justify-center">
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="#1A1E2F">
-                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.56 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z" />
-                        </svg>
-                      </div>
-                    )}
-                    {!angle.isDefault && (
+                  <div key={angle.id} className="flex flex-col items-center flex-shrink-0">
+                    <div
+                      className={`relative group/angle w-[70px] h-[98px] rounded-lg overflow-hidden cursor-pointer border-2 transition-colors ${
+                        selectedAngleId === angle.id ? "border-white" : angle.isDefault ? "border-[#B8B6FC]" : "border-transparent hover:border-[#444]"
+                      }`}
+                      onClick={() => setSelectedAngleId(selectedAngleId === angle.id ? null : angle.id)}
+                    >
+                      <img src={angle.imageUrl} alt="Angle" className="w-full h-full object-cover" />
+                      {/* Default badge */}
+                      {angle.isDefault && (
+                        <div className="absolute bottom-0 left-0 right-0 bg-[#B8B6FC]/80 text-center text-[8px] text-[#1A1E2F] font-semibold py-0.5">
+                          Default
+                        </div>
+                      )}
+                      {/* Edit on hover */}
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteAngle(angle.id); }}
-                        className="absolute top-1 right-1 w-4 h-4 bg-red-500/80 rounded-full items-center justify-center opacity-0 group-hover/angle:opacity-100 transition-opacity hidden group-hover/angle:flex"
+                        onClick={(e) => { e.stopPropagation(); setAngleEditor({ mode: "edit", angle }); }}
+                        className="absolute right-1 top-1 w-4 h-4 bg-white/70 rounded-full items-center justify-center opacity-0 group-hover/angle:opacity-100 transition-opacity hidden group-hover/angle:flex"
+                        title="Edit angle"
                       >
-                        <svg width="8" height="8" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="2">
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
+                        <svg width="8" height="8" viewBox="0 0 24 24" fill="#333"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
                       </button>
+                      {/* Delete on hover (not default) */}
+                      {!angle.isDefault && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleDeleteAngle(angle.id); }}
+                          className="absolute right-1 bottom-1 w-4 h-4 bg-red-500/80 rounded-full items-center justify-center opacity-0 group-hover/angle:opacity-100 transition-opacity hidden group-hover/angle:flex"
+                        >
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="2">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                    {/* Action text below the selected card */}
+                    {selectedAngleId === angle.id ? (
+                      angle.isDefault ? (
+                        <span className="text-emerald-400 text-[9px] mt-1">Default</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleSetDefaultAngle(angle)}
+                          className="text-[#B8B6FC] text-[9px] mt-1 hover:underline"
+                        >
+                          {defaultAngleLabel}
+                        </button>
+                      )
+                    ) : (
+                      <span className="h-[22px]" />
                     )}
                   </div>
                 ))}
+                {/* + New Angle card */}
+                {angles.length < 10 && (
+                  <div className="flex flex-col items-center flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setAngleEditor({ mode: "new" })}
+                      className="w-[70px] h-[98px] rounded-lg border-2 border-dashed border-white/20 hover:border-white/40 flex flex-col items-center justify-center gap-1 transition-colors"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40"><path d="M12 5v14M5 12h14" /></svg>
+                      <span className="text-white/40 text-[9px]">New Angle</span>
+                    </button>
+                    <span className="h-[22px]" />
+                  </div>
+                )}
               </div>
             ) : (
               <p className="text-[#ADADAD] text-xs">No angles saved yet. Generate images and save them as angles.</p>
@@ -628,6 +792,111 @@ export default function LocationModal({
           </button>
         </div>
       </div>
+
+      {/* Angle Editor Popup */}
+      {angleEditor && (
+        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 rounded-2xl">
+          <div className="bg-[#1A1E2F] rounded-2xl p-5 w-full max-w-sm border border-white/10">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-white font-semibold">
+                {angleEditor.mode === "edit" ? "Edit Angle" : "New Angle"}
+              </h3>
+              <button type="button" onClick={closeAngleEditor} className="text-white/40 hover:text-white transition-colors">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            {/* Input + Generate row */}
+            <div className="flex gap-2 mb-4">
+              <input
+                type="text"
+                value={angleEditorDiff}
+                onChange={(e) => setAngleEditorDiff(e.target.value)}
+                placeholder="What's different? (viewpoint, time...)"
+                className="flex-1 min-w-0 bg-[#0A0A0F] text-white text-sm rounded-lg px-3 py-2 placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]/50 border border-white/10"
+                onKeyDown={(e) => { if (e.key === "Enter" && angleEditorDiff.trim() && !isGeneratingAngleEditor) handleAngleEditorGenerate(); }}
+                disabled={isGeneratingAngleEditor}
+              />
+              <button
+                type="button"
+                onClick={handleAngleEditorGenerate}
+                disabled={!angleEditorDiff.trim() || isGeneratingAngleEditor}
+                className="px-3 py-2 bg-[#262550] text-[#B8B6FC] text-sm rounded-lg hover:bg-[#2f2d60] disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                {isGeneratingAngleEditor ? (
+                  <div className="w-4 h-4 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
+                ) : angleEditorPreview ? "Redo" : "Generate"}
+              </button>
+            </div>
+
+            {genError && <p className="text-red-400 text-xs mb-3">{genError}</p>}
+
+            {/* Reference + Result side by side, equal size, centered */}
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-[#ADADAD] text-[10px] uppercase tracking-wide">Reference</span>
+                <div className="w-[130px] h-[182px] rounded-xl overflow-hidden bg-[#0A0A0F] border border-white/10">
+                  {(() => {
+                    const refUrl = angleEditor.mode === "edit"
+                      ? angleEditor.angle?.imageUrl
+                      : angles.find((a) => a.isDefault)?.imageUrl;
+                    return refUrl
+                      ? <img src={refUrl} alt="Reference" className="w-full h-full object-cover" />
+                      : <div className="w-full h-full flex items-center justify-center text-white/20 text-[10px]">No ref</div>;
+                  })()}
+                </div>
+              </div>
+
+              {/* Arrow */}
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/20 flex-shrink-0 mt-4">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-[#ADADAD] text-[10px] uppercase tracking-wide">Result</span>
+                <div className="w-[130px] h-[182px] rounded-xl overflow-hidden bg-[#0A0A0F] border border-white/10">
+                  {isGeneratingAngleEditor ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center">
+                      <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mb-2" />
+                      <span className="text-[#ADADAD] text-xs">Generating...</span>
+                    </div>
+                  ) : angleEditorPreview ? (
+                    <img src={`data:${angleEditorPreview.mime};base64,${angleEditorPreview.base64}`} alt="Preview" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-white/20 text-[10px] text-center px-2">Generate to preview</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer actions */}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeAngleEditor}
+                disabled={isSavingAngleEditor}
+                className="px-4 py-2 text-[#ADADAD] text-sm hover:text-white transition-colors"
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                onClick={handleAngleEditorSave}
+                disabled={!angleEditorPreview || isSavingAngleEditor}
+                className="px-4 py-2 rounded-lg text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                style={{ background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)" }}
+              >
+                {isSavingAngleEditor ? (
+                  <><div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" /> Saving...</>
+                ) : (
+                  "Save"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 

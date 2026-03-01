@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { StoryCharacterFE, CharacterLookFE } from "@/app/data/mockCreatorData";
 import { VISUAL_STYLES } from "@/app/data/mockCreatorData";
-import { generateCharacterImage, submitJob, getCharacterLooks, createCharacterLook, setDefaultCharacterLook, deleteCharacterLook } from "@/lib/api/creator";
+import { generateCharacterImage, submitJob, getCharacterLooks, createCharacterLook, setDefaultCharacterLook, deleteCharacterLook, updateCharacterLook } from "@/lib/api/creator";
 import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 
 interface CharacterModalProps {
@@ -37,6 +37,8 @@ interface CharacterModalProps {
   onGenerationStarted?: () => void;
   /** Story ID — required for looks management */
   storyId?: string;
+  /** Label for the set-default button under look cards (e.g. "Use this look" on episode page) */
+  defaultLookLabel?: string;
 }
 
 export default function CharacterModal({
@@ -54,6 +56,7 @@ export default function CharacterModal({
   generatingError,
   onGenerationStarted,
   storyId,
+  defaultLookLabel = "Save as default",
 }: CharacterModalProps) {
   const isEditing = !!character;
 
@@ -75,8 +78,15 @@ export default function CharacterModal({
   const [looks, setLooks] = useState<CharacterLookFE[]>([]);
   const [looksLoading, setLooksLoading] = useState(false);
   const [savingAsLook, setSavingAsLook] = useState(false);
+  const [selectedLookId, setSelectedLookId] = useState<string | null>(null);
+  const [lookEditor, setLookEditor] = useState<{ mode: "edit" | "new"; look?: CharacterLookFE } | null>(null);
+  const [lookEditorDiff, setLookEditorDiff] = useState("");
+  const [lookEditorPreview, setLookEditorPreview] = useState<{ base64: string; mime: string } | null>(null);
+  const [isGeneratingLookEditor, setIsGeneratingLookEditor] = useState(false);
+  const [isSavingLookEditor, setIsSavingLookEditor] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const refUploadInputRef = useRef<HTMLInputElement>(null);
+  const pendingDefaultLookRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -189,6 +199,9 @@ export default function CharacterModal({
         image_mime_type: imageMimeType,
       });
       setLooks((prev) => [...prev, newLook]);
+      // Image is now persisted as a look — clear base64 so Save doesn't re-upload
+      setImageUrl(url);
+      setImageBase64(null);
     } catch (err) {
       console.error("Error saving look:", err);
       alert("Failed to save look");
@@ -197,18 +210,30 @@ export default function CharacterModal({
     }
   };
 
-  const handleSetDefaultLook = async (look: CharacterLookFE) => {
+  const handleSetDefaultLook = (look: CharacterLookFE) => {
     if (!storyId || !character?.id) return;
-    try {
-      await setDefaultCharacterLook(storyId, character.id, look.id);
-      setLooks((prev) => prev.map((l) => ({ ...l, isDefault: l.id === look.id })));
-      // Update the main image to match
-      setImageUrl(look.imageUrl);
-      setImageBase64(null);
-      setImageMimeType(look.imageMimeType);
-    } catch (err) {
-      console.error("Error setting default look:", err);
-    }
+    // Optimistic update — set state before API so Save picks up the new URL
+    const prevLooks = looks;
+    const prevImageUrl = imageUrl;
+    const prevImageBase64 = imageBase64;
+    const prevImageMimeType = imageMimeType;
+    setLooks((prev) => prev.map((l) => ({ ...l, isDefault: l.id === look.id })));
+    setSelectedLookId(null);
+    setImageUrl(look.imageUrl);
+    setImageBase64(null);
+    setImageMimeType(look.imageMimeType);
+    // Store promise so handleSubmit can await it before saving
+    const p = setDefaultCharacterLook(storyId, character.id, look.id)
+      .catch((err) => {
+        console.error("Error setting default look:", err);
+        // Revert on failure
+        setLooks(prevLooks);
+        setImageUrl(prevImageUrl);
+        setImageBase64(prevImageBase64);
+        setImageMimeType(prevImageMimeType);
+      })
+      .finally(() => { pendingDefaultLookRef.current = null; });
+    pendingDefaultLookRef.current = p;
   };
 
   const handleDeleteLook = async (lookId: string) => {
@@ -221,6 +246,83 @@ export default function CharacterModal({
       console.error("Error deleting look:", err);
       alert("Cannot delete the default look. Set another look as default first.");
     }
+  };
+
+  const handleLookEditorGenerate = async () => {
+    if (!lookEditorDiff.trim() || !lookEditor) return;
+    setIsGeneratingLookEditor(true);
+    setGenError(null);
+
+    // Reference: editing look's image (edit mode) or default look (new mode)
+    const refUrl = lookEditor.mode === "edit"
+      ? lookEditor.look?.imageUrl
+      : looks.find((l) => l.isDefault)?.imageUrl;
+
+    const payload = {
+      name: name.trim(),
+      age: age.trim(),
+      gender: gender || undefined,
+      description: `${description.trim()}. IN THIS LOOK: ${lookEditorDiff.trim()}`,
+      visual_style: lockedStyle || visualStyle,
+      reference_image: refUrl
+        ? { image_url: refUrl, mime_type: "image/png" }
+        : undefined,
+    };
+
+    try {
+      const result = await generateCharacterImage(payload);
+      setLookEditorPreview({ base64: result.image_base64, mime: result.mime_type });
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : "Failed to generate look");
+    } finally {
+      setIsGeneratingLookEditor(false);
+    }
+  };
+
+  const handleLookEditorSave = async () => {
+    if (!lookEditorPreview || !storyId || !character?.id || isSavingLookEditor) return;
+    setIsSavingLookEditor(true);
+    try {
+      const url = await uploadGenerationAsset(storyId, `looks/${Date.now()}`, lookEditorPreview.base64, lookEditorPreview.mime);
+      if (!url) throw new Error("Upload failed");
+
+      if (lookEditor?.mode === "edit" && lookEditor.look) {
+        await updateCharacterLook(storyId, character.id, lookEditor.look.id, {
+          image_url: url,
+          image_mime_type: lookEditorPreview.mime,
+        });
+        setLooks((prev) => prev.map((l) =>
+          l.id === lookEditor.look!.id ? { ...l, imageUrl: url, imageMimeType: lookEditorPreview.mime } : l
+        ));
+        // If editing the default look, update main modal image too
+        if (lookEditor.look.isDefault) {
+          setImageUrl(url);
+          setImageBase64(null);
+          setImageMimeType(lookEditorPreview.mime);
+        }
+      } else {
+        const newLook = await createCharacterLook(storyId, character.id, {
+          image_url: url,
+          image_mime_type: lookEditorPreview.mime,
+        });
+        setLooks((prev) => [...prev, newLook]);
+      }
+
+      setLookEditor(null);
+      setLookEditorDiff("");
+      setLookEditorPreview(null);
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : "Failed to save look");
+    } finally {
+      setIsSavingLookEditor(false);
+    }
+  };
+
+  const closeLookEditor = () => {
+    setLookEditor(null);
+    setLookEditorDiff("");
+    setLookEditorPreview(null);
+    setGenError(null);
   };
 
   useEffect(() => {
@@ -336,6 +438,28 @@ export default function CharacterModal({
       return;
     }
 
+    // Wait for any pending set-default-look API call to finish
+    // so the DB is consistent before the parent writes + refetches
+    if (pendingDefaultLookRef.current) {
+      await pendingDefaultLookRef.current;
+    }
+
+    // If user selected a look (thumbnail click), set it as default on save
+    let finalImageUrl = imageUrl;
+    let finalMimeType = imageMimeType;
+    if (selectedLookId && storyId && character?.id) {
+      const selLook = looks.find((l) => l.id === selectedLookId);
+      if (selLook) {
+        if (!selLook.isDefault) {
+          await setDefaultCharacterLook(storyId, character.id, selectedLookId);
+        }
+        finalImageUrl = selLook.imageUrl;
+        finalMimeType = selLook.imageMimeType;
+      }
+    }
+
+    // Don't send stale base64 if a saved look was selected
+    const submitBase64 = selectedLookId ? null : imageBase64;
     await onSave({
       name: name.trim(),
       age: age.trim(),
@@ -343,9 +467,9 @@ export default function CharacterModal({
       description: description.trim(),
       role,
       visualStyle: refCharId ? null : visualStyle,
-      imageBase64,
-      imageUrl,
-      imageMimeType,
+      imageBase64: submitBase64,
+      imageUrl: finalImageUrl,
+      imageMimeType: finalMimeType,
     });
   };
 
@@ -539,28 +663,28 @@ export default function CharacterModal({
         {/* Image section */}
         <div className="mb-5">
           <div className="max-w-[280px] mx-auto aspect-[9/16] bg-[#262626] rounded-2xl overflow-hidden flex items-center justify-center mb-3">
-            {(imageBase64 || imageUrl) ? (
-              <img
-                src={imageBase64 ? `data:${imageMimeType};base64,${imageBase64}` : imageUrl!}
-                alt="Character"
-                className="w-full h-full object-cover"
-              />
-            ) : isGenerating ? (
-              <div className="flex flex-col items-center justify-center text-center">
-                <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                <p className="text-sm text-[#ADADAD]">Generating...</p>
-              </div>
-            ) : (
-              <div className="text-center text-[#ADADAD]">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" className="mx-auto mb-2">
-                  <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
-                </svg>
-                <p className="text-sm">Upload or generate an image</p>
-              </div>
-            )}
+            {(() => {
+              const selLook = selectedLookId ? looks.find((l) => l.id === selectedLookId) : null;
+              const displayUrl = selLook ? selLook.imageUrl : (imageBase64 ? `data:${imageMimeType};base64,${imageBase64}` : imageUrl);
+              if (displayUrl) return <img src={displayUrl} alt="Character" className="w-full h-full object-cover" />;
+              if (isGenerating) return (
+                <div className="flex flex-col items-center justify-center text-center">
+                  <svg className="animate-spin h-8 w-8 text-[#B8B6FC] mb-2" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <p className="text-sm text-[#ADADAD]">Generating...</p>
+                </div>
+              );
+              return (
+                <div className="text-center text-[#ADADAD]">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" className="mx-auto mb-2">
+                    <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                  </svg>
+                  <p className="text-sm">Upload or generate an image</p>
+                </div>
+              );
+            })()}
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -600,8 +724,8 @@ export default function CharacterModal({
               <label className="text-white text-sm font-medium">
                 Looks {looks.length > 0 && <span className="text-[#ADADAD]">({looks.length}/10)</span>}
               </label>
-              {(imageBase64 || imageUrl) && looks.length < 10 && (() => {
-                const alreadySaved = !!imageUrl && looks.some((l) => l.imageUrl === imageUrl);
+              {(imageBase64 || imageUrl || selectedLookId) && looks.length < 10 && (() => {
+                const alreadySaved = !!selectedLookId || (!!imageUrl && looks.some((l) => l.imageUrl === imageUrl));
                 return (
                   <button
                     type="button"
@@ -619,36 +743,71 @@ export default function CharacterModal({
             ) : looks.length > 0 ? (
               <div className="flex gap-2 overflow-x-auto pb-1">
                 {looks.map((look) => (
-                  <div
-                    key={look.id}
-                    className={`relative group/look w-[70px] h-[98px] rounded-lg overflow-hidden flex-shrink-0 cursor-pointer border-2 transition-colors ${
-                      look.isDefault ? "border-[#B8B6FC]" : "border-transparent hover:border-[#444]"
-                    }`}
-                    onClick={() => handleSetDefaultLook(look)}
-                  >
-                    <img src={look.imageUrl} alt="Look" className="w-full h-full object-cover" />
-                    {look.isDefault && (
-                      <div className="absolute top-1 right-1 w-4 h-4 bg-[#B8B6FC] rounded-full flex items-center justify-center">
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="#1A1E2F">
-                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.56 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z" />
-                        </svg>
-                      </div>
-                    )}
-                    {/* Delete on hover (not default) */}
-                    {!look.isDefault && (
+                  <div key={look.id} className="flex flex-col items-center flex-shrink-0">
+                    <div
+                      className={`relative group/look w-[70px] h-[98px] rounded-lg overflow-hidden cursor-pointer border-2 transition-colors ${
+                        selectedLookId === look.id ? "border-white" : look.isDefault ? "border-[#B8B6FC]" : "border-transparent hover:border-[#444]"
+                      }`}
+                      onClick={() => setSelectedLookId(selectedLookId === look.id ? null : look.id)}
+                    >
+                      <img src={look.imageUrl} alt="Look" className="w-full h-full object-cover" />
+                      {/* Default badge */}
+                      {look.isDefault && (
+                        <div className="absolute bottom-0 left-0 right-0 bg-[#B8B6FC]/80 text-center text-[8px] text-[#1A1E2F] font-semibold py-0.5">
+                          Default
+                        </div>
+                      )}
+                      {/* Edit on hover */}
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteLook(look.id); }}
-                        className="absolute top-1 right-1 w-4 h-4 bg-red-500/80 rounded-full items-center justify-center opacity-0 group-hover/look:opacity-100 transition-opacity hidden group-hover/look:flex"
+                        onClick={(e) => { e.stopPropagation(); setLookEditor({ mode: "edit", look }); }}
+                        className="absolute right-1 top-1 w-4 h-4 bg-white/70 rounded-full items-center justify-center opacity-0 group-hover/look:opacity-100 transition-opacity hidden group-hover/look:flex"
+                        title="Edit look"
                       >
-                        <svg width="8" height="8" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="2">
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
+                        <svg width="8" height="8" viewBox="0 0 24 24" fill="#333"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" /></svg>
                       </button>
+                      {/* Delete on hover (not default) */}
+                      {!look.isDefault && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleDeleteLook(look.id); }}
+                          className="absolute right-1 bottom-1 w-4 h-4 bg-red-500/80 rounded-full items-center justify-center opacity-0 group-hover/look:opacity-100 transition-opacity hidden group-hover/look:flex"
+                        >
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="2">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                    {/* Action below the specific card */}
+                    {selectedLookId === look.id ? (
+                      look.isDefault ? (
+                        <span className="text-emerald-400 text-[9px] mt-1">Default</span>
+                      ) : (
+                        <button type="button" onClick={(e) => { e.stopPropagation(); handleSetDefaultLook(look); }} className="text-[#B8B6FC] text-[9px] mt-1 hover:underline">
+                          {defaultLookLabel}
+                        </button>
+                      )
+                    ) : (
+                      <span className="h-[22px]" />
                     )}
                   </div>
                 ))}
+                {/* + New Look card */}
+                {looks.length < 10 && (
+                  <div className="flex flex-col flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setLookEditor({ mode: "new" })}
+                      className="w-[70px] h-[98px] rounded-lg border-2 border-dashed border-white/20 hover:border-white/40 flex flex-col items-center justify-center gap-1 transition-colors"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40"><path d="M12 5v14M5 12h14" /></svg>
+                      <span className="text-white/40 text-[9px]">New Look</span>
+                    </button>
+                    <span className="h-[22px]" />
+                  </div>
+                )}
               </div>
             ) : (
               <p className="text-[#ADADAD] text-xs">No looks saved yet. Generate images and save them as looks.</p>
@@ -682,6 +841,111 @@ export default function CharacterModal({
           </button>
         </div>
       </div>
+
+      {/* Look Editor Popup */}
+      {lookEditor && (
+        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 rounded-2xl">
+          <div className="bg-[#1A1E2F] rounded-2xl p-5 w-full max-w-sm border border-white/10">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-white font-semibold">
+                {lookEditor.mode === "edit" ? "Edit Look" : "New Look"}
+              </h3>
+              <button type="button" onClick={closeLookEditor} className="text-white/40 hover:text-white transition-colors">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            {/* Input + Generate row */}
+            <div className="flex gap-2 mb-4">
+              <input
+                type="text"
+                value={lookEditorDiff}
+                onChange={(e) => setLookEditorDiff(e.target.value)}
+                placeholder="What's different? (outfit, mood...)"
+                className="flex-1 min-w-0 bg-[#0A0A0F] text-white text-sm rounded-lg px-3 py-2 placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC]/50 border border-white/10"
+                onKeyDown={(e) => { if (e.key === "Enter" && lookEditorDiff.trim() && !isGeneratingLookEditor) handleLookEditorGenerate(); }}
+                disabled={isGeneratingLookEditor}
+              />
+              <button
+                type="button"
+                onClick={handleLookEditorGenerate}
+                disabled={!lookEditorDiff.trim() || isGeneratingLookEditor}
+                className="px-3 py-2 bg-[#262550] text-[#B8B6FC] text-sm rounded-lg hover:bg-[#2f2d60] disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                {isGeneratingLookEditor ? (
+                  <div className="w-4 h-4 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
+                ) : lookEditorPreview ? "Redo" : "Generate"}
+              </button>
+            </div>
+
+            {genError && <p className="text-red-400 text-xs mb-3">{genError}</p>}
+
+            {/* Reference + Result side by side, equal size, centered */}
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-[#ADADAD] text-[10px] uppercase tracking-wide">Reference</span>
+                <div className="w-[130px] h-[182px] rounded-xl overflow-hidden bg-[#0A0A0F] border border-white/10">
+                  {(() => {
+                    const refUrl = lookEditor.mode === "edit"
+                      ? lookEditor.look?.imageUrl
+                      : looks.find((l) => l.isDefault)?.imageUrl;
+                    return refUrl
+                      ? <img src={refUrl} alt="Reference" className="w-full h-full object-cover" />
+                      : <div className="w-full h-full flex items-center justify-center text-white/20 text-[10px]">No ref</div>;
+                  })()}
+                </div>
+              </div>
+
+              {/* Arrow */}
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/20 flex-shrink-0 mt-4">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-[#ADADAD] text-[10px] uppercase tracking-wide">Result</span>
+                <div className="w-[130px] h-[182px] rounded-xl overflow-hidden bg-[#0A0A0F] border border-white/10">
+                  {isGeneratingLookEditor ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center">
+                      <div className="w-8 h-8 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin mb-2" />
+                      <span className="text-[#ADADAD] text-xs">Generating...</span>
+                    </div>
+                  ) : lookEditorPreview ? (
+                    <img src={`data:${lookEditorPreview.mime};base64,${lookEditorPreview.base64}`} alt="Preview" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-white/20 text-[10px] text-center px-2">Generate to preview</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer actions */}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeLookEditor}
+                disabled={isSavingLookEditor}
+                className="px-4 py-2 text-[#ADADAD] text-sm hover:text-white transition-colors"
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                onClick={handleLookEditorSave}
+                disabled={!lookEditorPreview || isSavingLookEditor}
+                className="px-4 py-2 rounded-lg text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                style={{ background: "linear-gradient(135deg, #9C99FF 0%, #7370FF 60%)" }}
+              >
+                {isSavingLookEditor ? (
+                  <><div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" /> Saving...</>
+                ) : (
+                  "Save"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 

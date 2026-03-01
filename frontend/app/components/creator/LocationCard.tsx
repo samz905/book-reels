@@ -8,14 +8,24 @@ interface LocationCardProps {
   onDelete: (locationId: string) => void;
 }
 
+function getDefaultAngleImage(location: StoryLocationFE): string | null {
+  if (location.angles && location.angles.length > 0) {
+    const defaultAngle = location.angles.find(a => a.isDefault);
+    if (defaultAngle) return defaultAngle.imageUrl;
+    return location.angles[0].imageUrl;
+  }
+  return location.imageUrl;
+}
+
 export default function LocationCard({ location, onEdit, onDelete }: LocationCardProps) {
+  const displayImage = getDefaultAngleImage(location);
   return (
     <div className="group relative w-[150px] flex-shrink-0">
       {/* Image */}
       <div className="w-[150px] h-[200px] rounded-xl overflow-hidden bg-[#262626] border border-[#262626] relative">
-        {(location.imageUrl || location.imageBase64) ? (
+        {displayImage ? (
           <img
-            src={location.imageUrl || `data:${location.imageMimeType};base64,${location.imageBase64}`}
+            src={displayImage}
             alt={location.name}
             className="w-full h-full object-cover"
           />

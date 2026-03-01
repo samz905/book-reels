@@ -419,6 +419,7 @@ export function mapDbStoryboardToFrontend(db: DbEpisodeStoryboard): EpisodeStory
 export async function getStoryCharacters(storyId: string, includeLooks = false): Promise<StoryCharacterFE[]> {
   const response = await fetch(`/api/stories/${storyId}/characters`, {
     credentials: "include",
+    cache: "no-store",
   });
   const data = await handleResponse<DbStoryCharacter[]>(response);
   const chars = data.map(mapDbCharacterToFrontend);
@@ -499,6 +500,7 @@ export async function deleteStoryCharacter(storyId: string, characterId: string)
 export async function getStoryLocations(storyId: string, includeAngles = false): Promise<StoryLocationFE[]> {
   const response = await fetch(`/api/stories/${storyId}/locations`, {
     credentials: "include",
+    cache: "no-store",
   });
   const data = await handleResponse<DbStoryLocation[]>(response);
   const locs = data.map(mapDbLocationToFrontend);
@@ -587,6 +589,7 @@ function mapDbLookToFrontend(db: DbCharacterLook): CharacterLookFE {
 export async function getCharacterLooks(storyId: string, characterId: string): Promise<CharacterLookFE[]> {
   const response = await fetch(`/api/stories/${storyId}/characters/${characterId}/looks`, {
     credentials: "include",
+    cache: "no-store",
   });
   const data = await handleResponse<DbCharacterLook[]>(response);
   return data.map(mapDbLookToFrontend);
@@ -633,6 +636,21 @@ export async function deleteCharacterLook(
   await handleResponse(response);
 }
 
+export async function updateCharacterLook(
+  storyId: string,
+  characterId: string,
+  lookId: string,
+  data: { image_url: string; image_mime_type?: string }
+): Promise<void> {
+  const response = await fetch(`/api/stories/${storyId}/characters/${characterId}/looks/${lookId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
+  });
+  await handleResponse(response);
+}
+
 // ============ Location Angles ============
 
 function mapDbAngleToFrontend(db: DbLocationAngle): LocationAngleFE {
@@ -650,6 +668,7 @@ function mapDbAngleToFrontend(db: DbLocationAngle): LocationAngleFE {
 export async function getLocationAngles(storyId: string, locationId: string): Promise<LocationAngleFE[]> {
   const response = await fetch(`/api/stories/${storyId}/locations/${locationId}/angles`, {
     credentials: "include",
+    cache: "no-store",
   });
   const data = await handleResponse<DbLocationAngle[]>(response);
   return data.map(mapDbAngleToFrontend);
@@ -692,6 +711,21 @@ export async function deleteLocationAngle(
   const response = await fetch(`/api/stories/${storyId}/locations/${locationId}/angles/${angleId}`, {
     method: "DELETE",
     credentials: "include",
+  });
+  await handleResponse(response);
+}
+
+export async function updateLocationAngle(
+  storyId: string,
+  locationId: string,
+  angleId: string,
+  data: { image_url: string; image_mime_type?: string }
+): Promise<void> {
+  const response = await fetch(`/api/stories/${storyId}/locations/${locationId}/angles/${angleId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
   });
   await handleResponse(response);
 }

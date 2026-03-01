@@ -43,14 +43,33 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   // Verify look exists
   const { data: look } = await supabase
     .from("character_looks")
-    .select("id, image_url, image_mime_type")
+    .select("id, image_url, image_mime_type, is_default")
     .eq("id", lookId)
     .eq("character_id", characterId)
     .single();
 
   if (!look) return notFoundResponse("Look");
 
-  const body = await parseBody<{ is_default?: boolean }>(request);
+  const body = await parseBody<{ is_default?: boolean; image_url?: string; image_mime_type?: string }>(request);
+
+  // Update image if provided
+  if (body?.image_url) {
+    const updateData: Record<string, string> = { image_url: body.image_url };
+    if (body.image_mime_type) updateData.image_mime_type = body.image_mime_type;
+
+    await supabase
+      .from("character_looks")
+      .update(updateData)
+      .eq("id", lookId);
+
+    // If this is the default look, also update parent character
+    if (look.is_default) {
+      await supabase
+        .from("story_characters")
+        .update({ image_url: body.image_url, image_mime_type: body.image_mime_type || look.image_mime_type })
+        .eq("id", characterId);
+    }
+  }
 
   if (body?.is_default) {
     // Unset all defaults for this character, then set chosen one
@@ -65,9 +84,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       .eq("id", lookId);
 
     // Update the parent character's image_url to match the new default
+    const finalUrl = body.image_url || look.image_url;
+    const finalMime = body.image_mime_type || look.image_mime_type;
     await supabase
       .from("story_characters")
-      .update({ image_url: look.image_url, image_mime_type: look.image_mime_type })
+      .update({ image_url: finalUrl, image_mime_type: finalMime })
       .eq("id", characterId);
   }
 

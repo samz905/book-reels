@@ -8,14 +8,24 @@ interface CharacterCardProps {
   onDelete: (characterId: string) => void;
 }
 
+function getDefaultLookImage(character: StoryCharacterFE): string | null {
+  if (character.looks && character.looks.length > 0) {
+    const defaultLook = character.looks.find(l => l.isDefault);
+    if (defaultLook) return defaultLook.imageUrl;
+    return character.looks[0].imageUrl;
+  }
+  return character.imageUrl;
+}
+
 export default function CharacterCard({ character, onEdit, onDelete }: CharacterCardProps) {
+  const displayImage = getDefaultLookImage(character);
   return (
     <div className="group relative w-[150px] flex-shrink-0">
       {/* Image */}
       <div className="w-[150px] h-[200px] rounded-xl overflow-hidden bg-[#262626] border border-[#262626] relative">
-        {(character.imageUrl || character.imageBase64) ? (
+        {displayImage ? (
           <img
-            src={character.imageUrl || `data:${character.imageMimeType};base64,${character.imageBase64}`}
+            src={displayImage}
             alt={character.name}
             className="w-full h-full object-cover"
           />
