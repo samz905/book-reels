@@ -3062,6 +3062,31 @@ export default function CreateEpisodePage() {
 
 
 
+  // Auto-start storyboard generation when user enters scenes tab
+  const autoFetchedDescsRef = useRef(false);
+  useEffect(() => {
+    if (visualsTab !== "scenes" || isRestoringRef.current) return;
+    const hasScenes = Object.keys(sceneImages).length > 0;
+    if (hasScenes) {
+      // Descriptions exist — auto-generate images for any scenes missing them
+      const needsImages = Object.values(sceneImages).some(s => !s.image && !s.isGenerating && !s.isQueued);
+      if (needsImages) {
+        generateAllSceneImages();
+      }
+      return;
+    }
+    // No descriptions yet — auto-fetch them (image gen will trigger via this same effect when descriptions arrive)
+    if (autoFetchedDescsRef.current || isGeneratingSceneDescs) return;
+    const allVisualsReady = story
+      ? story.characters.every(c => !!characterImages[c.id]?.image) && story.locations.every(l => !!locationImages[l.id]?.image)
+      : false;
+    if (allVisualsReady && story && generationIdRef.current) {
+      autoFetchedDescsRef.current = true;
+      fetchSceneDescriptions();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visualsTab, sceneImages, isGeneratingSceneDescs]);
+
   // Timer tracking for generating scene images
   useEffect(() => {
     const generating = Object.values(sceneImages).filter(s => s.isGenerating);
@@ -3989,8 +4014,15 @@ export default function CreateEpisodePage() {
                                   <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Action</label>
                                   <textarea
                                     value={draft.action}
-                                    onChange={(e) => setEditSceneDraft({ ...draft, action: e.target.value })}
-                                    className="w-full bg-[#262626] text-white/70 text-sm italic rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none"
+                                    onChange={(e) => {
+                                      setEditSceneDraft({ ...draft, action: e.target.value });
+                                      e.target.style.height = "auto";
+                                      e.target.style.height = e.target.scrollHeight + "px";
+                                    }}
+                                    ref={(el) => {
+                                      if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
+                                    }}
+                                    className="w-full bg-[#262626] text-white/70 text-sm italic rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#B8B6FC] resize-none overflow-hidden"
                                     rows={2}
                                     placeholder="What characters physically do..."
                                   />
@@ -4578,15 +4610,16 @@ export default function CreateEpisodePage() {
                     return (
                       <div className="flex flex-col items-center justify-center py-16 gap-4">
                         {allVisualsReady ? (
-                          <>
-                            <p className="text-[#ADADAD] text-sm text-center">No scene descriptions yet.</p>
-                            <button
-                              onClick={fetchSceneDescriptions}
-                              className="px-5 py-2.5 bg-gradient-to-r from-[#9C99FF] to-[#7370FF] text-white rounded-xl font-medium hover:opacity-90 transition-opacity"
-                            >
-                              Generate Storyboard
-                            </button>
-                          </>
+                          <div className="flex flex-col items-center gap-3">
+                            <svg className="animate-spin h-8 w-8 text-[#B8B6FC]" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            <p className="text-[#ADADAD] text-sm text-center">Preparing storyboard...</p>
+                            <p className="text-white/30 text-xs text-center max-w-sm">
+                              This can take a few minutes. Feel free to wait or come back later.
+                            </p>
+                          </div>
                         ) : (
                           <>
                             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#9C99FF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -4616,9 +4649,15 @@ export default function CreateEpisodePage() {
                   {/* ════════ GRID VIEW ════════ */}
                   {storyboardViewMode === "grid" && Object.keys(sceneImages).length > 0 && (
                     <div className="bg-panel rounded-3xl outline outline-1 outline-panel-border p-6 md:p-8">
-                      <p className="text-xs text-[#ADADAD]/70 text-left mb-5">
-                        Each image becomes the first frame of its scene&apos;s video. Click any card to view details and edit.
-                      </p>
+                      {Object.values(sceneImages).some(s => s.isGenerating || s.isQueued) ? (
+                        <p className="text-sm text-[#ADADAD] text-center mb-5">
+                          Generating storyboard images — this can take a few minutes. Feel free to wait or come back later.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-[#ADADAD]/70 text-left mb-5">
+                          Each image becomes the first frame of its scene&apos;s video. Click any card to view details and edit.
+                        </p>
+                      )}
 
                       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                         {Object.values(sceneImages)

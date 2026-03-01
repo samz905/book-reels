@@ -491,10 +491,11 @@ Create additional supporting characters ONLY if the story absolutely requires th
             )
         prompt += f"""
 
-STORY CHARACTER LIBRARY (pick the most relevant characters for this episode):
+STORY CHARACTER LIBRARY (only use characters that fit this episode — skip any that don't match the tone, setting, or premise):
 {chr(10).join(char_lines)}
-For library characters: include them in the characters array using their EXACT id and name. Set origin to "story". You can write a short placeholder for appearance — all library fields are auto-filled from the database.
-You may create additional supporting characters if the story requires them. Any new characters must have origin "ai"."""
+IMPORTANT: Do NOT use a library character just because they exist. For each one, consider whether their name, appearance, and background make sense for this specific episode idea.
+For library characters you use: include them using their EXACT id and name, set origin to "story".
+Create new characters (origin "ai") if the story needs them or if no library characters fit."""
 
     prompt += """
 
@@ -519,7 +520,7 @@ Every scene's setting_id MUST be "{location.id}". This follows the Vibe Applicat
 
 STORY LOCATION LIBRARY (pick the SINGLE most appropriate location for this episode — all 8 scenes must use the same location):
 {chr(10).join(loc_lines)}
-Preserve the chosen location's id, name, description unchanged. You may create a new location ONLY if none from the library fit.
+Choose a location ONLY if it genuinely fits the episode's setting and tone. Preserve the chosen location's id, name, description unchanged. Create a new location if none from the library fit.
 Every scene's setting_id MUST reference the chosen location. This follows the Vibe Application Rules: consistent environment across all scenes."""
     else:
         prompt += """
