@@ -1,19 +1,23 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Episode } from "@/app/data/mockCreatorData";
 import { useAuth } from "@/app/context/AuthContext";
 import FilmPreviewModal from "./FilmPreviewModal";
+import ShareButton from "../shared/ShareButton";
+import { getEpisodeShareUrl } from "@/lib/share-urls";
 
 interface EpisodeListProps {
   episodes: Episode[];
   freeCount?: number;
   editable?: boolean;
   creatorUsername?: string;
+  storyId?: string;
+  autoplayEpisodeNumber?: number;
 }
 
-export default function EpisodeList({ episodes, editable, creatorUsername }: EpisodeListProps) {
+export default function EpisodeList({ episodes, editable, creatorUsername, storyId, autoplayEpisodeNumber }: EpisodeListProps) {
   const [playingEpisode, setPlayingEpisode] = useState<Episode | null>(null);
   const [showLoginGate, setShowLoginGate] = useState(false);
   const [showSubscribeGate, setShowSubscribeGate] = useState(false);
@@ -74,6 +78,18 @@ export default function EpisodeList({ episodes, editable, creatorUsername }: Epi
     setShowSubscribeGate(true);
   };
 
+  // Autoplay from share link — uses handleEpisodeClick so gates (login/subscribe) show if needed
+  const autoplayedRef = useRef(false);
+  useEffect(() => {
+    if (!autoplayEpisodeNumber || autoplayedRef.current) return;
+    autoplayedRef.current = true;
+    const ep = episodes.find(e => e.number === autoplayEpisodeNumber);
+    if (ep && ep.mediaUrl) {
+      handleEpisodeClick(ep);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoplayEpisodeNumber, episodes]);
+
   return (
     <div className="flex flex-col gap-3 mt-4 border-t border-[#2C2C43] pt-4">
       {episodes.map((episode) => {
@@ -130,6 +146,17 @@ export default function EpisodeList({ episodes, editable, creatorUsername }: Epi
               {episode.name}
             </span>
 
+            {/* Share button (when episode is playable and share context is available) */}
+            {hasVideo && creatorUsername && storyId && (
+              <ShareButton
+                url={getEpisodeShareUrl(creatorUsername, storyId, episode.number)}
+                title={`Episode ${episode.number}: ${episode.name}`}
+                iconOnly
+                size="sm"
+                className="flex-shrink-0"
+              />
+            )}
+
             {/* Edit button (creator dashboard only) */}
             {editable && (
               <button
@@ -164,6 +191,7 @@ export default function EpisodeList({ episodes, editable, creatorUsername }: Epi
         title={playingEpisode ? `Episode ${playingEpisode.number}: ${playingEpisode.name}` : undefined}
         nextEpisodeTitle={nextEpisode ? `Episode ${nextEpisode.number}: ${nextEpisode.name}` : undefined}
         onNextEpisode={nextEpisode ? handleNextEpisode : undefined}
+        shareUrl={playingEpisode && creatorUsername && storyId ? getEpisodeShareUrl(creatorUsername, storyId, playingEpisode.number) : undefined}
       />
 
       {/* Login gate overlay */}

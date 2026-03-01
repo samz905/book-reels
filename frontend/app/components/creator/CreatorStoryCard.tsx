@@ -8,10 +8,13 @@ import EpisodeList from "./EpisodeList";
 import CreateEpisodeModal from "./CreateEpisodeModal";
 import AddBookModal from "./AddBookModal";
 import EditStoryModal from "./EditStoryModal";
+import ShareButton from "../shared/ShareButton";
+import { getStoryShareUrl } from "@/lib/share-urls";
 
 interface CreatorStoryCardProps {
   story: Story;
   allStories?: Array<{ id: string; title: string }>;
+  creatorUsername?: string;
   onUpdateStory: (story: Story) => void | Promise<void>;
   onAddEbook?: (ebookData: {
     storyId: string;
@@ -34,6 +37,7 @@ interface CreatorStoryCardProps {
 export default function CreatorStoryCard({
   story,
   allStories,
+  creatorUsername,
   onUpdateStory,
   onAddEbook,
   onUpdateEbook,
@@ -163,6 +167,14 @@ export default function CreatorStoryCard({
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-white text-2xl font-bold">Stories</h2>
         <div className="flex items-center gap-3">
+          {story.status === "published" && creatorUsername && (
+            <ShareButton
+              url={getStoryShareUrl(creatorUsername, story.id)}
+              title={story.title}
+              iconOnly
+              className="w-9 h-9 bg-[#3E3D40] rounded-full flex items-center justify-center hover:bg-[#4E4D50] transition-colors"
+            />
+          )}
           {story.status === "draft" ? (
             <button
               onClick={() => setShowStatusConfirm(true)}
@@ -296,7 +308,12 @@ export default function CreatorStoryCard({
 
           {/* Episode list (collapsible) */}
           {showEpisodes && (
-            <EpisodeList episodes={story.episodes.filter(e => e.status === "published")} editable />
+            <EpisodeList
+              episodes={story.episodes.filter(e => e.status === "published")}
+              editable
+              storyId={story.id}
+              creatorUsername={creatorUsername}
+            />
           )}
 
         </div>

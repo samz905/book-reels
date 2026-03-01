@@ -5,13 +5,16 @@ import Image from "next/image";
 import { PublicStory } from "@/app/data/mockPublicCreators";
 import EpisodeList from "../creator/EpisodeList";
 import ShareButton from "../shared/ShareButton";
+import { getStoryShareUrl } from "@/lib/share-urls";
 
 interface PublicStoryCardProps {
   story: PublicStory;
+  creatorUsername: string;
+  autoplayEpisodeNumber?: number;
 }
 
-export default function PublicStoryCard({ story }: PublicStoryCardProps) {
-  const [showEpisodes, setShowEpisodes] = useState(false);
+export default function PublicStoryCard({ story, creatorUsername, autoplayEpisodeNumber }: PublicStoryCardProps) {
+  const [showEpisodes, setShowEpisodes] = useState(!!autoplayEpisodeNumber);
   const [expandedEbooks, setExpandedEbooks] = useState<Set<string>>(new Set());
 
   // Horizontal scroll state for ebooks
@@ -76,7 +79,7 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
           {/* Title row with share button */}
           <div className="flex items-start justify-between gap-2 mb-3">
             <h3 className="text-white text-xl sm:text-2xl font-bold">{story.title}</h3>
-            <ShareButton />
+            <ShareButton url={getStoryShareUrl(creatorUsername, story.id)} title={story.title} />
           </div>
 
           {/* Tags row: Episodes | Free episodes */}
@@ -140,7 +143,12 @@ export default function PublicStoryCard({ story }: PublicStoryCardProps) {
 
               {/* Episode list (collapsible) */}
               {showEpisodes && (
-                <EpisodeList episodes={story.episodes} />
+                <EpisodeList
+                  episodes={story.episodes}
+                  creatorUsername={creatorUsername}
+                  storyId={story.id}
+                  autoplayEpisodeNumber={autoplayEpisodeNumber}
+                />
               )}
             </>
           )}

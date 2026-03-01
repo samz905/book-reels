@@ -446,6 +446,7 @@ export default function CreatePage() {
                 key={story.id}
                 story={story}
                 allStories={stories.map(s => ({ id: s.id, title: s.title }))}
+                creatorUsername={displayProfile.username}
                 onUpdateStory={handleStoryUpdate}
                 onAddEbook={(ebookData) => handleAddEbook(story.id, ebookData)}
                 onUpdateEbook={(ebookId, data) => handleUpdateEbook(story.id, ebookId, data)}

@@ -16,6 +16,9 @@ import { useAuth } from "@/app/context/AuthContext";
 import { getMyStories, getStoryCharacters, getStoryLocations, createStoryCharacter, createStoryLocation, updateStoryCharacter, updateStoryLocation, deleteStoryCharacter, deleteStoryLocation, createStory, submitJob, getEpisodeStoryboards, upsertEpisodeStoryboards, getEpisodeClips, upsertEpisodeClips } from "@/lib/api/creator";
 import { uploadGenerationAsset } from "@/lib/storage/generation-assets";
 import { useGenJobs } from "@/lib/hooks/useGenJobs";
+import { useProfile } from "@/lib/hooks/queries";
+import ShareButton from "@/app/components/shared/ShareButton";
+import { getEpisodeShareUrl } from "@/lib/share-urls";
 import type { StoryCharacterFE, StoryLocationFE, EpisodeStoryboardFE } from "@/app/data/mockCreatorData";
 import StoryPickerModal from "@/app/components/creator/StoryPickerModal";
 import CreateEpisodeModal from "@/app/components/creator/CreateEpisodeModal";
@@ -313,6 +316,7 @@ const STYLE_OPTIONS: { value: Style; label: string }[] = [
 
 export default function CreateEpisodePage() {
   const { user, loading: authLoading, accessStatus } = useAuth();
+  const { data: creatorProfile } = useProfile(user?.id);
   const accessRouter = useRouter();
 
   // Redirect if not authenticated or not approved
@@ -5399,12 +5403,20 @@ export default function CreateEpisodePage() {
                     ) : draftSaveStatus === "saving" ? "Saving..." : "Save to Profile"}
                   </button>
                   {publishedEpisodeId ? (
-                    <button
-                      onClick={() => setShowUnpublishConfirm(true)}
-                      className="px-4 py-2 text-sm font-medium text-red-400 border border-red-500/30 rounded-xl hover:bg-red-500/10 transition-colors"
-                    >
-                      Unpublish
-                    </button>
+                    <>
+                      <button
+                        onClick={() => setShowUnpublishConfirm(true)}
+                        className="px-4 py-2 text-sm font-medium text-red-400 border border-red-500/30 rounded-xl hover:bg-red-500/10 transition-colors"
+                      >
+                        Unpublish
+                      </button>
+                      {assembledVideoUrl && creatorProfile?.username && associatedStoryIdRef.current && (
+                        <ShareButton
+                          url={getEpisodeShareUrl(creatorProfile.username, associatedStoryIdRef.current, episodeNumber || 1)}
+                          title={episodeName || "Episode"}
+                        />
+                      )}
+                    </>
                   ) : (
                     <button
                       onClick={async () => {
@@ -5442,6 +5454,7 @@ export default function CreateEpisodePage() {
           onClose={() => setShowFilmPreview(false)}
           videoUrl={assembledVideoUrl || ""}
           title={episodeName || "Preview"}
+          shareUrl={publishedEpisodeId && creatorProfile?.username && associatedStoryIdRef.current ? getEpisodeShareUrl(creatorProfile.username, associatedStoryIdRef.current, episodeNumber || 1) : undefined}
         />
 
         {/* Unpublish confirmation dialog */}

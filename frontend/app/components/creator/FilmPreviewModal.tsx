@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
+import ShareButton from "../shared/ShareButton";
 
 interface FilmPreviewModalProps {
   isOpen: boolean;
@@ -10,6 +11,7 @@ interface FilmPreviewModalProps {
   title?: string;
   nextEpisodeTitle?: string;
   onNextEpisode?: () => void;
+  shareUrl?: string;
 }
 
 export default function FilmPreviewModal({
@@ -19,6 +21,7 @@ export default function FilmPreviewModal({
   title,
   nextEpisodeTitle,
   onNextEpisode,
+  shareUrl,
 }: FilmPreviewModalProps) {
   const [mounted, setMounted] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -93,18 +96,23 @@ export default function FilmPreviewModal({
           />
         </div>
 
-        {/* Next Episode button (below video, always visible when there's a next ep) */}
-        {nextEpisodeTitle && onNextEpisode && (
-          <button
-            onClick={onNextEpisode}
-            className="mt-3 flex items-center gap-2 text-white/70 hover:text-white text-sm transition-colors"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-            </svg>
-            Next: {nextEpisodeTitle}
-          </button>
-        )}
+        {/* Actions below video */}
+        <div className="mt-3 flex items-center gap-4">
+          {shareUrl && (
+            <ShareButton url={shareUrl} title={title} iconOnly size="sm" />
+          )}
+          {nextEpisodeTitle && onNextEpisode && (
+            <button
+              onClick={onNextEpisode}
+              className="flex items-center gap-2 text-white/70 hover:text-white text-sm transition-colors"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+              </svg>
+              Next: {nextEpisodeTitle}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -9,6 +9,8 @@ import { StoryGridSkeleton } from "./components/skeletons";
 import { CATEGORIES, type Category, type Story } from "./data/mockStories";
 import type { Episode } from "./data/mockCreatorData";
 import EpisodeList from "./components/creator/EpisodeList";
+import ShareButton from "./components/shared/ShareButton";
+import { getStoryShareUrl } from "@/lib/share-urls";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -351,15 +353,24 @@ export default function Home() {
                   <span className="text-white/70 text-sm hover:text-white transition-colors">{selectedStory.creatorName}</span>
                 </Link>
               </div>
-              {/* Close button */}
-              <button
-                onClick={() => setSelectedStory(null)}
-                className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors flex-shrink-0 self-start"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round">
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-              </button>
+              {/* Share + Close */}
+              <div className="flex items-center gap-2 flex-shrink-0 self-start">
+                <ShareButton
+                  url={getStoryShareUrl(selectedStory.creatorUsername, selectedStory.id)}
+                  title={selectedStory.title}
+                  iconOnly
+                  size="sm"
+                  className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors"
+                />
+                <button
+                  onClick={() => setSelectedStory(null)}
+                  className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round">
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             {/* Episodes */}
@@ -369,7 +380,7 @@ export default function Home() {
                   <div className="w-6 h-6 border-2 border-[#9C99FF] border-t-transparent rounded-full animate-spin" />
                 </div>
               ) : storyEpisodes.length > 0 ? (
-                <EpisodeList episodes={storyEpisodes} creatorUsername={selectedStory.creatorUsername} />
+                <EpisodeList episodes={storyEpisodes} creatorUsername={selectedStory.creatorUsername} storyId={selectedStory.id} />
               ) : (
                 <p className="text-white/40 text-sm text-center py-8">No episodes published yet.</p>
               )}

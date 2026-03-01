@@ -1,7 +1,8 @@
 "use client";
 
-import { useParams } from "next/navigation";
-import { useState, useEffect } from "react";
+import { Suspense } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import { useState, useEffect, useRef } from "react";
 import Header from "../../components/Header";
 import Footer from "../../components/Footer";
 import PublicProfileHeader from "../../components/public/PublicProfileHeader";
@@ -118,9 +119,15 @@ function transformCreatorData(api: ApiCreatorResponse): PublicCreatorProfile {
   };
 }
 
-export default function PublicCreatorProfilePage() {
+function PublicCreatorProfileContent() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const username = params.username as string;
+
+  // Deep-link query params for share URLs
+  const highlightStoryId = searchParams.get("story");
+  const autoplayEpisodeNum = searchParams.get("episode");
+  const scrolledRef = useRef(false);
 
   const [creator, setCreator] = useState<PublicCreatorProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -156,6 +163,19 @@ export default function PublicCreatorProfilePage() {
       fetchCreator();
     }
   }, [username]);
+
+  // Scroll to highlighted story on load (from share URL)
+  // Must be before early returns to satisfy Rules of Hooks
+  useEffect(() => {
+    if (!highlightStoryId || !creator || scrolledRef.current) return;
+    scrolledRef.current = true;
+    // Small delay to let DOM render
+    const timer = setTimeout(() => {
+      const el = document.getElementById(`story-${highlightStoryId}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [highlightStoryId, creator]);
 
   // Loading state
   if (loading) {
@@ -234,7 +254,17 @@ export default function PublicCreatorProfilePage() {
         <div className="space-y-6">
           {creator.stories.length > 0 ? (
             creator.stories.map((story) => (
-              <PublicStoryCard key={story.id} story={story} />
+              <div key={story.id} id={`story-${story.id}`}>
+                <PublicStoryCard
+                  story={story}
+                  creatorUsername={username}
+                  autoplayEpisodeNumber={
+                    highlightStoryId === story.id && autoplayEpisodeNum
+                      ? Number(autoplayEpisodeNum)
+                      : undefined
+                  }
+                />
+              </div>
             ))
           ) : (
             <div className="text-center py-12">
@@ -246,5 +276,26 @@ export default function PublicCreatorProfilePage() {
 
       {/* <Footer /> */}
     </div>
+  );
+}
+
+export default function PublicCreatorProfilePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-black relative overflow-clip">
+        <Header />
+        <div className="px-4 md:px-6 py-6 max-w-7xl mx-auto">
+          <ProfileHeaderSkeleton />
+        </div>
+        <main className="px-4 md:px-6 pb-16 max-w-7xl mx-auto relative z-10">
+          <div className="space-y-6">
+            <PublicStorySkeleton />
+            <PublicStorySkeleton />
+          </div>
+        </main>
+      </div>
+    }>
+      <PublicCreatorProfileContent />
+    </Suspense>
   );
 }
