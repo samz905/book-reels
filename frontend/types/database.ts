@@ -399,6 +399,8 @@ export interface Database {
           image_mime_type: string;
           prompt_used: string | null;
           error_message: string | null;
+          history: unknown;
+          selected_version: number;
           created_at: string;
           updated_at: string;
         };
@@ -414,6 +416,8 @@ export interface Database {
           image_mime_type?: string;
           prompt_used?: string | null;
           error_message?: string | null;
+          history?: unknown;
+          selected_version?: number;
         };
         Update: {
           title?: string;
@@ -424,6 +428,8 @@ export interface Database {
           image_mime_type?: string;
           prompt_used?: string | null;
           error_message?: string | null;
+          history?: unknown;
+          selected_version?: number;
         };
       };
       episode_clips: {
@@ -436,6 +442,8 @@ export interface Database {
           veo_prompt: string | null;
           error_message: string | null;
           cost: number;
+          history: unknown;
+          selected_version: number;
           created_at: string;
           updated_at: string;
         };
@@ -448,6 +456,8 @@ export interface Database {
           veo_prompt?: string | null;
           error_message?: string | null;
           cost?: number;
+          history?: unknown;
+          selected_version?: number;
         };
         Update: {
           status?: string;
@@ -455,6 +465,8 @@ export interface Database {
           veo_prompt?: string | null;
           error_message?: string | null;
           cost?: number;
+          history?: unknown;
+          selected_version?: number;
         };
       };
       character_looks: {

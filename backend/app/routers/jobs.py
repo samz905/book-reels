@@ -244,7 +244,8 @@ async def _upload_image_in_dict(d: dict, gen_id: str, job_type: str, target_id: 
         mime = d.get("mime_type", "image/png")
         ext = "png" if "png" in mime else "jpg" if "jpeg" in mime or "jpg" in mime else "webp"
         safe_target = target_id.replace("/", "_") if target_id else "default"
-        path = f"{job_type}/{safe_target}/{label}.{ext}"
+        version_id = uuid.uuid4().hex[:8]
+        path = f"{job_type}/{safe_target}/{label}_{version_id}.{ext}"
         url = await async_upload_image_base64(gen_id, path, d["image_base64"], mime)
         d["image_url"] = f"{url}?t={int(time.time())}"
         del d["image_base64"]

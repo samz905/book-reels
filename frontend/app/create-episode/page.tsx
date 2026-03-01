@@ -259,6 +259,14 @@ interface PromptPreviewState {
   isLoading: boolean;
 }
 
+// Clip version for generation history
+interface ClipVersion {
+  video_url: string;
+  veo_prompt: string;
+  cost: number;
+  created_at: string;
+}
+
 // Clip state for per-scene video generation (Step 3)
 interface ClipState {
   sceneNumber: number;
@@ -267,6 +275,8 @@ interface ClipState {
   veoPrompt: string | null;
   error: string | null;
   feedback: string;
+  videos?: ClipVersion[];      // All generated versions (history)
+  selectedIndex?: number;       // Active version index
 }
 
 // Cost tracking across all phases
@@ -909,7 +919,7 @@ export default function CreateEpisodePage() {
           if (genId) {
             for (const si of sceneImgs) {
               if (si.image.image_base64 && !si.image.image_url) {
-                uploadGenerationAsset(genId, `scene_images/scene_${si.scene_number}`, si.image.image_base64, si.image.mime_type)
+                uploadGenerationAsset(genId, `scene_images/scene_${si.scene_number}_${crypto.randomUUID().slice(0, 8)}`, si.image.image_base64, si.image.mime_type)
                   .then((url) => {
                     if (url) {
                       si.image.image_url = url;
@@ -939,13 +949,21 @@ export default function CreateEpisodePage() {
             }
             return updated;
           });
-          // Persist completed images to episode_storyboards DB table
+          // Persist completed images to episode_storyboards DB table (with initial history)
           if (genId) {
+            const now = new Date().toISOString();
             upsertEpisodeStoryboards(genId, sceneImgs.map((si) => ({
               scene_number: si.scene_number, status: "completed",
               image_url: si.image.image_url || null,
               image_mime_type: si.image.mime_type,
               prompt_used: si.prompt_used || null,
+              history: [{
+                image_url: si.image.image_url || "",
+                mime_type: si.image.mime_type,
+                prompt_used: si.prompt_used || "",
+                created_at: now,
+              }],
+              selected_version: 0,
             }))).catch((e) => console.warn("DB storyboard image save failed:", e));
             // Mark failed scenes in DB too
             const failedNums = Object.keys(sceneImages).map(Number).filter(n => sceneImages[n]?.isGenerating && !successNums.has(n));
@@ -967,7 +985,7 @@ export default function CreateEpisodePage() {
           // Frontend upload fallback for single scene image
           const genId = generationIdRef.current;
           if (genId && img.image_base64 && !img.image_url) {
-            uploadGenerationAsset(genId, `scene_images/scene_${sceneNum}`, img.image_base64, img.mime_type)
+            uploadGenerationAsset(genId, `scene_images/scene_${sceneNum}_${crypto.randomUUID().slice(0, 8)}`, img.image_base64, img.mime_type)
               .then((url) => {
                 if (url) {
                   img.image_url = url;
@@ -987,14 +1005,27 @@ export default function CreateEpisodePage() {
             const newImages = [...prevImages, img];
             return { ...prev, [sceneNum]: { ...s, image: img, images: newImages, selectedIndex: newImages.length - 1, isQueued: false, isGenerating: false, feedback: "" } };
           });
-          // Persist refined image to episode_storyboards DB table
+          // Persist refined image to episode_storyboards DB table (with full history)
           if (genId) {
-            upsertEpisodeStoryboards(genId, [{
-              scene_number: sceneNum, status: "completed",
-              image_url: img.image_url || null,
-              image_mime_type: img.mime_type,
-              prompt_used: (result.prompt_used as string) || null,
-            }]).catch((e) => console.warn("DB storyboard refine save failed:", e));
+            setSceneImages((prev) => {
+              const s = prev[sceneNum];
+              const allImages = s?.images || (s?.image ? [s.image] : []);
+              const historyEntries = allImages.map(im => ({
+                image_url: im.image_url || "",
+                mime_type: im.mime_type,
+                prompt_used: im.prompt_used || "",
+                created_at: "",
+              }));
+              upsertEpisodeStoryboards(genId, [{
+                scene_number: sceneNum, status: "completed",
+                image_url: img.image_url || null,
+                image_mime_type: img.mime_type,
+                prompt_used: (result.prompt_used as string) || null,
+                history: historyEntries,
+                selected_version: (s?.selectedIndex ?? historyEntries.length - 1),
+              }]).catch((e) => console.warn("DB storyboard refine save failed:", e));
+              return prev; // no state change, just side-effect for reading current images
+            });
           }
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
@@ -1046,28 +1077,53 @@ export default function CreateEpisodePage() {
         const veoPrompt = result.veo_prompt as string | undefined;
         const cost = result.cost as number | undefined;
         if (!isNaN(sceneNum) && videoUrl) {
-          setClipStates((prev) => ({
-            ...prev,
-            [sceneNum]: {
-              ...prev[sceneNum],
-              status: "completed",
-              videoUrl,
-              veoPrompt: veoPrompt || null,
-              error: null,
-              feedback: "",
-            },
-          }));
-          // Persist to DB
-          const genId = generationIdRef.current;
-          if (genId) {
-            upsertEpisodeClips(genId, [{
-              scene_number: sceneNum,
-              status: "completed",
-              video_url: videoUrl,
-              veo_prompt: veoPrompt || null,
-              cost: cost || 0,
-            }]).catch(() => { });
-          }
+          const newVersion: ClipVersion = {
+            video_url: videoUrl,
+            veo_prompt: veoPrompt || "",
+            cost: cost || 0,
+            created_at: new Date().toISOString(),
+          };
+          setClipStates((prev) => {
+            const existing = prev[sceneNum];
+            const prevVideos = existing?.videos || (existing?.videoUrl ? [{
+              video_url: existing.videoUrl,
+              veo_prompt: existing.veoPrompt || "",
+              cost: 0,
+              created_at: "",
+            }] : []);
+            // Deduplicate: skip if this URL already exists in history
+            if (prevVideos.some(v => v.video_url === videoUrl)) {
+              return prev;
+            }
+            const newVideos = [...prevVideos, newVersion];
+            const newState = {
+              ...prev,
+              [sceneNum]: {
+                ...existing,
+                status: "completed" as const,
+                videoUrl,
+                veoPrompt: veoPrompt || null,
+                error: null,
+                feedback: "",
+                videos: newVideos,
+                selectedIndex: newVideos.length - 1,
+              },
+            };
+            // Persist to DB with history
+            const genId = generationIdRef.current;
+            if (genId) {
+              upsertEpisodeClips(genId, [{
+                scene_number: sceneNum,
+                status: "completed",
+                video_url: videoUrl,
+                veo_prompt: veoPrompt || null,
+                cost: cost || 0,
+                history: newVideos,
+                selected_version: newVideos.length - 1,
+              }]).catch(() => { });
+            }
+            return newState;
+          });
           if (cost) setTotalCost((prev) => ({ ...prev, film: prev.film + cost }));
           // Invalidate cached assembly so Preview/Publish re-assembles with new clip
           setAssembledVideoUrl(null);
@@ -1995,18 +2051,37 @@ export default function CreateEpisodePage() {
         // DB image_url is primary; fall back to JSONB image_url if DB has none
         const imgUrl = dbSb.imageUrl || (jsImg && jsImg.image_url) || undefined;
         const hasImg = imgUrl || dbSb.imageBase64;
+
+        // Restore history from DB history column
+        const dbHistory = Array.isArray(dbSb.history) ? dbSb.history as Array<{ image_url: string; mime_type: string; prompt_used: string; created_at: string }> : [];
+        let images: MoodboardImage[] | undefined;
+        let selectedIndex: number | undefined;
+        if (dbHistory.length > 0) {
+          images = dbHistory.map(h => ({
+            type: "key_moment" as const,
+            image_url: h.image_url,
+            mime_type: h.mime_type || "image/png",
+            prompt_used: h.prompt_used || "",
+          }));
+          selectedIndex = dbSb.selectedVersion ?? images.length - 1;
+          if (selectedIndex >= images.length) selectedIndex = images.length - 1;
+        }
+        const activeImage = images && selectedIndex !== undefined ? images[selectedIndex] : null;
+
         cleanedScenes[dbSb.sceneNumber] = {
           sceneNumber: dbSb.sceneNumber,
           title: dbSb.title,
           visualDescription: dbSb.visualDescription,
           originalDescription: dbSb.visualDescription,
-          image: hasImg ? {
+          image: activeImage || (hasImg ? {
             type: "key_moment" as const,
             image_url: imgUrl,
             image_base64: dbSb.imageBase64 || undefined,
             mime_type: dbSb.imageMimeType || (jsImg?.mime_type) || "image/png",
             prompt_used: dbSb.promptUsed || "",
-          } : null,
+          } : null),
+          images,
+          selectedIndex,
           isQueued: false,  // On restore, never persist queued/generating — Realtime will re-deliver active jobs
           isGenerating: false,
           error: dbSb.status === "failed" ? (dbSb.errorMessage || "Generation failed") : "",
@@ -2092,18 +2167,33 @@ export default function CreateEpisodePage() {
               feedback: "",
             };
           }
-          // Overlay DB clips
+          // Overlay DB clips (with history)
           for (const clip of dbClips) {
+            const dbHistory = clip.history || [];
+            let videos: ClipVersion[] | undefined;
+            let selectedIndex: number | undefined;
+            if (dbHistory.length > 0) {
+              videos = dbHistory;
+              selectedIndex = clip.selectedVersion ?? dbHistory.length - 1;
+              if (selectedIndex >= dbHistory.length) selectedIndex = dbHistory.length - 1;
+            } else if (clip.videoUrl) {
+              // Legacy: no history column data, build single-entry
+              videos = [{ video_url: clip.videoUrl, veo_prompt: clip.veoPrompt || "", cost: clip.cost || 0, created_at: "" }];
+              selectedIndex = 0;
+            }
+            const activeVideo = videos && selectedIndex !== undefined ? videos[selectedIndex] : null;
             clipMap[clip.sceneNumber] = {
               sceneNumber: clip.sceneNumber,
               status: clip.status === "completed" ? "completed"
                 : clip.status === "generating" ? "generating"
                   : clip.status === "failed" ? "failed"
                     : "idle",
-              videoUrl: clip.videoUrl,
-              veoPrompt: clip.veoPrompt,
+              videoUrl: activeVideo?.video_url || clip.videoUrl,
+              veoPrompt: activeVideo?.veo_prompt || clip.veoPrompt,
               error: clip.errorMessage,
               feedback: "",
+              videos,
+              selectedIndex,
             };
           }
           setClipStates(clipMap);
@@ -3117,16 +3207,30 @@ export default function CreateEpisodePage() {
           setClipStates((prev) => {
             const updated = { ...prev };
             for (const clip of dbClips) {
+              const dbHistory = clip.history || [];
+              let videos: ClipVersion[] | undefined;
+              let selectedIndex: number | undefined;
+              if (dbHistory.length > 0) {
+                videos = dbHistory;
+                selectedIndex = clip.selectedVersion ?? dbHistory.length - 1;
+                if (selectedIndex >= dbHistory.length) selectedIndex = dbHistory.length - 1;
+              } else if (clip.videoUrl) {
+                videos = [{ video_url: clip.videoUrl, veo_prompt: clip.veoPrompt || "", cost: clip.cost || 0, created_at: "" }];
+                selectedIndex = 0;
+              }
+              const activeVideo = videos && selectedIndex !== undefined ? videos[selectedIndex] : null;
               updated[clip.sceneNumber] = {
                 sceneNumber: clip.sceneNumber,
                 status: clip.status === "completed" ? "completed"
                   : clip.status === "generating" ? "generating"
                     : clip.status === "failed" ? "failed"
                       : "idle",
-                videoUrl: clip.videoUrl,
-                veoPrompt: clip.veoPrompt,
+                videoUrl: activeVideo?.video_url || clip.videoUrl,
+                veoPrompt: activeVideo?.veo_prompt || clip.veoPrompt,
                 error: clip.errorMessage,
                 feedback: "",
+                videos,
+                selectedIndex,
               };
               if (clip.status === "completed") existingCompleted++;
             }
@@ -3167,7 +3271,6 @@ export default function CreateEpisodePage() {
     const storyboardUrl = sceneImages[sceneNumber]?.image?.image_url || null;
 
     try {
-      clearProcessedJob("clip", String(sceneNumber));
       await submitJob(
         "clip",
         "/film/generate-clip",
@@ -3182,6 +3285,9 @@ export default function CreateEpisodePage() {
         },
         { generationId: genId!, targetId: String(sceneNumber) }
       );
+      // Clear AFTER submit succeeds — backend has upserted gen_job to "queued",
+      // so the old "completed" status is gone and won't be reprocessed by Realtime
+      clearProcessedJob("clip", String(sceneNumber));
     } catch (err) {
       setClipStates((prev) => ({
         ...prev,
@@ -4737,10 +4843,21 @@ export default function CreateEpisodePage() {
                                     {history.map((img, idx) => (
                                       <button
                                         key={idx}
-                                        onClick={() => setSceneImages(prev => ({
-                                          ...prev,
-                                          [currentScene.sceneNumber]: { ...prev[currentScene.sceneNumber], image: img, selectedIndex: idx },
-                                        }))}
+                                        onClick={() => {
+                                          setSceneImages(prev => ({
+                                            ...prev,
+                                            [currentScene.sceneNumber]: { ...prev[currentScene.sceneNumber], image: img, selectedIndex: idx },
+                                          }));
+                                          // Persist version selection to DB
+                                          const genId = generationIdRef.current;
+                                          if (genId) {
+                                            upsertEpisodeStoryboards(genId, [{
+                                              scene_number: currentScene.sceneNumber,
+                                              image_url: img.image_url || null,
+                                              selected_version: idx,
+                                            }]).catch(() => {});
+                                          }
+                                        }}
                                         className={`w-12 h-16 rounded-lg overflow-hidden border-2 transition-colors flex-shrink-0 ${idx === selIdx ? "border-[#B8B6FC]" : "border-transparent opacity-50 hover:opacity-100"}`}
                                       >
                                         <img src={getImageSrc(img)} alt={`v${idx + 1}`} className="w-full h-full object-cover" />
@@ -5123,6 +5240,66 @@ export default function CreateEpisodePage() {
                         )}
                       </button>
                       <p className="text-white/30 text-xs mt-2 text-center">~$0.18 per clip</p>
+
+                      {/* Previous clip versions */}
+                      {(() => {
+                        const history = currentClip?.videos || (currentClip?.videoUrl ? [{
+                          video_url: currentClip.videoUrl,
+                          veo_prompt: currentClip.veoPrompt || "",
+                          cost: 0,
+                          created_at: "",
+                        }] : []);
+                        if (history.length <= 1) return null;
+                        const selIdx = currentClip?.selectedIndex ?? history.length - 1;
+                        return (
+                          <div className="mt-5">
+                            <p className="text-white/30 text-xs font-medium uppercase tracking-wider mb-2">Previous Versions</p>
+                            <div className="flex gap-2 overflow-x-auto pb-1">
+                              {history.map((vid, idx) => (
+                                <button
+                                  key={idx}
+                                  onClick={() => {
+                                    setClipStates(prev => ({
+                                      ...prev,
+                                      [selectedClipScene]: {
+                                        ...prev[selectedClipScene],
+                                        videoUrl: vid.video_url,
+                                        veoPrompt: vid.veo_prompt,
+                                        selectedIndex: idx,
+                                      },
+                                    }));
+                                    // Persist selection to DB
+                                    const genId = generationIdRef.current;
+                                    if (genId) {
+                                      upsertEpisodeClips(genId, [{
+                                        scene_number: selectedClipScene,
+                                        video_url: vid.video_url,
+                                        veo_prompt: vid.veo_prompt,
+                                        selected_version: idx,
+                                      }]).catch(() => {});
+                                    }
+                                    // Invalidate assembly
+                                    setAssembledVideoUrl(null);
+                                  }}
+                                  className={`w-16 h-20 rounded-lg overflow-hidden border-2 transition-colors flex-shrink-0 relative ${
+                                    idx === selIdx ? "border-[#B8B6FC]" : "border-transparent opacity-50 hover:opacity-100"
+                                  }`}
+                                >
+                                  <video
+                                    src={resolveVideoUrl(vid.video_url)}
+                                    className="w-full h-full object-cover"
+                                    muted
+                                    preload="metadata"
+                                  />
+                                  <span className="absolute bottom-0.5 right-0.5 text-[9px] text-white/60 bg-black/50 px-1 rounded">
+                                    v{idx + 1}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>

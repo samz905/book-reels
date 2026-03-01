@@ -106,6 +106,13 @@ export interface StoryLocationFE {
   angles?: LocationAngleFE[];
 }
 
+export interface StoryboardVersion {
+  image_url: string;
+  mime_type: string;
+  prompt_used: string;
+  created_at: string;
+}
+
 export interface EpisodeStoryboardFE {
   id: string;
   generationId: string;
@@ -118,6 +125,8 @@ export interface EpisodeStoryboardFE {
   imageMimeType: string;
   promptUsed: string | null;
   errorMessage: string | null;
+  history: StoryboardVersion[];
+  selectedVersion: number;
 }
 
 export const VISUAL_STYLES = [

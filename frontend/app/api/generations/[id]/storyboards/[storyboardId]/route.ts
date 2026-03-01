@@ -54,6 +54,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     "title", "visual_description", "status",
     "image_url", "image_mime_type",
     "prompt_used", "error_message",
+    "history", "selected_version",
   ];
   const updateData: EpisodeStoryboardUpdate = {};
   for (const field of allowedFields) {
@@ -70,7 +71,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     .from("episode_storyboards")
     .update(updateData)
     .eq("id", storyboardId)
-    .select("id, generation_id, scene_number, title, visual_description, status, image_url, image_mime_type, prompt_used, error_message, created_at, updated_at")
+    .select("id, generation_id, scene_number, title, visual_description, status, image_url, image_mime_type, prompt_used, error_message, history, selected_version, created_at, updated_at")
     .single();
 
   if (error) return errorResponse(error.message, 500);

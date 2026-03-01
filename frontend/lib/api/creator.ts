@@ -411,6 +411,8 @@ export function mapDbStoryboardToFrontend(db: DbEpisodeStoryboard): EpisodeStory
     imageMimeType: db.image_mime_type,
     promptUsed: db.prompt_used,
     errorMessage: db.error_message,
+    history: Array.isArray(db.history) ? db.history as import("@/app/data/mockCreatorData").StoryboardVersion[] : [],
+    selectedVersion: db.selected_version ?? 0,
   };
 }
 
@@ -752,6 +754,8 @@ export async function upsertEpisodeStoryboards(
     image_mime_type?: string;
     prompt_used?: string | null;
     error_message?: string | null;
+    history?: unknown;
+    selected_version?: number;
   }>
 ): Promise<EpisodeStoryboardFE[]> {
   const response = await fetch(`/api/generations/${generationId}/storyboards`, {
@@ -798,6 +802,13 @@ export async function deleteEpisodeStoryboard(generationId: string, storyboardId
 
 // ============ Episode Clips (per-scene video) ============
 
+export interface ClipVersion {
+  video_url: string;
+  veo_prompt: string;
+  cost: number;
+  created_at: string;
+}
+
 export interface EpisodeClipFE {
   id: string;
   generationId: string;
@@ -807,6 +818,8 @@ export interface EpisodeClipFE {
   veoPrompt: string | null;
   errorMessage: string | null;
   cost: number;
+  history: ClipVersion[];
+  selectedVersion: number;
 }
 
 interface DbEpisodeClip {
@@ -818,6 +831,8 @@ interface DbEpisodeClip {
   veo_prompt: string | null;
   error_message: string | null;
   cost: number;
+  history: unknown;
+  selected_version: number;
 }
 
 function mapDbClipToFrontend(row: DbEpisodeClip): EpisodeClipFE {
@@ -830,6 +845,8 @@ function mapDbClipToFrontend(row: DbEpisodeClip): EpisodeClipFE {
     veoPrompt: row.veo_prompt,
     errorMessage: row.error_message,
     cost: row.cost,
+    history: Array.isArray(row.history) ? row.history as ClipVersion[] : [],
+    selectedVersion: row.selected_version ?? 0,
   };
 }
 
@@ -850,6 +867,8 @@ export async function upsertEpisodeClips(
     veo_prompt?: string | null;
     error_message?: string | null;
     cost?: number;
+    history?: unknown;
+    selected_version?: number;
   }>
 ): Promise<EpisodeClipFE[]> {
   const response = await fetch(`/api/generations/${generationId}/clips`, {

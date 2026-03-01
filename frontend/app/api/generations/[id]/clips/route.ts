@@ -36,7 +36,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   const { data: clips, error } = await supabase
     .from("episode_clips")
-    .select("*")
+    .select("id, generation_id, scene_number, status, video_url, veo_prompt, error_message, cost, history, selected_version, created_at, updated_at")
     .eq("generation_id", generationId)
     .order("scene_number", { ascending: true });
 
@@ -77,6 +77,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     ...(row.veo_prompt !== undefined && { veo_prompt: row.veo_prompt }),
     ...(row.error_message !== undefined && { error_message: row.error_message }),
     ...(row.cost !== undefined && { cost: row.cost }),
+    ...(row.history !== undefined && { history: row.history }),
+    ...(row.selected_version !== undefined && { selected_version: row.selected_version }),
   }));
 
   const { data: clips, error } = await supabase

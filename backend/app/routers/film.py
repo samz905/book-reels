@@ -724,11 +724,12 @@ async def download_video(video_url: str, film_id: str, shot_number: int, generat
     sb = get_supabase()
     if sb and generation_id:
         try:
-            storage_path = f"{generation_id}/film/shots/shot_{shot_number:02d}.mp4"
+            version_id = uuid.uuid4().hex[:8]
+            storage_path = f"{generation_id}/film/shots/shot_{shot_number:02d}_{version_id}.mp4"
             await asyncio.to_thread(
                 sb.storage.from_(AI_ASSETS_BUCKET).upload,
                 storage_path, video_bytes,
-                {"content-type": "video/mp4", "upsert": "true"},
+                {"content-type": "video/mp4"},
             )
             storage_url = sb.storage.from_(AI_ASSETS_BUCKET).get_public_url(storage_path)
             print(f"  Uploaded shot {shot_number} to Supabase Storage")

@@ -36,7 +36,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   const { data: storyboards, error } = await supabase
     .from("episode_storyboards")
-    .select("id, generation_id, scene_number, title, visual_description, status, image_url, image_mime_type, prompt_used, error_message, created_at, updated_at")
+    .select("id, generation_id, scene_number, title, visual_description, status, image_url, image_mime_type, prompt_used, error_message, history, selected_version, created_at, updated_at")
     .eq("generation_id", generationId)
     .order("scene_number", { ascending: true });
 
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   // Fetch existing storyboards to preserve fields not being updated
   const { data: existing } = await supabase
     .from("episode_storyboards")
-    .select("scene_number, title, visual_description, status, image_url, image_mime_type, prompt_used, error_message")
+    .select("scene_number, title, visual_description, status, image_url, image_mime_type, prompt_used, error_message, history, selected_version")
     .eq("generation_id", generationId)
     .in("scene_number", body.map(r => r.scene_number!));
 
@@ -92,13 +92,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       image_mime_type: row.image_mime_type !== undefined ? row.image_mime_type : (existingRow?.image_mime_type || null),
       prompt_used: row.prompt_used !== undefined ? row.prompt_used : (existingRow?.prompt_used || null),
       error_message: row.error_message !== undefined ? row.error_message : (existingRow?.error_message || null),
+      history: row.history !== undefined ? row.history : (existingRow?.history || []),
+      selected_version: row.selected_version !== undefined ? row.selected_version : (existingRow?.selected_version || 0),
     };
   });
 
   const { data: storyboards, error } = await supabase
     .from("episode_storyboards")
     .upsert(rows, { onConflict: "generation_id,scene_number" })
-    .select("id, generation_id, scene_number, title, visual_description, status, image_url, image_mime_type, prompt_used, error_message, created_at, updated_at");
+    .select("id, generation_id, scene_number, title, visual_description, status, image_url, image_mime_type, prompt_used, error_message, history, selected_version, created_at, updated_at");
 
   if (error) return errorResponse(error.message, 500);
 
