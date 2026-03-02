@@ -185,7 +185,9 @@
       "WebFetch(domain:docs.byteplus.com)",
       "WebFetch(domain:image2video.org)",
       "WebFetch(domain:apidog.com)",
-      "WebFetch(domain:higgsfield.ai)"
+      "WebFetch(domain:higgsfield.ai)",
+      "Bash(netstat:*)",
+      "Bash(cmd /c:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

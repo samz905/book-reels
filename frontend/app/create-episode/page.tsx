@@ -4898,7 +4898,7 @@ export default function CreateEpisodePage() {
                                               scene_number: currentScene.sceneNumber,
                                               image_url: img.image_url || null,
                                               selected_version: idx,
-                                            }]).catch(() => {});
+                                            }]).catch(() => { });
                                           }
                                         }}
                                         className={`w-12 h-16 rounded-lg overflow-hidden border-2 transition-colors flex-shrink-0 ${idx === selIdx ? "border-[#B8B6FC]" : "border-transparent opacity-50 hover:opacity-100"}`}
@@ -5282,7 +5282,7 @@ export default function CreateEpisodePage() {
                           "Generate Clip"
                         )}
                       </button>
-                      <p className="text-white/30 text-xs mt-2 text-center">~$0.18 per clip</p>
+                      <p className="text-white/30 text-xs mt-2 text-center">~$0.40 per clip</p>
 
                       {/* Previous clip versions */}
                       {(() => {
@@ -5319,14 +5319,13 @@ export default function CreateEpisodePage() {
                                         video_url: vid.video_url,
                                         veo_prompt: vid.veo_prompt,
                                         selected_version: idx,
-                                      }]).catch(() => {});
+                                      }]).catch(() => { });
                                     }
                                     // Invalidate assembly
                                     setAssembledVideoUrl(null);
                                   }}
-                                  className={`w-16 h-20 rounded-lg overflow-hidden border-2 transition-colors flex-shrink-0 relative ${
-                                    idx === selIdx ? "border-[#B8B6FC]" : "border-transparent opacity-50 hover:opacity-100"
-                                  }`}
+                                  className={`w-16 h-20 rounded-lg overflow-hidden border-2 transition-colors flex-shrink-0 relative ${idx === selIdx ? "border-[#B8B6FC]" : "border-transparent opacity-50 hover:opacity-100"
+                                    }`}
                                 >
                                   <video
                                     src={resolveVideoUrl(vid.video_url)}

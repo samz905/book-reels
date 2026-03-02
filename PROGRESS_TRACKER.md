@@ -19,7 +19,7 @@
 ---
 
 ### EC-2: Library reference images for generation
-- [ ] **Done**
+- [x] **Done**
 - **What**: Add ability to use chars/locs from the library as a reference image while generating. There was a dropdown for choosing from library before.
 - **Files**:
   - `frontend/app/components/creator/CharacterModal.tsx` — needs dropdown to select library char as reference
@@ -31,7 +31,7 @@
 ---
 
 ### EC-3: Upload reference image for AI generation
-- [ ] **Done**
+- [x] **Done**
 - **What**: Add ability to upload a reference image for AI to use as a style reference (separate from uploading an image directly for that char/loc).
 - **Files**:
   - `frontend/app/components/creator/CharacterModal.tsx` — needs file upload UI for reference image
@@ -50,7 +50,7 @@
 ---
 
 ### EC-5: BIG CHANGE — Remove char/loc selector from left panel; AI uses library
-- [ ] **Done**
+- [x] **Done**
 - **What**: Remove the `CharacterLocationPicker` from the left panel "Idea" section. Instead, AI should automatically have access to the story's library chars/locs and intelligently select/create from them.
 - **Current state**:
   - `frontend/app/create-episode/page.tsx:3591-3601` — `<CharacterLocationPicker>` component in left panel
@@ -69,7 +69,7 @@
 ---
 
 ### EC-6: BIG CHANGE — Enforce visual style at story level
-- [ ] **Done**
+- [x] **Done**
 - **What**: Visual style should be set once at the story level and enforced everywhere — episodes, chars, locs, all images.
 - **Current state**:
   - `frontend/app/create-episode/page.tsx:3568-3589` — Visual Style selector in the episode creation left panel (per-episode)
@@ -91,7 +91,7 @@
 ---
 
 ### EC-7: Same-name char/loc switching in visuals step
-- [ ] **Done**
+- [x] **Done**
 - **What**: If multiple chars or locs share the same name (e.g., from library), AI picks one. In the visual step, let users switch between same-name alternatives.
 - **Files**:
   - `frontend/app/create-episode/page.tsx` — Lookbook section (~line 4110+)
@@ -100,7 +100,7 @@
 ---
 
 ### EC-8: Auto-trigger storyboard generation with images after loc step
-- [ ] **Done**
+- [x] **Done**
 - **What**: After the location step (Lookbook), automatically trigger storyboard generation including images (not just text descriptions). Show loader: "This could take 2-3 minutes."
 - **Current state**:
   - `frontend/app/create-episode/page.tsx:4295` — Lookbook footer has an "Approve & Continue" button that goes to Storyboard tab
@@ -145,7 +145,7 @@
   - `frontend/app/create-episode/page.tsx:4249` — `Retry ~$0.02` (locations)
   - `frontend/app/create-episode/page.tsx:4256` — `Generate ~$0.02` (locations)
   - `frontend/app/create-episode/page.tsx:4405` — `Generate Storyboard ~$0.05`
-- **How**: Remove the `~$X.XX` suffix from all these button labels. Keep cost display only on video generation (`~$0.18 per clip` at line 5022).
+- **How**: Remove the `~$X.XX` suffix from all these button labels. Keep cost display only on video generation (`~$0.40 per clip` at line 5022).
 
 ---
 
@@ -169,7 +169,7 @@
 ---
 
 ### EC-14: Protect saved chars/locs on regeneration; confirm before replacing library
-- [ ] **Done**
+- [x] **Done**
 - **What**: When regenerating chars/locs, don't replace the originally saved ones unless user clicks Save. Show a warning that saving will replace the library entry too. Add "Create New Character" / "Create New Location" CTA as alternative.
 - **Files**:
   - `frontend/app/create-episode/page.tsx` — lookbook char/loc generation + save-to-library logic
@@ -184,7 +184,7 @@
 ---
 
 ### EC-15: Storyboard image history for regeneration
-- [ ] **Done**
+- [x] **Done**
 - **What**: When regenerating storyboard images, store the old ones and show them so user can pick any previous version. Show selected state with border + tick.
 - **Files**:
   - `frontend/app/create-episode/page.tsx` — storyboard section, `sceneImages` state
@@ -286,7 +286,7 @@
 ---
 
 ### M-6: Subscribe button — conditional display + dynamic price
-- [ ] **Done**
+- [x] **Done**
 - **What**: On public creator profile, subscribe button should only show if the creator has it activated. Also uses hardcoded `$9.99` — should use actually set price.
 - **Files**:
   - `frontend/app/components/public/PublicProfileHeader.tsx:88-96` — subscribe button always shown, uses `subscriptionPrice` prop
@@ -356,7 +356,7 @@
 ## LOOKS & ANGLES (New Feature)
 
 ### LA-1: Create `character_looks` and `location_angles` DB tables
-- [ ] **Done**
+- [x] **Done**
 - **What**: New Supabase tables to store multiple image variants per character/location.
 - **Schema — `character_looks`**:
   - `id` UUID PK (default gen_random_uuid())
@@ -375,7 +375,7 @@
 ---
 
 ### LA-2: Backend API routes for looks/angles CRUD
-- [ ] **Done**
+- [x] **Done**
 - **What**: REST endpoints for managing looks and angles.
 - **Frontend API routes** (Next.js `/api/` routes, same pattern as existing `story_characters` routes):
   - `GET /api/stories/[id]/characters/[charId]/looks` — list all looks for a character
@@ -389,7 +389,7 @@
 ---
 
 ### LA-3: Generate look/angle — backend integration
-- [ ] **Done**
+- [x] **Done**
 - **What**: Generating a new look/angle sends the character's default look image as a reference + a "what's different" description.
 - **Files**:
   - `backend/app/routers/asset_gen.py:96-132` — `generate_character` already accepts `reference_image`
@@ -405,7 +405,7 @@
 ---
 
 ### LA-4: TypeScript types for looks/angles
-- [ ] **Done**
+- [x] **Done**
 - **What**: Add types to `frontend/types/database.ts` and frontend data models.
 - **Files**:
   - `frontend/types/database.ts` — add `character_looks` and `location_angles` table types
@@ -429,7 +429,7 @@
 ---
 
 ### LA-5: Story Management — CharacterModal looks carousel
-- [ ] **Done**
+- [x] **Done**
 - **What**: Add a "Looks" section to `CharacterModal` showing a horizontal carousel of all looks with generate/delete/set-default actions.
 - **Files**:
   - `frontend/app/components/creator/CharacterModal.tsx` — add section below existing fields
@@ -450,7 +450,7 @@
 ---
 
 ### LA-6: Story Management — LocationModal angles carousel
-- [ ] **Done**
+- [x] **Done**
 - **What**: Same as LA-5 but for locations in `LocationModal`.
 - **Files**:
   - `frontend/app/components/creator/LocationModal.tsx` — add "Angles" section
@@ -459,7 +459,7 @@
 ---
 
 ### LA-7: Story Management — CharacterCard/LocationCard badge
-- [ ] **Done**
+- [x] **Done**
 - **What**: Show a small "N looks" / "N angles" badge on library cards when > 1 variant exists.
 - **Files**:
   - `frontend/app/components/creator/CharacterCard.tsx` — add badge overlay
@@ -469,7 +469,7 @@
 ---
 
 ### LA-8: Episode Creation — Lookbook look/angle selector
-- [ ] **Done**
+- [x] **Done**
 - **What**: In the episode creation Lookbook tab ("Your Chars & Locs"), show a thumbnail strip below each character/location card to pick which look/angle to use for this episode.
 - **Files**:
   - `frontend/app/create-episode/page.tsx` — Lookbook section (~line 4132+), character and location card grids
@@ -491,7 +491,7 @@
 ---
 
 ### LA-9: Fetch looks/angles on story load
-- [ ] **Done**
+- [x] **Done**
 - **What**: When loading a story (both story management page and episode creation), fetch all looks/angles for each character/location.
 - **Files**:
   - `frontend/app/create/[storyId]/page.tsx` — story details page, character/location fetch
@@ -501,7 +501,7 @@
 ---
 
 ### LA-10: Migration script for existing data
-- [ ] **Done**
+- [x] **Done**
 - **What**: Migrate existing single images to the new looks/angles tables so existing stories don't lose their images.
 - **How**: SQL migration:
   ```sql
