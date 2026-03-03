@@ -93,7 +93,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       prompt_used: row.prompt_used !== undefined ? row.prompt_used : (existingRow?.prompt_used || null),
       error_message: row.error_message !== undefined ? row.error_message : (existingRow?.error_message || null),
       history: row.history !== undefined ? row.history : (existingRow?.history || []),
-      selected_version: row.selected_version !== undefined ? row.selected_version : (existingRow?.selected_version || 0),
+      selected_version: row.selected_version !== undefined ? row.selected_version : (existingRow?.selected_version ?? 0),
     };
   });
 

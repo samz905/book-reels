@@ -979,7 +979,7 @@ export default function CreateEpisodePage() {
           }
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
-        saveNow();
+        // NOTE: no saveNow() here — snapshotRef is stale (pre-render). Auto-save debounce handles it.
         break;
       }
       case "scene_image": {
@@ -1033,7 +1033,8 @@ export default function CreateEpisodePage() {
           }
         }
         if (result.cost_usd) setTotalCost((prev) => ({ ...prev, keyMoments: prev.keyMoments + (result.cost_usd as number) }));
-        saveNow();
+        // NOTE: no saveNow() here — snapshotRef is stale (pre-render). The auto-save
+        // debounce (500ms) triggers on sceneImages change and reads a fresh snapshot.
         break;
       }
       case "prompt_preview": {
@@ -1742,6 +1743,7 @@ export default function CreateEpisodePage() {
         visualDescription: v.visualDescription,
         originalDescription: v.originalDescription,
         feedback: v.feedback,
+        selectedIndex: v.selectedIndex,
         image: v.image ? { type: v.image.type, image_url: v.image.image_url, mime_type: v.image.mime_type, prompt_used: v.image.prompt_used } : null,
       }])
     ),
