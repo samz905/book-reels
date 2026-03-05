@@ -145,7 +145,7 @@
   - `frontend/app/create-episode/page.tsx:4249` — `Retry ~$0.02` (locations)
   - `frontend/app/create-episode/page.tsx:4256` — `Generate ~$0.02` (locations)
   - `frontend/app/create-episode/page.tsx:4405` — `Generate Storyboard ~$0.05`
-- **How**: Remove the `~$X.XX` suffix from all these button labels. Keep cost display only on video generation (`~$0.40 per clip` at line 5022).
+- **How**: Remove the `~$X.XX` suffix from all these button labels. Keep cost display only on video generation (`~$0.49 per clip` at line 5022).
 
 ---
 

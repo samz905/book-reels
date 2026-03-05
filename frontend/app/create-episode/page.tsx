@@ -747,7 +747,7 @@ export default function CreateEpisodePage() {
         if (storyResult) {
           setStory(storyResult);
           if (result.cost_usd) setTotalCost((prev) => ({ ...prev, story: prev.story + (result.cost_usd as number) }));
-          saveNow({ story: storyResult });
+          // NOTE: no saveNow() here — snapshotRef is stale (pre-render). Auto-save debounce handles it.
         }
         setIsGenerating(false);
         setGlobalFeedback("");
@@ -5284,7 +5284,7 @@ export default function CreateEpisodePage() {
                           "Generate Clip"
                         )}
                       </button>
-                      <p className="text-white/30 text-xs mt-2 text-center">~$0.40 per clip</p>
+                      <p className="text-white/30 text-xs mt-2 text-center">~$0.49 per clip</p>
 
                       {/* Previous clip versions */}
                       {(() => {
