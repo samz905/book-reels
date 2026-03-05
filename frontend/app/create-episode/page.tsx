@@ -440,6 +440,7 @@ export default function CreateEpisodePage() {
   const [assembleIntent, setAssembleIntent] = useState<"preview" | "publishing" | null>(null);
   const assembleIntentRef = useRef<"preview" | "publishing" | null>(null);
   const [showFilmPreview, setShowFilmPreview] = useState(false);
+  const [previewClipUrls, setPreviewClipUrls] = useState<string[]>([]);
   const [publishedEpisodeId, setPublishedEpisodeId] = useState<string | null>(null);
   const [showUnpublishConfirm, setShowUnpublishConfirm] = useState(false);
 
@@ -1137,27 +1138,23 @@ export default function CreateEpisodePage() {
       }
       case "assemble": {
         const assembledUrl = result.assembled_video_url as string | undefined;
-        const intent = assembleIntentRef.current;
         assembleIntentRef.current = null;
         setAssembleIntent(null);
         if (assembledUrl) {
           setAssembledVideoUrl(assembledUrl);
-          if (intent === "publishing") {
-            const storyId = associatedStoryIdRef.current;
-            if (storyId) {
-              upsertEpisode(storyId, {
-                name: episodeNameRef.current || "Untitled Episode",
-                media_url: assembledUrl,
-                status: "published",
+          // Assembly is only used for publishing now — auto-publish + redirect
+          const storyId = associatedStoryIdRef.current;
+          if (storyId) {
+            upsertEpisode(storyId, {
+              name: episodeNameRef.current || "Untitled Episode",
+              media_url: assembledUrl,
+              status: "published",
+            })
+              .then(() => {
+                saveNow({}, "published");
+                window.location.href = `/create/${storyId}`;
               })
-                .then(() => {
-                  saveNow({}, "published");
-                  window.location.href = `/create/${storyId}`;
-                })
-                .catch((err) => console.error("Publish failed:", err));
-            }
-          } else {
-            setShowFilmPreview(true);
+              .catch((err) => console.error("Publish failed:", err));
           }
         }
         break;
@@ -3361,14 +3358,15 @@ export default function CreateEpisodePage() {
     }
   };
 
-  /** Preview the assembled film — assemble if needed, then show modal */
-  const previewFilm = async () => {
-    if (assembledVideoUrl) {
-      setShowFilmPreview(true);
-      return;
-    }
-    await assembleClips("preview");
-    // Modal will open when assembly completes via Realtime
+  /** Preview the film — plays clips sequentially in the browser (instant, no assembly) */
+  const previewFilm = () => {
+    const urls = Object.values(clipStates)
+      .filter((c) => c.status === "completed" && c.videoUrl)
+      .sort((a, b) => a.sceneNumber - b.sceneNumber)
+      .map((c) => resolveVideoUrl(c.videoUrl!));
+    if (urls.length === 0) return;
+    setPreviewClipUrls(urls);
+    setShowFilmPreview(true);
   };
 
   // Check if all clips are completed
@@ -5126,15 +5124,9 @@ export default function CreateEpisodePage() {
                   {completedCount > 0 && (
                     <button
                       onClick={previewFilm}
-                      disabled={assembleIntent !== null}
-                      className="px-4 py-2 text-sm font-medium border border-[#B8B6FC] text-[#B8B6FC] rounded-xl hover:bg-[#B8B6FC]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+                      className="px-4 py-2 text-sm font-medium border border-[#B8B6FC] text-[#B8B6FC] rounded-xl hover:bg-[#B8B6FC]/10 transition-colors flex items-center gap-1.5"
                     >
-                      {assembleIntent === "preview" ? (
-                        <>
-                          <div className="w-3.5 h-3.5 border-2 border-[#B8B6FC] border-t-transparent rounded-full animate-spin" />
-                          Assembling...
-                        </>
-                      ) : "Preview Film"}
+                      Preview Film
                     </button>
                   )}
                 </div>
@@ -5427,21 +5419,6 @@ export default function CreateEpisodePage() {
                   &larr; Back to Your Episode Setting
                 </button>
                 <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => { handleSaveDraft(); }}
-                    disabled={draftSaveStatus === "saving"}
-                    className={`px-4 py-2 text-sm font-medium border rounded-xl transition-colors ${draftSaveStatus === "saved"
-                      ? "border-emerald-500/30 text-emerald-400"
-                      : "border-white/10 text-white/50 hover:text-white hover:border-white/30"
-                      } disabled:opacity-40 disabled:cursor-not-allowed`}
-                  >
-                    {draftSaveStatus === "saved" ? (
-                      <span className="flex items-center gap-1.5">
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                        Saved
-                      </span>
-                    ) : draftSaveStatus === "saving" ? "Saving..." : "Save to Profile"}
-                  </button>
                   {publishedEpisodeId ? (
                     <>
                       <button
@@ -5488,11 +5465,11 @@ export default function CreateEpisodePage() {
           );
         })()}
 
-        {/* Film Preview Modal */}
+        {/* Film Preview Modal — plays clips sequentially in browser (instant, no assembly) */}
         <FilmPreviewModal
           isOpen={showFilmPreview}
           onClose={() => setShowFilmPreview(false)}
-          videoUrl={assembledVideoUrl || ""}
+          clipUrls={previewClipUrls}
           title={episodeName || "Preview"}
           shareUrl={publishedEpisodeId && creatorProfile?.username && associatedStoryIdRef.current ? getEpisodeShareUrl(creatorProfile.username, associatedStoryIdRef.current, episodeNumber || 1) : undefined}
         />
